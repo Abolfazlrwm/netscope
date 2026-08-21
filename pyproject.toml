@@ -1,0 +1,31 @@
+[project]
+name = "netscope"
+version = "0.1.0"
+description = "Internet Experience Intelligence & Network Diagnostics Platform"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "icmplib>=3.0.4",   # LGPL-3.0 - ICMP ping (dynamic import, not modified)
+    "dnspython>=2.8.0", # ISC License - DNS resolution
+    "httpx>=0.28.1",    # BSD-3-Clause - HTTP probing
+    "psutil>=6.0.0",    # BSD-3-Clause - system/network interface info
+]
+
+[project.optional-dependencies]
+ui = [
+    "textual>=0.60.0",  # MIT - terminal UI for MVP
+]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+netscope = "netscope.ui.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
