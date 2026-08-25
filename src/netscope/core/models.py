@@ -104,3 +104,38 @@ class Incident:
     @property
     def is_active(self) -> bool:
         return self.ended_at is None
+
+
+@dataclass
+class NetworkInterface:
+    """One local network interface, as reported by the OS.
+
+    Deliberately minimal for now (TASK-010, "local interface discovery"
+    only): name, up/down state, and its addresses. Gateway association,
+    DNS servers, and connection-type classification (Wi-Fi/Ethernet/
+    cellular) are separate, later concerns (future-roadmap.md TASK-011
+    "Gateway discovery" and TASK-012 "Network type detection") and are
+    intentionally not fields here yet -- adding them now would be
+    speculative, ahead of the code that would populate them.
+    """
+
+    name: str
+    is_up: bool
+    addresses: list[str] = field(default_factory=list)
+    is_loopback: bool = False
+
+
+@dataclass
+class NetworkSnapshot:
+    """The set of local network interfaces at one point in time.
+
+    Named to match the existing RouteSnapshot convention (a snapshot of
+    something that can change between measurement rounds, e.g. a laptop
+    switching from Wi-Fi to Ethernet) rather than the more speculative
+    "NetworkContext" name used as a placeholder in earlier architecture
+    documentation -- see adr-010-network-discovery.md for why this name
+    was chosen instead.
+    """
+
+    timestamp: datetime = field(default_factory=utcnow)
+    interfaces: list[NetworkInterface] = field(default_factory=list)
