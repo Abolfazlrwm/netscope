@@ -21,7 +21,7 @@ from netscope.adapters.discovery.network_discovery import PsutilNetworkDiscovery
 from netscope.adapters.discovery.network_type_classifier import classify_network_type
 from netscope.app.container import Container, build_container
 from netscope.core.discovery import DiscoveryProvider
-from netscope.core.models import NetworkInterface, NetworkSnapshot, NetworkType
+from netscope.core.models import NetworkContext, NetworkInterface, NetworkSnapshot, NetworkType
 
 
 # ---------------------------------------------------------------------------
@@ -362,3 +362,107 @@ def test_network_interface_construction_without_network_type_still_defaults_to_u
     network_type must keep working unchanged."""
     iface = NetworkInterface(name="eth0", is_up=True, addresses=["10.0.0.5"])
     assert iface.network_type == NetworkType.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# TASK-013 -- NetworkContext (assembled discovery result)
+#
+# NetworkContext wraps an existing NetworkSnapshot; these tests are
+# fully offline and deterministic -- no psutil mocking needed for the
+# pure construction/wrapping tests, since NetworkContext has no
+# dependencies of its own.
+# ---------------------------------------------------------------------------
+
+def test_network_context_can_be_constructed_with_an_existing_snapshot():
+    snapshot = NetworkSnapshot(interfaces=[NetworkInterface(name="eth0", is_up=True)])
+
+    context = NetworkContext(snapshot=snapshot)
+
+    assert context.snapshot is snapshot
+
+
+def test_network_context_from_snapshot_wraps_the_exact_same_snapshot_unchanged():
+    """from_snapshot() must be pure assembly -- no copying, no mutation,
+    no reinterpretation of the snapshot it's given."""
+    snapshot = NetworkSnapshot(interfaces=[NetworkInterface(name="wlan0", is_up=True, network_type=NetworkType.WIFI)])
+
+    context = NetworkContext.from_snapshot(snapshot)
+
+    assert isinstance(context, NetworkContext)
+    assert context.snapshot is snapshot
+
+
+def test_network_context_preserves_existing_network_interface_and_snapshot_values():
+    """Covers both 'existing NetworkInterface values are preserved' and
+    'existing NetworkSnapshot values are preserved' in one focused test,
+    since both are really the same guarantee (no copying/mutation)."""
+    iface = NetworkInterface(
+        name="enp0s3",
+        is_up=True,
+        addresses=["192.168.1.50"],
+        is_loopback=False,
+        network_type=NetworkType.ETHERNET,
+    )
+    snapshot = NetworkSnapshot(interfaces=[iface])
+
+    context = NetworkContext.from_snapshot(snapshot)
+
+    assert context.snapshot.timestamp == snapshot.timestamp
+    assert context.snapshot.interfaces == [iface]
+    preserved = context.snapshot.interfaces[0]
+    assert preserved.name == "enp0s3"
+    assert preserved.is_up is True
+    assert preserved.addresses == ["192.168.1.50"]
+    assert preserved.is_loopback is False
+    assert preserved.network_type == NetworkType.ETHERNET
+
+
+def test_core_models_module_has_no_infrastructure_imports_after_adding_network_context():
+    """Regression guard extending the existing TASK-010/012 pattern
+    (test_core_models_module_still_has_no_psutil_import_after_adding_discovery_models)
+    to the full set of infrastructure libraries NetworkContext must not
+    pull in, per TASK-013's explicit requirement."""
+    import netscope.core.models as models_module
+
+    imported = _imported_top_level_modules(models_module.__file__)
+    forbidden = {"psutil", "icmplib", "dns", "httpx", "socket"}
+    assert not (imported & forbidden), (
+        f"core/models.py imports {imported & forbidden} -- "
+        "NetworkContext and other core models must stay infrastructure-independent"
+    )
+
+
+# ---------------------------------------------------------------------------
+# TASK-013 -- Discovery adapter integration (discover_context())
+# ---------------------------------------------------------------------------
+
+def test_discover_context_produces_a_network_context_wrapping_the_discovered_snapshot(monkeypatch):
+    import netscope.adapters.discovery.network_discovery as module
+
+    fake_addrs = {"eth0": [_FakeSnicAddr(socket.AF_INET, "10.0.0.9")]}
+    fake_stats = {"eth0": _FakeSnicStats(isup=True, flags="up,broadcast,running")}
+
+    monkeypatch.setattr(module.psutil, "net_if_addrs", lambda: fake_addrs)
+    monkeypatch.setattr(module.psutil, "net_if_stats", lambda: fake_stats)
+
+    context = PsutilNetworkDiscovery().discover_context()
+
+    assert isinstance(context, NetworkContext)
+    assert isinstance(context.snapshot, NetworkSnapshot)
+    assert context.snapshot.interfaces[0].name == "eth0"
+    assert context.snapshot.interfaces[0].addresses == ["10.0.0.9"]
+
+
+def test_existing_discover_method_still_returns_plain_network_snapshot_unchanged(monkeypatch):
+    """Explicit backward-compatibility check: TASK-013 must not have
+    changed discover()'s return type or behavior -- it still returns a
+    NetworkSnapshot, not a NetworkContext, exactly as before this task."""
+    import netscope.adapters.discovery.network_discovery as module
+
+    monkeypatch.setattr(module.psutil, "net_if_addrs", lambda: {})
+    monkeypatch.setattr(module.psutil, "net_if_stats", lambda: {})
+
+    result = PsutilNetworkDiscovery().discover()
+
+    assert isinstance(result, NetworkSnapshot)
+    assert not isinstance(result, NetworkContext)

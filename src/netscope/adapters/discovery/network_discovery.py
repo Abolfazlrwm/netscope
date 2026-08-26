@@ -12,13 +12,17 @@ in adapters/probes/) is a thin translation layer, not a reimplementation
 of what psutil already does. Interface-name-based network type
 classification (TASK-012) is delegated entirely to the isolated, pure
 network_type_classifier module, not implemented here.
+
+discover_context() (TASK-013) is a thin, additive wrapper assembling
+the result of discover() into a NetworkContext -- see NetworkContext's
+own docstring in core/models.py for why it exists as a separate type.
 """
 
 from __future__ import annotations
 
 from netscope.adapters.discovery.network_type_classifier import classify_network_type
 from netscope.core.discovery import DiscoveryProvider
-from netscope.core.models import NetworkInterface, NetworkSnapshot, utcnow
+from netscope.core.models import NetworkContext, NetworkInterface, NetworkSnapshot, utcnow
 
 try:
     import psutil
@@ -66,3 +70,16 @@ class PsutilNetworkDiscovery:
             )
 
         return NetworkSnapshot(timestamp=utcnow(), interfaces=interfaces)
+
+    def discover_context(self) -> NetworkContext:
+        """Additive convenience method (TASK-013, "Network metadata"):
+        assembles this adapter's NetworkSnapshot into a NetworkContext.
+
+        discover() itself is completely unchanged by this method's
+        addition -- this simply calls it and wraps the result, so
+        existing callers of discover() (and the DiscoveryProvider
+        Protocol in core/discovery.py, not modified by this task) keep
+        working exactly as before. This method is additive surface, not
+        a replacement.
+        """
+        return NetworkContext.from_snapshot(self.discover())

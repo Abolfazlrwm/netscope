@@ -145,11 +145,48 @@ class NetworkSnapshot:
 
     Named to match the existing RouteSnapshot convention (a snapshot of
     something that can change between measurement rounds, e.g. a laptop
-    switching from Wi-Fi to Ethernet) rather than the more speculative
-    "NetworkContext" name used as a placeholder in earlier architecture
-    documentation -- see adr-010-network-discovery.md for why this name
-    was chosen instead.
+    switching from Wi-Fi to Ethernet) -- see adr-010-network-discovery.md
+    for why this name was chosen over an earlier placeholder name.
+
+    Note: an earlier version of this docstring used "NetworkContext" as
+    a discarded placeholder name for *this* type. TASK-013 later
+    introduced NetworkContext as a distinct, separate type (below) that
+    wraps a NetworkSnapshot rather than replacing it -- the two are not
+    the same concept.
     """
 
     timestamp: datetime = field(default_factory=utcnow)
     interfaces: list[NetworkInterface] = field(default_factory=list)
+
+
+@dataclass
+class NetworkContext:
+    """Assembled result of network discovery (TASK-013, "Network
+    metadata") -- the single domain object application-level code is
+    expected to consume, rather than reaching into a NetworkSnapshot
+    directly at every call site.
+
+    Deliberately thin: it wraps an existing NetworkSnapshot rather than
+    duplicating its fields. NetworkSnapshot keeps its own, narrower
+    meaning ("just the interfaces at one point in time" -- see its own
+    docstring above); NetworkContext is the assembly point where future
+    discovery metadata not yet implemented (e.g. default gateway, DNS
+    servers -- future-roadmap.md TASK-011 "Gateway discovery") is
+    expected to attach directly to this type, without requiring another
+    wrapper to be introduced later.
+
+    Intentionally has no derived/heuristic properties (e.g. a "primary
+    interface" guess) and no business logic -- TASK-013's scope is
+    assembly only, not interpretation, which remains core.diagnosis's
+    responsibility per architecture-overview.md's layering.
+    """
+
+    snapshot: NetworkSnapshot
+
+    @classmethod
+    def from_snapshot(cls, snapshot: NetworkSnapshot) -> NetworkContext:
+        """Pure, dependency-free assembly: wraps an already-obtained
+        NetworkSnapshot into a NetworkContext. Adapters call this (see
+        adapters/discovery/network_discovery.py's discover_context())
+        rather than every call site constructing NetworkContext by hand."""
+        return cls(snapshot=snapshot)
