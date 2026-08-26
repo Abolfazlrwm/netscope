@@ -18,9 +18,10 @@ from __future__ import annotations
 import socket
 
 from netscope.adapters.discovery.network_discovery import PsutilNetworkDiscovery
+from netscope.adapters.discovery.network_type_classifier import classify_network_type
 from netscope.app.container import Container, build_container
 from netscope.core.discovery import DiscoveryProvider
-from netscope.core.models import NetworkInterface, NetworkSnapshot
+from netscope.core.models import NetworkInterface, NetworkSnapshot, NetworkType
 
 
 # ---------------------------------------------------------------------------
@@ -286,3 +287,78 @@ def test_container_discovery_provider_snapshot_has_expected_shape_real_adapter_s
         assert isinstance(iface.name, str)
         assert isinstance(iface.is_up, bool)
         assert isinstance(iface.addresses, list)
+
+
+# ---------------------------------------------------------------------------
+# TASK-012 -- Network type classification (classify_network_type)
+#
+# Pure, deterministic tests over interface name strings only -- no psutil,
+# no mocking needed, since the classifier has no dependencies of its own.
+# ---------------------------------------------------------------------------
+
+def test_classify_wifi_like_interface_names_as_wifi():
+    for name in ("wlan0", "wlp2s0", "wlx00c0ca123456", "Wi-Fi", "wi-fi 2", "wireless0"):
+        assert classify_network_type(name) == NetworkType.WIFI, name
+
+
+def test_classify_ethernet_like_interface_names_as_ethernet():
+    for name in ("eth0", "eth1", "enp0s3", "eno1", "ens33", "Ethernet", "Ethernet 2"):
+        assert classify_network_type(name) == NetworkType.ETHERNET, name
+
+
+def test_classify_cellular_like_interface_names_as_cellular():
+    for name in ("wwan0", "wwp0s20u6i12", "rmnet0", "ppp0", "Cellular", "Mobile Broadband"):
+        assert classify_network_type(name) == NetworkType.CELLULAR, name
+
+
+def test_classify_unknown_or_unrecognized_interface_names_as_unknown():
+    for name in ("lo", "docker0", "veth1234", "br-abc123", "tun0", "tap0", "ifb0", "totally-made-up-name"):
+        assert classify_network_type(name) == NetworkType.UNKNOWN, name
+
+
+def test_classify_missing_or_empty_metadata_as_unknown():
+    assert classify_network_type(None) == NetworkType.UNKNOWN
+    assert classify_network_type("") == NetworkType.UNKNOWN
+    assert classify_network_type("   ") == NetworkType.UNKNOWN
+
+
+def test_classification_is_case_insensitive():
+    assert classify_network_type("WLAN0") == NetworkType.WIFI
+    assert classify_network_type("ETH0") == NetworkType.ETHERNET
+    assert classify_network_type("WWAN0") == NetworkType.CELLULAR
+
+
+# ---------------------------------------------------------------------------
+# TASK-012 -- Adapter wiring: existing discovery behavior remains unchanged,
+# network_type is now populated alongside the fields TASK-010 already added.
+# ---------------------------------------------------------------------------
+
+def test_adapter_populates_network_type_alongside_existing_fields(monkeypatch):
+    """Extends (does not duplicate) TASK-010's
+    test_adapter_maps_psutil_interfaces_to_network_interface_models --
+    confirms network_type is now set without changing any previously
+    asserted field (is_up, is_loopback, addresses)."""
+    import netscope.adapters.discovery.network_discovery as module
+
+    fake_addrs = {"wlan0": [_FakeSnicAddr(socket.AF_INET, "192.168.1.20")]}
+    fake_stats = {"wlan0": _FakeSnicStats(isup=True, flags="up,broadcast,running")}
+
+    monkeypatch.setattr(module.psutil, "net_if_addrs", lambda: fake_addrs)
+    monkeypatch.setattr(module.psutil, "net_if_stats", lambda: fake_stats)
+
+    snapshot = PsutilNetworkDiscovery().discover()
+
+    iface = snapshot.interfaces[0]
+    assert iface.name == "wlan0"
+    assert iface.is_up is True
+    assert iface.is_loopback is False
+    assert iface.addresses == ["192.168.1.20"]
+    assert iface.network_type == NetworkType.WIFI
+
+
+def test_network_interface_construction_without_network_type_still_defaults_to_unknown():
+    """Backward compatibility: existing construction calls (e.g. earlier
+    in this file, and anywhere else in the codebase) that don't pass
+    network_type must keep working unchanged."""
+    iface = NetworkInterface(name="eth0", is_up=True, addresses=["10.0.0.5"])
+    assert iface.network_type == NetworkType.UNKNOWN

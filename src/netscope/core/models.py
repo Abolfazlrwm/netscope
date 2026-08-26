@@ -106,23 +106,37 @@ class Incident:
         return self.ended_at is None
 
 
+class NetworkType(str, Enum):
+    """Best-effort classification of a network interface's connection
+    type. See adapters/discovery/network_type_classifier.py for how
+    this is derived -- classification is inherently best-effort (based
+    on interface naming conventions, which vary by OS and driver), so
+    UNKNOWN is a legitimate, expected outcome, not an error case."""
+
+    WIFI = "wifi"
+    ETHERNET = "ethernet"
+    CELLULAR = "cellular"
+    UNKNOWN = "unknown"
+
+
 @dataclass
 class NetworkInterface:
     """One local network interface, as reported by the OS.
 
-    Deliberately minimal for now (TASK-010, "local interface discovery"
-    only): name, up/down state, and its addresses. Gateway association,
-    DNS servers, and connection-type classification (Wi-Fi/Ethernet/
-    cellular) are separate, later concerns (future-roadmap.md TASK-011
-    "Gateway discovery" and TASK-012 "Network type detection") and are
+    Gateway association and DNS servers remain separate, later concerns
+    (future-roadmap.md TASK-011 "Gateway discovery") and are
     intentionally not fields here yet -- adding them now would be
     speculative, ahead of the code that would populate them.
+
+    network_type (TASK-012, "Network type detection") is a best-effort
+    classification, not a guarantee -- see NetworkType's docstring.
     """
 
     name: str
     is_up: bool
     addresses: list[str] = field(default_factory=list)
     is_loopback: bool = False
+    network_type: NetworkType = NetworkType.UNKNOWN
 
 
 @dataclass

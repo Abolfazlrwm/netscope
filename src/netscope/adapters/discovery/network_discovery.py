@@ -6,14 +6,17 @@ is used here.
 
 Uses psutil.net_if_addrs() and psutil.net_if_stats() to enumerate local
 interfaces and their up/down state, and translates the result into
-NetworkInterface/NetworkSnapshot -- the existing, TASK-010-added domain
-models. Contains no probing/measurement logic of its own, and (like the
-probe adapters in adapters/probes/) is a thin translation layer, not a
-reimplementation of what psutil already does.
+NetworkInterface/NetworkSnapshot -- the existing domain models. Contains
+no probing/measurement logic of its own, and (like the probe adapters
+in adapters/probes/) is a thin translation layer, not a reimplementation
+of what psutil already does. Interface-name-based network type
+classification (TASK-012) is delegated entirely to the isolated, pure
+network_type_classifier module, not implemented here.
 """
 
 from __future__ import annotations
 
+from netscope.adapters.discovery.network_type_classifier import classify_network_type
 from netscope.core.discovery import DiscoveryProvider
 from netscope.core.models import NetworkInterface, NetworkSnapshot, utcnow
 
@@ -58,6 +61,7 @@ class PsutilNetworkDiscovery:
                     is_up=is_up,
                     addresses=addresses,
                     is_loopback="loopback" in (stats.flags if stats else "").split(","),
+                    network_type=classify_network_type(name),
                 )
             )
 
