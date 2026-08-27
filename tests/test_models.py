@@ -13,6 +13,7 @@ from netscope.core.models import (
     ExperienceEvent,
     ExperienceLevel,
     Incident,
+    ProbeErrorType,
     ProbeType,
     RawMeasurement,
     RouteHop,
@@ -32,6 +33,7 @@ def test_raw_measurement_defaults_are_unsuccessful_and_empty():
     assert m.packet_loss_pct is None
     assert m.jitter_ms is None
     assert m.error is None
+    assert m.error_type is None
     assert m.extra == {}
 
 
@@ -94,3 +96,28 @@ def test_experience_event_holds_contributing_measurements():
         contributing_measurements=[m],
     )
     assert event.contributing_measurements == [m]
+
+
+def test_probe_error_type_has_exactly_the_task_014_scoped_values():
+    """TASK-014 deliberately implements only the four ProbeErrorType
+    values ICMP's existing error paths can produce -- not the full
+    future taxonomy architecture-overview.md SS6 anticipates. This test
+    pins that scope down so it isn't silently expanded without a
+    conscious decision."""
+    assert {member.value for member in ProbeErrorType} == {
+        "timeout",
+        "permission_denied",
+        "probe_unavailable",
+        "unknown",
+    }
+
+
+def test_raw_measurement_error_type_can_be_set_to_a_probe_error_type():
+    m = RawMeasurement(
+        probe_type=ProbeType.ICMP,
+        target="1.1.1.1",
+        success=False,
+        error="permission error",
+        error_type=ProbeErrorType.PERMISSION_DENIED,
+    )
+    assert m.error_type == ProbeErrorType.PERMISSION_DENIED

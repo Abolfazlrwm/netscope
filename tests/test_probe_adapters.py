@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from netscope.adapters.probes.dns_adapter import DNSProbeAdapter
 from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
-from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter
-from netscope.core.models import ProbeType, RawMeasurement
+from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter, _classify_icmp_error
+from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
 from netscope.core.ports import Probe
 from netscope.probes import dns_probe, http_probe, icmp_probe
 
@@ -241,3 +241,102 @@ def test_adapter_modules_do_not_import_network_libraries_directly():
             f"{module.__name__} imports {imported_modules & forbidden} directly -- "
             "adapters must delegate to netscope.probes.*, not reimplement measurement logic"
         )
+
+
+# ---------------------------------------------------------------------------
+# TASK-014 -- Structured errors for ICMP (ProbeErrorType), scoped to ICMP
+# only, classified from icmp_probe.py's existing free-text error strings.
+# icmp_probe.py itself is not modified or exercised for real (no real
+# ICMP), so these are fully offline and deterministic.
+# ---------------------------------------------------------------------------
+
+def test_icmp_adapter_successful_measurement_has_no_error_type(monkeypatch):
+    monkeypatch.setattr(
+        icmp_probe, "ping",
+        lambda target, **kwargs: RawMeasurement(probe_type=ProbeType.ICMP, target=target, success=True, latency_ms=5.0),
+    )
+
+    result = ICMPProbeAdapter().run("1.1.1.1")
+
+    assert result.success is True
+    assert result.error_type is None
+
+
+def test_icmp_adapter_classifies_missing_library_as_probe_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        icmp_probe, "ping",
+        lambda target, **kwargs: RawMeasurement(
+            probe_type=ProbeType.ICMP, target=target, success=False, error="icmplib not installed",
+        ),
+    )
+
+    result = ICMPProbeAdapter().run("1.1.1.1")
+
+    assert result.error_type == ProbeErrorType.PROBE_UNAVAILABLE
+
+
+def test_icmp_adapter_classifies_permission_error_as_permission_denied(monkeypatch):
+    monkeypatch.setattr(
+        icmp_probe, "ping",
+        lambda target, **kwargs: RawMeasurement(
+            probe_type=ProbeType.ICMP,
+            target=target,
+            success=False,
+            error="permission error, unprivileged fallback also failed: [Errno 1] Operation not permitted",
+        ),
+    )
+
+    result = ICMPProbeAdapter().run("1.1.1.1")
+
+    assert result.error_type == ProbeErrorType.PERMISSION_DENIED
+
+
+def test_icmp_adapter_classifies_no_response_with_no_error_string_as_timeout(monkeypatch):
+    """icmp_probe.py's ping() does not set `error` when icmplib.ping()
+    completes without raising but the host never responds (100% packet
+    loss, is_alive=False) -- this failed-with-no-error-string case is
+    the timeout case."""
+    monkeypatch.setattr(
+        icmp_probe, "ping",
+        lambda target, **kwargs: RawMeasurement(
+            probe_type=ProbeType.ICMP, target=target, success=False, packet_loss_pct=100.0, error=None,
+        ),
+    )
+
+    result = ICMPProbeAdapter().run("10.0.0.99")
+
+    assert result.error_type == ProbeErrorType.TIMEOUT
+
+
+def test_icmp_adapter_classifies_unrecognized_error_as_unknown(monkeypatch):
+    monkeypatch.setattr(
+        icmp_probe, "ping",
+        lambda target, **kwargs: RawMeasurement(
+            probe_type=ProbeType.ICMP, target=target, success=False, error="some totally different failure",
+        ),
+    )
+
+    result = ICMPProbeAdapter().run("1.1.1.1")
+
+    assert result.error_type == ProbeErrorType.UNKNOWN
+
+
+def test_classify_icmp_error_helper_directly_covers_all_four_cases():
+    """Direct unit tests of the classification function itself, not
+    just through the adapter -- keeps the mapping's correctness visible
+    without needing to reconstruct a full adapter call each time."""
+    assert _classify_icmp_error(
+        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=True)
+    ) is None
+    assert _classify_icmp_error(
+        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="icmplib not installed")
+    ) == ProbeErrorType.PROBE_UNAVAILABLE
+    assert _classify_icmp_error(
+        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="Permission denied")
+    ) == ProbeErrorType.PERMISSION_DENIED
+    assert _classify_icmp_error(
+        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error=None)
+    ) == ProbeErrorType.TIMEOUT
+    assert _classify_icmp_error(
+        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="weird")
+    ) == ProbeErrorType.UNKNOWN

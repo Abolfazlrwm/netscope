@@ -28,6 +28,30 @@ class ProbeType(str, Enum):
     TRACEROUTE = "traceroute"
 
 
+class ProbeErrorType(str, Enum):
+    """Structured classification of why a probe failed, so downstream
+    code can branch on failure category rather than parsing free-text
+    error strings. See architecture-overview.md SS6 for the full future
+    taxonomy this is a deliberately small subset of.
+
+    TASK-014 scope note: only the four values ICMP's existing error
+    paths (in probes/icmp_probe.py, unmodified by TASK-014) can
+    currently produce are implemented here -- TIMEOUT, PERMISSION_DENIED,
+    PROBE_UNAVAILABLE, UNKNOWN. This is NOT the complete taxonomy
+    architecture-overview.md anticipates (which also lists DNS_FAILURE,
+    CONNECTION_REFUSED, NETWORK_UNREACHABLE, TLS_FAILURE, HTTP_FAILURE,
+    PLATFORM_UNSUPPORTED, etc.). Those remain unimplemented until the
+    probes that can actually produce them (DNS, HTTP, TCP, TLS) are
+    migrated in their own, separately-scoped future tasks -- adding
+    unused values now would be speculative.
+    """
+
+    TIMEOUT = "timeout"
+    PERMISSION_DENIED = "permission_denied"
+    PROBE_UNAVAILABLE = "probe_unavailable"
+    UNKNOWN = "unknown"
+
+
 @dataclass
 class RawMeasurement:
     """A single, raw measurement from one probe. No interpretation here."""
@@ -41,6 +65,7 @@ class RawMeasurement:
     packet_loss_pct: Optional[float] = None
     jitter_ms: Optional[float] = None
     error: Optional[str] = None
+    error_type: Optional[ProbeErrorType] = None
 
     # Free-form extra data specific to the probe type
     # (e.g. resolved IP for DNS, status_code for HTTP, hop list for traceroute)
