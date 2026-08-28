@@ -14,6 +14,7 @@ from netscope.adapters.probes.dns_adapter import DNSProbeAdapter
 from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
 from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter
 from netscope.adapters.probes.registry import ProbeNotRegisteredError, ProbeRegistry
+from netscope.adapters.probes.tcp_adapter import TCPProbeAdapter
 from netscope.app.container import Container, build_container
 from netscope.core.models import ProbeType, RawMeasurement
 from netscope.core.ports import Probe
@@ -44,6 +45,13 @@ def test_registry_returns_http_adapter_for_http_probe_type():
     assert probe.probe_type == ProbeType.HTTP
 
 
+def test_registry_returns_tcp_adapter_for_tcp_probe_type():
+    registry = ProbeRegistry()
+    probe = registry.get(ProbeType.TCP)
+    assert isinstance(probe, TCPProbeAdapter)
+    assert probe.probe_type == ProbeType.TCP
+
+
 # ---------------------------------------------------------------------------
 # All registered adapters satisfy the Probe protocol
 # ---------------------------------------------------------------------------
@@ -55,9 +63,12 @@ def test_all_default_registered_probes_satisfy_probe_protocol():
         assert isinstance(probe, Probe), f"{probe_type} adapter does not satisfy Probe"
 
 
-def test_available_types_reports_exactly_the_three_implemented_probes():
+def test_available_types_reports_exactly_the_four_implemented_probes():
+    """Updated by TASK-016: TCP joined ICMP/DNS/HTTP as a registered
+    default. This is a conscious update (see registry.py's own
+    docstring, also updated) -- not a silent drift."""
     registry = ProbeRegistry()
-    assert registry.available_types() == frozenset({ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP})
+    assert registry.available_types() == frozenset({ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP, ProbeType.TCP})
 
 
 # ---------------------------------------------------------------------------
@@ -66,13 +77,16 @@ def test_available_types_reports_exactly_the_three_implemented_probes():
 
 def test_unregistered_probe_type_raises_probe_not_registered_error():
     registry = ProbeRegistry()
-    # TCP has no adapter yet (future-roadmap.md TASK-016) -- looking it
-    # up must fail loudly and explicitly, not return None or the wrong probe.
+    # TLS has no adapter yet (future-roadmap.md TASK-017) -- looking it
+    # up must fail loudly and explicitly, not return None or the wrong
+    # probe. (TCP was this test's example before TASK-016 registered a
+    # TCP adapter by default; TLS is the next genuinely-unregistered
+    # type, consciously chosen to replace it.)
     try:
-        registry.get(ProbeType.TCP)
+        registry.get(ProbeType.TLS)
         assert False, "expected ProbeNotRegisteredError to be raised"
     except ProbeNotRegisteredError as exc:
-        assert "tcp" in str(exc).lower()
+        assert "tls" in str(exc).lower()
         assert "icmp" in str(exc).lower()  # message names what IS registered
 
 
@@ -98,19 +112,23 @@ def test_empty_registry_raises_for_every_probe_type():
 # ---------------------------------------------------------------------------
 
 def test_register_adds_a_new_probe_type_without_modifying_the_class():
-    class _FakeTCPProbe:
-        probe_type = ProbeType.TCP
+    """Uses TLS as the example of registering a genuinely-new type
+    (TCP was this test's example before TASK-016 registered a TCP
+    adapter by default; TLS is the next unregistered type, consciously
+    chosen to replace it)."""
+    class _FakeTLSProbe:
+        probe_type = ProbeType.TLS
 
         def run(self, target: str, **options: object) -> RawMeasurement:
-            return RawMeasurement(probe_type=ProbeType.TCP, target=target, success=True)
+            return RawMeasurement(probe_type=ProbeType.TLS, target=target, success=True)
 
     registry = ProbeRegistry()
-    assert ProbeType.TCP not in registry.available_types()
+    assert ProbeType.TLS not in registry.available_types()
 
-    registry.register(ProbeType.TCP, _FakeTCPProbe())
+    registry.register(ProbeType.TLS, _FakeTLSProbe())
 
-    assert ProbeType.TCP in registry.available_types()
-    probe = registry.get(ProbeType.TCP)
+    assert ProbeType.TLS in registry.available_types()
+    probe = registry.get(ProbeType.TLS)
     assert isinstance(probe, Probe)
     assert probe.run("example.com").success is True
 
@@ -189,9 +207,10 @@ def test_build_container_returns_a_container_with_a_probe_registry():
     assert isinstance(container.probe_registry, ProbeRegistry)
 
 
-def test_build_container_registry_has_all_three_default_probes_working():
+def test_build_container_registry_has_all_four_default_probes_working():
+    """Updated by TASK-016 to include TCP alongside ICMP/DNS/HTTP."""
     container = build_container()
-    for probe_type in (ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP):
+    for probe_type in (ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP, ProbeType.TCP):
         probe = container.probe_registry.get(probe_type)
         assert isinstance(probe, Probe)
         assert probe.probe_type == probe_type

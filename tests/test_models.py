@@ -98,21 +98,22 @@ def test_experience_event_holds_contributing_measurements():
     assert event.contributing_measurements == [m]
 
 
-def test_probe_error_type_has_exactly_the_task_014_and_015_scoped_values():
-    """TASK-014 introduced ProbeErrorType scoped to ICMP's error paths
-    only, with this exact test asserting a 4-value set specifically so
-    any later expansion would fail loudly rather than silently. TASK-015
-    is that conscious expansion: DNS's own failure modes (NXDOMAIN,
-    NoAnswer, NoNameservers, etc., none of which fit the ICMP-scoped
-    values) need a DNS-specific bucket, added here as DNS_FAILURE per
+def test_probe_error_type_has_exactly_the_task_014_015_and_016_scoped_values():
+    """TASK-014/015 pinned ProbeErrorType to the ICMP/DNS-justified
+    values, with this exact test asserting the set so any later
+    expansion would fail loudly rather than silently. TASK-016 is
+    another conscious expansion: TCP's ConnectionRefusedError is a
+    distinct, cleanly-typed builtin exception common enough to justify
+    its own CONNECTION_REFUSED bucket, added here per
     architecture-overview.md SS6's already-anticipated taxonomy. This
     test is deliberately updated (not silently left failing) to reflect
-    that conscious decision -- the mechanism worked as designed."""
+    that conscious decision."""
     assert {member.value for member in ProbeErrorType} == {
         "timeout",
         "permission_denied",
         "probe_unavailable",
         "dns_failure",
+        "connection_refused",
         "unknown",
     }
 

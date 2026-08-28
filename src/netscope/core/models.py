@@ -34,21 +34,23 @@ class ProbeErrorType(str, Enum):
     error strings. See architecture-overview.md SS6 for the full future
     taxonomy this is a deliberately small subset of.
 
-    Scope note: only the values ICMP (TASK-014) and DNS (TASK-015) can
-    currently produce are implemented here -- TIMEOUT, PERMISSION_DENIED,
-    PROBE_UNAVAILABLE, DNS_FAILURE, UNKNOWN. This is NOT the complete
-    taxonomy architecture-overview.md anticipates (which also lists
-    CONNECTION_REFUSED, NETWORK_UNREACHABLE, TLS_FAILURE, HTTP_FAILURE,
-    PLATFORM_UNSUPPORTED, etc.). Those remain unimplemented until the
-    probes that can actually produce them (TCP, TLS, HTTP) are migrated
-    in their own, separately-scoped future tasks -- adding unused values
-    now would be speculative.
+    Scope note: only the values ICMP (TASK-014), DNS (TASK-015), and
+    TCP (TASK-016) can currently produce are implemented here --
+    TIMEOUT, PERMISSION_DENIED, PROBE_UNAVAILABLE, DNS_FAILURE,
+    CONNECTION_REFUSED, UNKNOWN. This is NOT the complete taxonomy
+    architecture-overview.md anticipates (which also lists
+    NETWORK_UNREACHABLE, TLS_FAILURE, HTTP_FAILURE, PLATFORM_UNSUPPORTED,
+    etc.). Those remain unimplemented until the probes that can
+    actually produce them (TLS, HTTP) are migrated in their own,
+    separately-scoped future tasks -- adding unused values now would be
+    speculative.
     """
 
     TIMEOUT = "timeout"
     PERMISSION_DENIED = "permission_denied"
     PROBE_UNAVAILABLE = "probe_unavailable"
     DNS_FAILURE = "dns_failure"
+    CONNECTION_REFUSED = "connection_refused"
     UNKNOWN = "unknown"
 
 

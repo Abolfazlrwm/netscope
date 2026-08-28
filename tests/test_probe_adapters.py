@@ -19,9 +19,10 @@ from __future__ import annotations
 from netscope.adapters.probes.dns_adapter import DNSProbeAdapter, _classify_dns_error
 from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
 from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter, _classify_icmp_error
+from netscope.adapters.probes.tcp_adapter import TCPProbeAdapter
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
 from netscope.core.ports import Probe
-from netscope.probes import dns_probe, http_probe, icmp_probe
+from netscope.probes import dns_probe, http_probe, icmp_probe, tcp_probe
 
 
 # ---------------------------------------------------------------------------
@@ -428,3 +429,135 @@ def test_classify_dns_error_helper_directly_covers_all_cases():
     assert _classify_dns_error(
         RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error=None)
     ) == ProbeErrorType.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# TASK-016 -- New TCP connect-timing probe (stdlib socket only). Unlike
+# ICMP/DNS, there is no legacy implementation, so tcp_probe.py classifies
+# errors directly from real socket exception types -- tested here at the
+# probe level, where that classification actually happens. socket.socket
+# is fully mocked throughout -- no real network access is used or needed.
+# ---------------------------------------------------------------------------
+
+class _FakeSocket:
+    """Records settimeout()/close() calls; connect() either succeeds
+    silently or raises a pre-configured exception."""
+
+    def __init__(self, connect_raises: Exception | None = None):
+        self._connect_raises = connect_raises
+        self.timeout_set: float | None = None
+        self.closed = False
+        self.connected_to = None
+
+    def settimeout(self, timeout):
+        self.timeout_set = timeout
+
+    def connect(self, address):
+        self.connected_to = address
+        if self._connect_raises is not None:
+            raise self._connect_raises
+
+    def close(self):
+        self.closed = True
+
+
+def test_tcp_adapter_satisfies_probe_protocol_and_reports_tcp_type():
+    adapter = TCPProbeAdapter()
+    assert isinstance(adapter, Probe)
+    assert adapter.probe_type == ProbeType.TCP
+
+
+def test_tcp_adapter_forwards_target_port_and_timeout_to_connect(monkeypatch):
+    """Confirms the adapter is a pure pass-through, per its own
+    docstring -- no classification logic of its own, just delegation."""
+    captured = {}
+
+    def fake_connect(host, **kwargs):
+        captured["host"] = host
+        captured["kwargs"] = kwargs
+        return RawMeasurement(probe_type=ProbeType.TCP, target=f"{host}:{kwargs.get('port')}", success=True)
+
+    monkeypatch.setattr(tcp_probe, "connect", fake_connect)
+
+    result = TCPProbeAdapter().run("example.com", port=443, timeout=1.5)
+
+    assert isinstance(result, RawMeasurement)
+    assert captured["host"] == "example.com"
+    assert captured["kwargs"] == {"port": 443, "timeout": 1.5}
+
+
+def test_tcp_probe_successful_connection_returns_successful_measurement(monkeypatch):
+    fake_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe.socket, "socket", lambda *a, **k: fake_socket)
+
+    result = tcp_probe.connect("192.0.2.1", 443)
+
+    assert result.success is True
+    assert result.probe_type == ProbeType.TCP
+    assert result.target == "192.0.2.1:443"
+    assert result.error is None
+    assert result.error_type is None
+    assert fake_socket.connected_to == ("192.0.2.1", 443)
+
+
+def test_tcp_probe_uses_monotonic_clock_for_latency(monkeypatch):
+    """Confirms time.perf_counter() (monotonic) is what drives
+    latency_ms, not datetime -- per the task's explicit requirement."""
+    fake_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe.socket, "socket", lambda *a, **k: fake_socket)
+
+    counter_values = iter([100.0, 100.25])  # 250ms elapsed
+    monkeypatch.setattr(tcp_probe.time, "perf_counter", lambda: next(counter_values))
+
+    result = tcp_probe.connect("192.0.2.1", 443)
+
+    assert result.latency_ms == 250.0
+
+
+def test_tcp_probe_passes_configured_timeout_to_socket(monkeypatch):
+    fake_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe.socket, "socket", lambda *a, **k: fake_socket)
+
+    tcp_probe.connect("192.0.2.1", 443, timeout=3.5)
+
+    assert fake_socket.timeout_set == 3.5
+
+
+def test_tcp_probe_classifies_each_socket_exception_type_correctly(monkeypatch):
+    """Covers 'connection refused/error is handled correctly' and
+    'invalid/unavailable target behavior is handled deterministically'
+    for every exception branch tcp_probe.connect() implements, using
+    the real exception types (never string matching)."""
+    cases = [
+        (tcp_probe.socket.timeout(), ProbeErrorType.TIMEOUT),
+        (ConnectionRefusedError("Connection refused"), ProbeErrorType.CONNECTION_REFUSED),
+        (PermissionError("Operation not permitted"), ProbeErrorType.PERMISSION_DENIED),
+        (OSError("Network is unreachable"), ProbeErrorType.UNKNOWN),
+    ]
+    for exc, expected_type in cases:
+        fake_socket = _FakeSocket(connect_raises=exc)
+        monkeypatch.setattr(tcp_probe.socket, "socket", lambda *a, **k: fake_socket)
+
+        result = tcp_probe.connect("192.0.2.1", 443)
+
+        assert result.success is False, expected_type
+        assert result.error_type == expected_type, expected_type
+        assert result.error is not None
+
+
+def test_tcp_probe_closes_socket_after_successful_attempt(monkeypatch):
+    fake_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe.socket, "socket", lambda *a, **k: fake_socket)
+
+    tcp_probe.connect("192.0.2.1", 443)
+
+    assert fake_socket.closed is True
+
+
+def test_tcp_probe_closes_socket_after_failed_attempt(monkeypatch):
+    fake_socket = _FakeSocket(connect_raises=ConnectionRefusedError("refused"))
+    monkeypatch.setattr(tcp_probe.socket, "socket", lambda *a, **k: fake_socket)
+
+    tcp_probe.connect("192.0.2.1", 443)
+
+    assert fake_socket.closed is True
