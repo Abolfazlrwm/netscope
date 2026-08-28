@@ -98,16 +98,21 @@ def test_experience_event_holds_contributing_measurements():
     assert event.contributing_measurements == [m]
 
 
-def test_probe_error_type_has_exactly_the_task_014_scoped_values():
-    """TASK-014 deliberately implements only the four ProbeErrorType
-    values ICMP's existing error paths can produce -- not the full
-    future taxonomy architecture-overview.md SS6 anticipates. This test
-    pins that scope down so it isn't silently expanded without a
-    conscious decision."""
+def test_probe_error_type_has_exactly_the_task_014_and_015_scoped_values():
+    """TASK-014 introduced ProbeErrorType scoped to ICMP's error paths
+    only, with this exact test asserting a 4-value set specifically so
+    any later expansion would fail loudly rather than silently. TASK-015
+    is that conscious expansion: DNS's own failure modes (NXDOMAIN,
+    NoAnswer, NoNameservers, etc., none of which fit the ICMP-scoped
+    values) need a DNS-specific bucket, added here as DNS_FAILURE per
+    architecture-overview.md SS6's already-anticipated taxonomy. This
+    test is deliberately updated (not silently left failing) to reflect
+    that conscious decision -- the mechanism worked as designed."""
     assert {member.value for member in ProbeErrorType} == {
         "timeout",
         "permission_denied",
         "probe_unavailable",
+        "dns_failure",
         "unknown",
     }
 

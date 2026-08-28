@@ -16,7 +16,7 @@ access is used, consistent with the rest of the test suite.
 
 from __future__ import annotations
 
-from netscope.adapters.probes.dns_adapter import DNSProbeAdapter
+from netscope.adapters.probes.dns_adapter import DNSProbeAdapter, _classify_dns_error
 from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
 from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter, _classify_icmp_error
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
@@ -339,4 +339,92 @@ def test_classify_icmp_error_helper_directly_covers_all_four_cases():
     ) == ProbeErrorType.TIMEOUT
     assert _classify_icmp_error(
         RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="weird")
+    ) == ProbeErrorType.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# TASK-015 -- Structured errors for DNS (same migration pattern as
+# TASK-014's ICMP), classified from dns_probe.py's existing free-text
+# error strings. dns_probe.py itself is not modified or exercised for
+# real (dns.resolver is monkeypatched at the dns_probe.resolve() level,
+# matching the established convention from TASK-007/014), so these are
+# fully offline and deterministic.
+# ---------------------------------------------------------------------------
+
+def test_dns_adapter_successful_measurement_has_no_error_type(monkeypatch):
+    monkeypatch.setattr(
+        dns_probe, "resolve",
+        lambda hostname, **kwargs: RawMeasurement(probe_type=ProbeType.DNS, target=hostname, success=True, latency_ms=5.0),
+    )
+
+    result = DNSProbeAdapter().run("example.com")
+
+    assert result.success is True
+    assert result.error_type is None
+
+
+def test_dns_adapter_classifies_missing_library_as_probe_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        dns_probe, "resolve",
+        lambda hostname, **kwargs: RawMeasurement(
+            probe_type=ProbeType.DNS, target=hostname, success=False, error="dnspython not installed",
+        ),
+    )
+
+    result = DNSProbeAdapter().run("example.com")
+
+    assert result.error_type == ProbeErrorType.PROBE_UNAVAILABLE
+
+
+def test_dns_adapter_classifies_timeout_as_timeout(monkeypatch):
+    """Matches dns.exception.Timeout's actual string representation,
+    'The DNS operation timed out.' (verified directly against the
+    installed dnspython package)."""
+    monkeypatch.setattr(
+        dns_probe, "resolve",
+        lambda hostname, **kwargs: RawMeasurement(
+            probe_type=ProbeType.DNS, target=hostname, success=False, error="The DNS operation timed out.",
+        ),
+    )
+
+    result = DNSProbeAdapter().run("example.com")
+
+    assert result.error_type == ProbeErrorType.TIMEOUT
+
+
+def test_dns_adapter_classifies_nxdomain_as_dns_failure(monkeypatch):
+    """Matches dns.resolver.NXDOMAIN's actual string representation,
+    'The DNS query name does not exist.' -- and any other
+    dnspython-raised resolution failure (NoAnswer, NoNameservers, etc.)
+    falls into the same DNS_FAILURE bucket, since none of them fit the
+    ICMP-scoped TIMEOUT/PERMISSION_DENIED/PROBE_UNAVAILABLE values."""
+    monkeypatch.setattr(
+        dns_probe, "resolve",
+        lambda hostname, **kwargs: RawMeasurement(
+            probe_type=ProbeType.DNS, target=hostname, success=False, error="The DNS query name does not exist.",
+        ),
+    )
+
+    result = DNSProbeAdapter().run("does-not-exist.invalid")
+
+    assert result.error_type == ProbeErrorType.DNS_FAILURE
+
+
+def test_classify_dns_error_helper_directly_covers_all_cases():
+    """Direct unit tests of the classification function itself, not
+    just through the adapter -- mirrors the equivalent ICMP test."""
+    assert _classify_dns_error(
+        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=True)
+    ) is None
+    assert _classify_dns_error(
+        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error="dnspython not installed")
+    ) == ProbeErrorType.PROBE_UNAVAILABLE
+    assert _classify_dns_error(
+        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error="The DNS operation timed out.")
+    ) == ProbeErrorType.TIMEOUT
+    assert _classify_dns_error(
+        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error="NXDOMAIN or whatever else dnspython says")
+    ) == ProbeErrorType.DNS_FAILURE
+    assert _classify_dns_error(
+        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error=None)
     ) == ProbeErrorType.UNKNOWN
