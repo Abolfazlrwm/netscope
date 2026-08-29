@@ -20,6 +20,7 @@ from netscope.adapters.probes.dns_adapter import DNSProbeAdapter
 from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
 from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter
 from netscope.adapters.probes.tcp_adapter import TCPProbeAdapter
+from netscope.adapters.probes.tls_adapter import TLSProbeAdapter
 from netscope.core.models import ProbeType
 from netscope.core.ports import Probe
 
@@ -33,14 +34,15 @@ class ProbeNotRegisteredError(LookupError):
 class ProbeRegistry:
     """Looks up a Probe-conforming adapter by ProbeType.
 
-    Registered by default: ICMP, DNS, HTTP, TCP -- the four adapters
-    that exist today (netscope.adapters.probes.icmp_adapter/dns_adapter/
-    http_adapter, added in TASK-007; tcp_adapter, added in TASK-016).
-    TLS and TRACEROUTE are valid ProbeType members but have no adapter
-    implementation yet (per future-roadmap.md TASK-017/019) -- looking
-    one of those up raises ProbeNotRegisteredError rather than returning
-    None or an incorrect probe, so the failure is loud and immediate
-    rather than a confusing AttributeError three calls later.
+    Registered by default: ICMP, DNS, HTTP, TCP, TLS -- the five
+    adapters that exist today (netscope.adapters.probes.icmp_adapter/
+    dns_adapter/http_adapter, added in TASK-007; tcp_adapter, added in
+    TASK-016; tls_adapter, added in TASK-017). TRACEROUTE is a valid
+    ProbeType member but has no adapter implementation yet (per
+    future-roadmap.md TASK-019) -- looking it up raises
+    ProbeNotRegisteredError rather than returning None or an incorrect
+    probe, so the failure is loud and immediate rather than a confusing
+    AttributeError three calls later.
     """
 
     def __init__(self, probes: dict[ProbeType, Probe] | None = None) -> None:
@@ -55,6 +57,7 @@ class ProbeRegistry:
             ProbeType.DNS: DNSProbeAdapter(),
             ProbeType.HTTP: HTTPProbeAdapter(),
             ProbeType.TCP: TCPProbeAdapter(),
+            ProbeType.TLS: TLSProbeAdapter(),
         }
 
     def get(self, probe_type: ProbeType) -> Probe:
@@ -77,9 +80,9 @@ class ProbeRegistry:
     def register(self, probe_type: ProbeType, probe: Probe) -> None:
         """Register (or replace) the adapter used for `probe_type`.
 
-        Exists so a future probe (e.g. a TLS adapter, TASK-017) or a
-        test fake can be added/swapped without changing this class --
-        extending the registry never requires editing ProbeRegistry
+        Exists so a future probe (e.g. a traceroute adapter, TASK-019)
+        or a test fake can be added/swapped without changing this class
+        -- extending the registry never requires editing ProbeRegistry
         itself, only calling register() on an instance.
         """
         self._probes[probe_type] = probe

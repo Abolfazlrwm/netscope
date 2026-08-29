@@ -16,13 +16,16 @@ access is used, consistent with the rest of the test suite.
 
 from __future__ import annotations
 
+import ssl
+
 from netscope.adapters.probes.dns_adapter import DNSProbeAdapter, _classify_dns_error
 from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
 from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter, _classify_icmp_error
 from netscope.adapters.probes.tcp_adapter import TCPProbeAdapter
+from netscope.adapters.probes.tls_adapter import TLSProbeAdapter
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
 from netscope.core.ports import Probe
-from netscope.probes import dns_probe, http_probe, icmp_probe, tcp_probe
+from netscope.probes import dns_probe, http_probe, icmp_probe, tcp_probe, tls_probe
 
 
 # ---------------------------------------------------------------------------
@@ -217,14 +220,19 @@ def test_icmp_adapter_does_not_add_its_own_error_handling(monkeypatch):
 
 def test_adapter_modules_do_not_import_network_libraries_directly():
     """Adapters delegate to the existing probes.* modules -- they must
-    not import icmplib/dnspython/httpx themselves, which would indicate
-    duplicated measurement logic rather than a thin wrapper."""
+    not import icmplib/dnspython/httpx/socket/ssl themselves, which
+    would indicate duplicated measurement logic rather than a thin
+    wrapper. Extended by TASK-017 to also cover tcp_adapter (a
+    pre-existing gap from TASK-016, closed here since it's directly
+    adjacent to adding tls_adapter to the same check) and tls_adapter."""
     import ast
     import netscope.adapters.probes.icmp_adapter as icmp_adapter
     import netscope.adapters.probes.dns_adapter as dns_adapter
     import netscope.adapters.probes.http_adapter as http_adapter
+    import netscope.adapters.probes.tcp_adapter as tcp_adapter_module
+    import netscope.adapters.probes.tls_adapter as tls_adapter_module
 
-    for module in (icmp_adapter, dns_adapter, http_adapter):
+    for module in (icmp_adapter, dns_adapter, http_adapter, tcp_adapter_module, tls_adapter_module):
         with open(module.__file__, encoding="utf-8") as f:
             tree = ast.parse(f.read())
 
@@ -237,7 +245,7 @@ def test_adapter_modules_do_not_import_network_libraries_directly():
                 if node.module:
                     imported_modules.add(node.module.split(".")[0])
 
-        forbidden = {"icmplib", "dns", "httpx"}
+        forbidden = {"icmplib", "dns", "httpx", "socket", "ssl"}
         assert not (imported_modules & forbidden), (
             f"{module.__name__} imports {imported_modules & forbidden} directly -- "
             "adapters must delegate to netscope.probes.*, not reimplement measurement logic"
@@ -559,5 +567,219 @@ def test_tcp_probe_closes_socket_after_failed_attempt(monkeypatch):
     monkeypatch.setattr(tcp_probe.socket, "socket", lambda *a, **k: fake_socket)
 
     tcp_probe.connect("192.0.2.1", 443)
+
+    assert fake_socket.closed is True
+
+
+# ---------------------------------------------------------------------------
+# TASK-017 -- New TLS handshake-timing probe, layered on tcp_probe's
+# shared connection helper, stdlib ssl only. Like TCP, there is no
+# legacy implementation, so tls_probe.py classifies errors directly
+# from real ssl/socket exception types -- tested at the probe level,
+# where that classification happens. socket/ssl are fully mocked
+# throughout -- no real network or TLS handshake is used or needed.
+# ---------------------------------------------------------------------------
+
+class _FakeTLSSocket:
+    def __init__(self, version="TLSv1.3", cipher_name="TLS_AES_256_GCM_SHA384"):
+        self._version = version
+        self._cipher_name = cipher_name
+        self.closed = False
+
+    def version(self):
+        return self._version
+
+    def cipher(self):
+        return (self._cipher_name, "TLSv1.3", 256)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeSSLContext:
+    """Fake for ssl.SSLContext -- records what wrap_socket() was called
+    with, and either returns a fake TLS socket or raises a
+    pre-configured exception, mirroring _FakeSocket's connect_raises
+    pattern from the TCP tests above."""
+
+    def __init__(self, wrap_raises: Exception | None = None, tls_socket: _FakeTLSSocket | None = None):
+        self._wrap_raises = wrap_raises
+        self._tls_socket = tls_socket if tls_socket is not None else _FakeTLSSocket()
+        self.wrapped_with = None
+
+    def wrap_socket(self, sock, server_hostname=None):
+        self.wrapped_with = (sock, server_hostname)
+        if self._wrap_raises is not None:
+            raise self._wrap_raises
+        return self._tls_socket
+
+
+def test_tls_adapter_satisfies_probe_protocol_and_reports_tls_type():
+    adapter = TLSProbeAdapter()
+    assert isinstance(adapter, Probe)
+    assert adapter.probe_type == ProbeType.TLS
+
+
+def test_tls_adapter_forwards_target_port_and_timeout_to_handshake(monkeypatch):
+    """Confirms the adapter is a pure pass-through, mirroring TCP's
+    equivalent test -- no classification logic of its own."""
+    captured = {}
+
+    def fake_handshake(host, **kwargs):
+        captured["host"] = host
+        captured["kwargs"] = kwargs
+        return RawMeasurement(probe_type=ProbeType.TLS, target=f"{host}:{kwargs.get('port')}", success=True)
+
+    monkeypatch.setattr(tls_probe, "handshake", fake_handshake)
+
+    result = TLSProbeAdapter().run("example.com", port=443, timeout=1.5)
+
+    assert isinstance(result, RawMeasurement)
+    assert captured["host"] == "example.com"
+    assert captured["kwargs"] == {"port": 443, "timeout": 1.5}
+
+
+def test_tls_probe_successful_handshake_returns_successful_measurement(monkeypatch):
+    fake_tcp_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe, "_open_connected_socket", lambda host, port, timeout: fake_tcp_socket)
+
+    fake_tls_socket = _FakeTLSSocket(version="TLSv1.3", cipher_name="TLS_AES_256_GCM_SHA384")
+    fake_context = _FakeSSLContext(tls_socket=fake_tls_socket)
+    monkeypatch.setattr(tls_probe.ssl, "create_default_context", lambda: fake_context)
+
+    result = tls_probe.handshake("example.com", 443)
+
+    assert result.success is True
+    assert result.probe_type == ProbeType.TLS
+    assert result.target == "example.com:443"
+    assert result.extra["tls_version"] == "TLSv1.3"
+    assert result.extra["cipher"] == "TLS_AES_256_GCM_SHA384"
+    assert fake_context.wrapped_with == (fake_tcp_socket, "example.com")
+    assert fake_tls_socket.closed is True
+
+
+def test_tls_probe_uses_monotonic_clock_for_handshake_only_timing(monkeypatch):
+    """Confirms latency_ms times the handshake alone, not TCP-connect
+    plus handshake combined -- per tls_probe.py's documented design
+    decision, distinguishing it from tcp_probe's own connect-timing
+    metric."""
+    fake_tcp_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe, "_open_connected_socket", lambda host, port, timeout: fake_tcp_socket)
+    monkeypatch.setattr(tls_probe.ssl, "create_default_context", lambda: _FakeSSLContext())
+
+    counter_values = iter([50.0, 50.3])  # 300ms elapsed during the handshake phase only
+    monkeypatch.setattr(tls_probe.time, "perf_counter", lambda: next(counter_values))
+
+    result = tls_probe.handshake("example.com", 443)
+
+    assert abs(result.latency_ms - 300.0) < 0.001
+
+
+def test_tls_probe_classifies_tcp_layer_failure_before_handshake_using_tcp_error_types(monkeypatch):
+    """A ConnectionRefusedError from the underlying TCP connection
+    (before TLS even starts) is classified using the same TCP-layer
+    ProbeErrorType values TASK-016 established -- reused, not
+    reinvented. latency_ms stays None since handshake timing never
+    started."""
+    def raise_refused(host, port, timeout):
+        raise ConnectionRefusedError("refused")
+
+    monkeypatch.setattr(tcp_probe, "_open_connected_socket", raise_refused)
+
+    result = tls_probe.handshake("example.com", 443)
+
+    assert result.success is False
+    assert result.error_type == ProbeErrorType.CONNECTION_REFUSED
+    assert result.latency_ms is None
+
+
+def test_tls_probe_classifies_handshake_failure_as_tls_failure(monkeypatch):
+    fake_tcp_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe, "_open_connected_socket", lambda host, port, timeout: fake_tcp_socket)
+
+    fake_context = _FakeSSLContext(wrap_raises=ssl.SSLError("handshake failure"))
+    monkeypatch.setattr(tls_probe.ssl, "create_default_context", lambda: fake_context)
+
+    result = tls_probe.handshake("example.com", 443)
+
+    assert result.success is False
+    assert result.error_type == ProbeErrorType.TLS_FAILURE
+    assert fake_tcp_socket.closed is True  # underlying socket still closed on handshake failure
+
+
+def test_tls_probe_classifies_certificate_verification_failure_as_tls_failure(monkeypatch):
+    """SSLCertVerificationError is a subclass of SSLError (verified
+    directly against the ssl module) -- confirms it is caught by the
+    same except clause, not missed."""
+    fake_tcp_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe, "_open_connected_socket", lambda host, port, timeout: fake_tcp_socket)
+
+    fake_context = _FakeSSLContext(wrap_raises=ssl.SSLCertVerificationError())
+    monkeypatch.setattr(tls_probe.ssl, "create_default_context", lambda: fake_context)
+
+    result = tls_probe.handshake("example.com", 443)
+
+    assert result.error_type == ProbeErrorType.TLS_FAILURE
+
+
+def test_tls_probe_classifies_handshake_timeout_as_timeout(monkeypatch):
+    fake_tcp_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe, "_open_connected_socket", lambda host, port, timeout: fake_tcp_socket)
+
+    fake_context = _FakeSSLContext(wrap_raises=tls_probe.socket.timeout())
+    monkeypatch.setattr(tls_probe.ssl, "create_default_context", lambda: fake_context)
+
+    result = tls_probe.handshake("example.com", 443)
+
+    assert result.error_type == ProbeErrorType.TIMEOUT
+
+
+def test_tls_probe_classifies_non_ssl_oserror_during_handshake_as_unknown(monkeypatch):
+    """Covers the defensive fallback: a plain OSError from wrap_socket()
+    that is not an ssl.SSLError is classified as UNKNOWN, not TLS_FAILURE,
+    since it isn't actually a TLS-specific negotiation failure."""
+    fake_tcp_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe, "_open_connected_socket", lambda host, port, timeout: fake_tcp_socket)
+
+    fake_context = _FakeSSLContext(wrap_raises=OSError("underlying socket dropped"))
+    monkeypatch.setattr(tls_probe.ssl, "create_default_context", lambda: fake_context)
+
+    result = tls_probe.handshake("example.com", 443)
+
+    assert result.error_type == ProbeErrorType.UNKNOWN
+
+
+def test_tls_probe_closes_underlying_tcp_socket_if_handshake_never_returns_a_tls_socket(monkeypatch):
+    """If wrap_socket() raises before ever returning a TLS socket, the
+    underlying plain TCP socket must still be closed -- there is no
+    tls_sock to close instead."""
+    fake_tcp_socket = _FakeSocket()
+    monkeypatch.setattr(tcp_probe, "_open_connected_socket", lambda host, port, timeout: fake_tcp_socket)
+
+    fake_context = _FakeSSLContext(wrap_raises=OSError("boom"))
+    monkeypatch.setattr(tls_probe.ssl, "create_default_context", lambda: fake_context)
+
+    tls_probe.handshake("example.com", 443)
+
+    assert fake_tcp_socket.closed is True
+
+
+def test_open_connected_socket_closes_partial_socket_on_connect_failure(monkeypatch):
+    """Direct regression test for the leak fix made in tcp_probe.py
+    while implementing TASK-017 (extracting _open_connected_socket for
+    sharing with tls_probe.py surfaced this bug via the existing TCP
+    test suite): if connect() fails after the socket itself was already
+    created, _open_connected_socket must close it before re-raising --
+    the caller can never get a reference to close, since the exception
+    propagates before the `sock = _open_connected_socket(...)`
+    assignment completes."""
+    fake_socket = _FakeSocket(connect_raises=ConnectionRefusedError("refused"))
+    monkeypatch.setattr(tcp_probe.socket, "socket", lambda *a, **k: fake_socket)
+
+    try:
+        tcp_probe._open_connected_socket("192.0.2.1", 443, 2.0)
+        assert False, "expected ConnectionRefusedError to propagate"
+    except ConnectionRefusedError:
+        pass
 
     assert fake_socket.closed is True

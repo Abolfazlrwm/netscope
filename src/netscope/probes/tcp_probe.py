@@ -27,6 +27,35 @@ import time
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, utcnow
 
 
+def _open_connected_socket(host: str, port: int, timeout: float) -> socket.socket:
+    """Create a TCP socket, set its timeout, and connect it to (host, port).
+
+    Returns the connected, still-open socket -- the caller is
+    responsible for closing it. On failure, closes the partially-created
+    socket itself before re-raising: if socket.connect() fails, the
+    exception propagates out of this function before the caller's
+    `sock = _open_connected_socket(...)` assignment ever completes, so
+    the caller never gets a reference to close -- this function must
+    guarantee no leak on its own, not rely on the caller's finally block
+    to reach a socket it can never see.
+
+    Raises whatever socket.socket()/settimeout()/connect() raise; does
+    no further exception handling/classification of its own, so
+    connect() (below) and tls_probe.py's handshake() (TASK-017,
+    "layered on TASK-016's socket" per future-roadmap.md) can share
+    identical connection-establishment behavior, each classifying
+    failures in its own try/except.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(timeout)
+        sock.connect((host, port))
+    except Exception:
+        sock.close()
+        raise
+    return sock
+
+
 def connect(host: str, port: int, timeout: float = 2.0) -> RawMeasurement:
     """Attempt a TCP connection to (host, port) and time how long
     connection establishment takes.
@@ -45,9 +74,7 @@ def connect(host: str, port: int, timeout: float = 2.0) -> RawMeasurement:
     start = time.perf_counter()
     sock: socket.socket | None = None
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect((host, port))
+        sock = _open_connected_socket(host, port, timeout)
         elapsed_ms = (time.perf_counter() - start) * 1000
         return RawMeasurement(
             probe_type=ProbeType.TCP,
