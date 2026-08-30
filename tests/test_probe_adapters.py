@@ -783,3 +783,221 @@ def test_open_connected_socket_closes_partial_socket_on_connect_failure(monkeypa
         pass
 
     assert fake_socket.closed is True
+
+
+# ---------------------------------------------------------------------------
+# TASK-018 -- HTTP TTFB semantics fix + structured errors. httpx.Client
+# is fully mocked throughout -- no real network access is used or needed.
+# These are the first tests to exercise http_probe.fetch()'s actual
+# implementation directly (existing HTTP tests above only ever mocked
+# http_probe.fetch() itself at the adapter boundary).
+# ---------------------------------------------------------------------------
+
+class _FakeHTTPXResponse:
+    """Context-manager fake for the object yielded by
+    httpx.Client.stream(...). Tracks exactly which body chunks were
+    consumed via iter_bytes(), so tests can assert TTFB semantics
+    (only the first chunk read) rather than full-body download."""
+
+    def __init__(self, status_code=200, http_version="HTTP/1.1", url="https://example.com/", chunks=None):
+        self.status_code = status_code
+        self.http_version = http_version
+        self.url = url
+        self._chunks = list(chunks) if chunks is not None else [b"first-chunk", b"rest-of-body"]
+        self.closed = False
+        self.iterated_chunks: list[bytes] = []
+
+    def iter_bytes(self):
+        for chunk in self._chunks:
+            self.iterated_chunks.append(chunk)
+            yield chunk
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeHTTPXClient:
+    """Context-manager fake for httpx.Client(...). Its .stream() either
+    returns a pre-configured _FakeHTTPXResponse or raises a
+    pre-configured exception, mirroring the _FakeSocket/_FakeSSLContext
+    pattern used for the TCP/TLS tests above."""
+
+    def __init__(self, response=None, stream_raises: Exception | None = None, **kwargs):
+        self.init_kwargs = kwargs
+        self._response = response if response is not None else _FakeHTTPXResponse()
+        self._stream_raises = stream_raises
+        self.stream_called_with = None
+
+    def stream(self, method, url):
+        self.stream_called_with = (method, url)
+        if self._stream_raises is not None:
+            raise self._stream_raises
+        return self._response
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def test_http_probe_ttfb_stops_after_first_chunk_not_full_body(monkeypatch):
+    """THE core TTFB semantics test: confirms only the first body chunk
+    is consumed before timing stops and the response is closed -- the
+    exact mismatch implementation-audit.md flagged (docstring claimed
+    TTFB, code measured full-body download) is now actually fixed, not
+    just relabeled."""
+    fake_response = _FakeHTTPXResponse(status_code=200, chunks=[b"first", b"second", b"third"])
+    fake_client = _FakeHTTPXClient(response=fake_response)
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert result.success is True
+    assert fake_response.iterated_chunks == [b"first"]
+    assert fake_response.closed is True
+    assert fake_client.stream_called_with == ("GET", "https://example.com/")
+
+
+def test_http_probe_uses_monotonic_clock_for_ttfb_timing(monkeypatch):
+    """Confirms time.perf_counter() (monotonic) drives latency_ms, and
+    that only the two calls bracketing 'first chunk received' are used
+    -- not additional calls that would imply full-body timing."""
+    fake_response = _FakeHTTPXResponse(chunks=[b"x", b"y", b"z"])
+    fake_client = _FakeHTTPXClient(response=fake_response)
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    counter_values = iter([10.0, 10.123])  # 123ms elapsed to first byte
+    monkeypatch.setattr(http_probe.time, "perf_counter", lambda: next(counter_values))
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert abs(result.latency_ms - 123.0) < 0.001
+
+
+def test_http_probe_docstring_and_behavior_agree_on_ttfb(monkeypatch):
+    """Explicit check that the documented semantics and actual behavior
+    match, per the task's TTFB review checklist: the docstring must
+    describe exactly what the code does."""
+    assert "first byte" in http_probe.__doc__.lower()
+    assert "does not download the rest" in http_probe.__doc__.lower() or "full body" in http_probe.__doc__.lower()
+
+
+def test_http_probe_successful_measurement_preserves_expected_fields(monkeypatch):
+    fake_response = _FakeHTTPXResponse(
+        status_code=200, http_version="HTTP/2", url="https://example.com/final", chunks=[b"data"]
+    )
+    fake_client = _FakeHTTPXClient(response=fake_response)
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert result.probe_type == ProbeType.HTTP
+    assert result.success is True
+    assert result.error is None
+    assert result.error_type is None
+    assert result.extra["status_code"] == 200
+    assert result.extra["http_version"] == "HTTP/2"
+    assert result.extra["final_url"] == "https://example.com/final"
+
+
+def test_http_probe_error_status_code_is_unsuccessful_but_not_an_exception(monkeypatch):
+    """A 4xx/5xx response is a normal (non-exception) Response in httpx
+    -- success=False, but latency_ms is still measured, matching the
+    original implementation's behavior of not calling raise_for_status()."""
+    fake_response = _FakeHTTPXResponse(status_code=503, chunks=[b"error body"])
+    fake_client = _FakeHTTPXClient(response=fake_response)
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert result.success is False
+    assert result.error is None
+    assert result.latency_ms is not None
+    assert result.extra["status_code"] == 503
+
+
+def test_http_probe_handles_empty_body_response_without_crashing(monkeypatch):
+    """iter_bytes() yielding nothing (empty body, e.g. a 204-style
+    response) must not crash the for/break loop -- TTFB is still
+    measured right after the loop exits naturally."""
+    fake_response = _FakeHTTPXResponse(status_code=204, chunks=[])
+    fake_client = _FakeHTTPXClient(response=fake_response)
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert result.success is True
+    assert result.latency_ms is not None
+    assert fake_response.closed is True
+
+
+def test_http_probe_classifies_timeout_exception_as_timeout(monkeypatch):
+    fake_client = _FakeHTTPXClient(stream_raises=http_probe.httpx.ConnectTimeout("timed out"))
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert result.success is False
+    assert result.error_type == ProbeErrorType.TIMEOUT
+
+
+def test_http_probe_classifies_read_timeout_as_timeout_too(monkeypatch):
+    """Confirms the classification uses the httpx.TimeoutException base
+    class, catching all its subclasses (ConnectTimeout, ReadTimeout,
+    WriteTimeout, PoolTimeout), not just one specific one."""
+    fake_client = _FakeHTTPXClient(stream_raises=http_probe.httpx.ReadTimeout("read timed out"))
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert result.error_type == ProbeErrorType.TIMEOUT
+
+
+def test_http_probe_classifies_connect_error_as_http_failure(monkeypatch):
+    fake_client = _FakeHTTPXClient(stream_raises=http_probe.httpx.ConnectError("connection failed"))
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert result.success is False
+    assert result.error_type == ProbeErrorType.HTTP_FAILURE
+
+
+def test_http_probe_classifies_unexpected_exception_as_unknown(monkeypatch):
+    fake_client = _FakeHTTPXClient(stream_raises=ValueError("totally unexpected"))
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert result.error_type == ProbeErrorType.UNKNOWN
+
+
+def test_http_probe_missing_library_is_classified_as_probe_unavailable(monkeypatch):
+    monkeypatch.setattr(http_probe, "_HTTPX_AVAILABLE", False)
+
+    result = http_probe.fetch("https://example.com/")
+
+    assert result.success is False
+    assert result.error == "httpx not installed"
+    assert result.error_type == ProbeErrorType.PROBE_UNAVAILABLE
+
+
+def test_http_adapter_still_delegates_correctly_after_task_018_changes(monkeypatch):
+    """Confirms the adapter itself required no logic change -- it still
+    delegates to http_probe.fetch() and returns exactly what it returns,
+    same as tests/test_probe_adapters.py's original HTTP adapter tests."""
+    fake_response = _FakeHTTPXResponse(chunks=[b"ok"])
+    fake_client = _FakeHTTPXClient(response=fake_response)
+    monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
+
+    result = HTTPProbeAdapter().run("https://example.com/")
+
+    assert isinstance(result, RawMeasurement)
+    assert result.success is True

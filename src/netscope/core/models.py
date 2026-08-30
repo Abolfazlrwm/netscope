@@ -35,14 +35,15 @@ class ProbeErrorType(str, Enum):
     taxonomy this is a deliberately small subset of.
 
     Scope note: only the values ICMP (TASK-014), DNS (TASK-015), TCP
-    (TASK-016), and TLS (TASK-017) can currently produce are implemented
-    here -- TIMEOUT, PERMISSION_DENIED, PROBE_UNAVAILABLE, DNS_FAILURE,
-    CONNECTION_REFUSED, TLS_FAILURE, UNKNOWN. This is NOT the complete
-    taxonomy architecture-overview.md anticipates (which also lists
-    NETWORK_UNREACHABLE, HTTP_FAILURE, PLATFORM_UNSUPPORTED, etc.).
-    Those remain unimplemented until the probes that can actually
-    produce them (HTTP) are migrated in their own, separately-scoped
-    future tasks -- adding unused values now would be speculative.
+    (TASK-016), TLS (TASK-017), and HTTP (TASK-018) can currently
+    produce are implemented here -- TIMEOUT, PERMISSION_DENIED,
+    PROBE_UNAVAILABLE, DNS_FAILURE, CONNECTION_REFUSED, TLS_FAILURE,
+    HTTP_FAILURE, UNKNOWN. This is NOT the complete taxonomy
+    architecture-overview.md anticipates (which also lists
+    NETWORK_UNREACHABLE, PLATFORM_UNSUPPORTED, etc.). Those remain
+    unimplemented until the probes/adapters that can actually produce
+    them are built in their own, separately-scoped future tasks --
+    adding unused values now would be speculative.
     """
 
     TIMEOUT = "timeout"
@@ -51,6 +52,7 @@ class ProbeErrorType(str, Enum):
     DNS_FAILURE = "dns_failure"
     CONNECTION_REFUSED = "connection_refused"
     TLS_FAILURE = "tls_failure"
+    HTTP_FAILURE = "http_failure"
     UNKNOWN = "unknown"
 
 

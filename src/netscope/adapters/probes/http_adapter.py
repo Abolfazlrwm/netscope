@@ -2,11 +2,21 @@
 Adapter making the existing netscope.probes.http_probe.fetch() function
 satisfy netscope.core.ports.Probe.
 
-Contains no measurement logic of its own -- http_probe.py is not modified
-and is not reimplemented here. This class only translates the Probe
-Protocol's run(target, **options) call shape into a call to the existing
-fetch(url, timeout) function (target maps to url, the function's first
-positional parameter), and returns whatever it returns, unchanged.
+Contains no measurement logic of its own -- this adapter class does not
+duplicate or reimplement http_probe.py's HTTP logic. This class only
+translates the Probe Protocol's run(target, **options) call shape into
+a call to the existing fetch(url, timeout) function (target maps to
+url, the function's first positional parameter), and returns whatever
+it returns, unchanged.
+
+TASK-018 note: http_probe.py itself WAS modified by TASK-018 (TTFB
+semantics fix, structured error classification) -- mirroring the
+TCP/TLS pattern (TASK-016/017) rather than the ICMP/DNS retrofit
+pattern (TASK-014/015), since HTTP's exception types are cleanly
+available at the point they're caught, with no legacy string-only
+constraint preventing classification at the source. This adapter
+remains a pure pass-through regardless -- it has no classification
+logic of its own to add either way.
 """
 
 from __future__ import annotations

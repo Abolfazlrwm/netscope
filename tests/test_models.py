@@ -98,16 +98,17 @@ def test_experience_event_holds_contributing_measurements():
     assert event.contributing_measurements == [m]
 
 
-def test_probe_error_type_has_exactly_the_task_014_through_017_scoped_values():
-    """TASK-014/015/016 pinned ProbeErrorType to prior justified values,
-    with this exact test asserting the set so any later expansion would
-    fail loudly rather than silently. TASK-017 is another conscious
-    expansion: TLS handshake failures (ssl.SSLError and its subclass
-    SSLCertVerificationError) are TLS-specific negotiation failures with
-    no existing good fit, justifying TLS_FAILURE per
-    architecture-overview.md SS6's already-anticipated taxonomy. This
-    test is deliberately updated (not silently left failing) to reflect
-    that conscious decision."""
+def test_probe_error_type_has_exactly_the_task_014_through_018_scoped_values():
+    """TASK-014 through TASK-017 pinned ProbeErrorType to prior
+    justified values, with this exact test asserting the set so any
+    later expansion would fail loudly rather than silently. TASK-018 is
+    another conscious expansion: httpx.RequestError (ConnectError,
+    ReadError, WriteError, ProtocolError, etc. -- everything except
+    TimeoutException, which maps to the existing TIMEOUT) represents a
+    genuine HTTP-transport-layer failure with no existing good fit,
+    justifying HTTP_FAILURE per architecture-overview.md SS6's
+    already-anticipated taxonomy. This test is deliberately updated
+    (not silently left failing) to reflect that conscious decision."""
     assert {member.value for member in ProbeErrorType} == {
         "timeout",
         "permission_denied",
@@ -115,6 +116,7 @@ def test_probe_error_type_has_exactly_the_task_014_through_017_scoped_values():
         "dns_failure",
         "connection_refused",
         "tls_failure",
+        "http_failure",
         "unknown",
     }
 
