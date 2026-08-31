@@ -16,6 +16,7 @@ from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter
 from netscope.adapters.probes.registry import ProbeNotRegisteredError, ProbeRegistry
 from netscope.adapters.probes.tcp_adapter import TCPProbeAdapter
 from netscope.adapters.probes.tls_adapter import TLSProbeAdapter
+from netscope.adapters.probes.traceroute_adapter import TracerouteProbeAdapter
 from netscope.app.container import Container, build_container
 from netscope.core.models import ProbeType, RawMeasurement
 from netscope.core.ports import Probe
@@ -60,6 +61,13 @@ def test_registry_returns_tls_adapter_for_tls_probe_type():
     assert probe.probe_type == ProbeType.TLS
 
 
+def test_registry_returns_traceroute_adapter_for_traceroute_probe_type():
+    registry = ProbeRegistry()
+    probe = registry.get(ProbeType.TRACEROUTE)
+    assert isinstance(probe, TracerouteProbeAdapter)
+    assert probe.probe_type == ProbeType.TRACEROUTE
+
+
 # ---------------------------------------------------------------------------
 # All registered adapters satisfy the Probe protocol
 # ---------------------------------------------------------------------------
@@ -71,14 +79,13 @@ def test_all_default_registered_probes_satisfy_probe_protocol():
         assert isinstance(probe, Probe), f"{probe_type} adapter does not satisfy Probe"
 
 
-def test_available_types_reports_exactly_the_five_implemented_probes():
-    """Updated by TASK-017: TLS joined ICMP/DNS/HTTP/TCP as a registered
-    default. This is a conscious update (see registry.py's own
-    docstring, also updated) -- not a silent drift."""
+def test_available_types_reports_exactly_the_six_implemented_probes():
+    """Updated by TASK-019: TRACEROUTE joined ICMP/DNS/HTTP/TCP/TLS as
+    a registered default -- every ProbeType member now has one. This is
+    a conscious update (see registry.py's own docstring, also updated)
+    -- not a silent drift."""
     registry = ProbeRegistry()
-    assert registry.available_types() == frozenset(
-        {ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP, ProbeType.TCP, ProbeType.TLS}
-    )
+    assert registry.available_types() == frozenset(ProbeType)
 
 
 # ---------------------------------------------------------------------------
@@ -86,17 +93,22 @@ def test_available_types_reports_exactly_the_five_implemented_probes():
 # ---------------------------------------------------------------------------
 
 def test_unregistered_probe_type_raises_probe_not_registered_error():
-    registry = ProbeRegistry()
-    # TRACEROUTE has no adapter yet (future-roadmap.md TASK-019) --
-    # looking it up must fail loudly and explicitly, not return None or
-    # the wrong probe. (TLS was this test's example before TASK-017
-    # registered a TLS adapter by default; TRACEROUTE is the next
-    # genuinely-unregistered type, consciously chosen to replace it.)
+    """TASK-019 registered the last remaining ProbeType (TRACEROUTE was
+    this test's example before TASK-019 -- see registry.py's own
+    updated ProbeNotRegisteredError docstring for the same point), so
+    there is no longer a genuinely-unimplemented real ProbeType to use.
+    Instead, this test constructs a registry that deliberately omits
+    one type via an explicit `probes` mapping -- arguably a more robust
+    design than the previous approach anyway, since it no longer
+    depends on which probe happens to be unimplemented at any given
+    point in the roadmap (a dependency that, as this exact test
+    demonstrates, eventually runs out)."""
+    registry = ProbeRegistry(probes={ProbeType.ICMP: ICMPProbeAdapter()})
     try:
-        registry.get(ProbeType.TRACEROUTE)
+        registry.get(ProbeType.DNS)
         assert False, "expected ProbeNotRegisteredError to be raised"
     except ProbeNotRegisteredError as exc:
-        assert "traceroute" in str(exc).lower()
+        assert "dns" in str(exc).lower()
         assert "icmp" in str(exc).lower()  # message names what IS registered
 
 
@@ -122,25 +134,20 @@ def test_empty_registry_raises_for_every_probe_type():
 # ---------------------------------------------------------------------------
 
 def test_register_adds_a_new_probe_type_without_modifying_the_class():
-    """Uses TRACEROUTE as the example of registering a genuinely-new
-    type (TLS was this test's example before TASK-017 registered a TLS
-    adapter by default; TRACEROUTE is the next unregistered type,
-    consciously chosen to replace it)."""
-    class _FakeTracerouteProbe:
-        probe_type = ProbeType.TRACEROUTE
+    """Same reasoning as test_unregistered_probe_type_raises_probe_not_registered_error
+    above: constructs a deliberately-incomplete registry and registers
+    a real adapter (DNSProbeAdapter) into it, rather than relying on a
+    currently-unimplemented ProbeType example -- TASK-019 registered
+    the last one (TRACEROUTE), so none remain."""
+    registry = ProbeRegistry(probes={ProbeType.ICMP: ICMPProbeAdapter()})
+    assert ProbeType.DNS not in registry.available_types()
 
-        def run(self, target: str, **options: object) -> RawMeasurement:
-            return RawMeasurement(probe_type=ProbeType.TRACEROUTE, target=target, success=True)
+    registry.register(ProbeType.DNS, DNSProbeAdapter())
 
-    registry = ProbeRegistry()
-    assert ProbeType.TRACEROUTE not in registry.available_types()
-
-    registry.register(ProbeType.TRACEROUTE, _FakeTracerouteProbe())
-
-    assert ProbeType.TRACEROUTE in registry.available_types()
-    probe = registry.get(ProbeType.TRACEROUTE)
+    assert ProbeType.DNS in registry.available_types()
+    probe = registry.get(ProbeType.DNS)
     assert isinstance(probe, Probe)
-    assert probe.run("example.com").success is True
+    assert probe.probe_type == ProbeType.DNS
 
 
 def test_register_can_replace_an_existing_probe_type():
@@ -217,10 +224,11 @@ def test_build_container_returns_a_container_with_a_probe_registry():
     assert isinstance(container.probe_registry, ProbeRegistry)
 
 
-def test_build_container_registry_has_all_five_default_probes_working():
-    """Updated by TASK-017 to include TLS alongside ICMP/DNS/HTTP/TCP."""
+def test_build_container_registry_has_all_six_default_probes_working():
+    """Updated by TASK-019 to include TRACEROUTE alongside
+    ICMP/DNS/HTTP/TCP/TLS -- every ProbeType member now works."""
     container = build_container()
-    for probe_type in (ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP, ProbeType.TCP, ProbeType.TLS):
+    for probe_type in ProbeType:
         probe = container.probe_registry.get(probe_type)
         assert isinstance(probe, Probe)
         assert probe.probe_type == probe_type

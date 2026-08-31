@@ -23,9 +23,10 @@ from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
 from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter, _classify_icmp_error
 from netscope.adapters.probes.tcp_adapter import TCPProbeAdapter
 from netscope.adapters.probes.tls_adapter import TLSProbeAdapter
-from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
+from netscope.adapters.probes.traceroute_adapter import TracerouteProbeAdapter
+from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, RouteSnapshot
 from netscope.core.ports import Probe
-from netscope.probes import dns_probe, http_probe, icmp_probe, tcp_probe, tls_probe
+from netscope.probes import dns_probe, http_probe, icmp_probe, tcp_probe, tls_probe, traceroute_probe
 
 
 # ---------------------------------------------------------------------------
@@ -223,16 +224,25 @@ def test_adapter_modules_do_not_import_network_libraries_directly():
     not import icmplib/dnspython/httpx/socket/ssl themselves, which
     would indicate duplicated measurement logic rather than a thin
     wrapper. Extended by TASK-017 to also cover tcp_adapter (a
-    pre-existing gap from TASK-016, closed here since it's directly
-    adjacent to adding tls_adapter to the same check) and tls_adapter."""
+    pre-existing gap from TASK-016, closed since it's directly adjacent
+    to adding tls_adapter to the same check) and tls_adapter. Extended
+    by TASK-019 to also cover traceroute_adapter."""
     import ast
     import netscope.adapters.probes.icmp_adapter as icmp_adapter
     import netscope.adapters.probes.dns_adapter as dns_adapter
     import netscope.adapters.probes.http_adapter as http_adapter
     import netscope.adapters.probes.tcp_adapter as tcp_adapter_module
     import netscope.adapters.probes.tls_adapter as tls_adapter_module
+    import netscope.adapters.probes.traceroute_adapter as traceroute_adapter_module
 
-    for module in (icmp_adapter, dns_adapter, http_adapter, tcp_adapter_module, tls_adapter_module):
+    for module in (
+        icmp_adapter,
+        dns_adapter,
+        http_adapter,
+        tcp_adapter_module,
+        tls_adapter_module,
+        traceroute_adapter_module,
+    ):
         with open(module.__file__, encoding="utf-8") as f:
             tree = ast.parse(f.read())
 
@@ -1001,3 +1011,159 @@ def test_http_adapter_still_delegates_correctly_after_task_018_changes(monkeypat
 
     assert isinstance(result, RawMeasurement)
     assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# TASK-019 -- Traceroute probe wrapping icmplib.traceroute() per
+# ADR-003. icmplib is fully mocked throughout for the ordinary unit
+# tests below -- no real traceroute/network access is used or needed.
+# (A real, non-mocked traceroute was also run manually against 1.1.1.1
+# as an integration verification during implementation -- reported
+# separately, not part of this automated suite.)
+# ---------------------------------------------------------------------------
+
+class _FakeIcmplibHop:
+    """Fake for icmplib.Hop -- mirrors the real class's is_alive/
+    avg_rtt/packet_loss properties (verified against the installed
+    icmplib package's actual Host/Hop implementation)."""
+
+    def __init__(self, address, distance, rtts):
+        self.address = address
+        self.distance = distance
+        self._rtts = rtts
+
+    @property
+    def is_alive(self):
+        return len(self._rtts) > 0
+
+    @property
+    def avg_rtt(self):
+        return sum(self._rtts) / len(self._rtts) if self._rtts else 0.0
+
+    @property
+    def packet_loss(self):
+        return 0.0 if self._rtts else 1.0
+
+
+def test_traceroute_adapter_satisfies_probe_protocol_and_reports_traceroute_type():
+    adapter = TracerouteProbeAdapter()
+    assert isinstance(adapter, Probe)
+    assert adapter.probe_type == ProbeType.TRACEROUTE
+
+
+def test_traceroute_adapter_forwards_target_and_options_to_the_probe(monkeypatch):
+    """Confirms the adapter is a pure pass-through, mirroring every
+    other adapter's equivalent test -- no classification/measurement
+    logic of its own."""
+    captured = {}
+
+    def fake_traceroute(host, **kwargs):
+        captured["host"] = host
+        captured["kwargs"] = kwargs
+        return RawMeasurement(probe_type=ProbeType.TRACEROUTE, target=host, success=True)
+
+    monkeypatch.setattr(traceroute_probe, "traceroute", fake_traceroute)
+
+    TracerouteProbeAdapter().run("example.com", max_hops=15, timeout=1.0)
+
+    assert captured["host"] == "example.com"
+    assert captured["kwargs"] == {"max_hops": 15, "timeout": 1.0}
+
+
+def test_traceroute_probe_maps_successful_hops_to_route_snapshot(monkeypatch):
+    fake_hops = [
+        _FakeIcmplibHop(address="10.0.0.1", distance=1, rtts=[5.0, 6.0]),
+        _FakeIcmplibHop(address="10.0.0.2", distance=2, rtts=[]),  # non-responding hop
+        _FakeIcmplibHop(address="93.184.216.34", distance=3, rtts=[20.0]),
+    ]
+    monkeypatch.setattr(traceroute_probe.icmplib, "traceroute", lambda host, **kwargs: fake_hops)
+
+    result = traceroute_probe.traceroute("example.com")
+
+    assert result.success is True
+    assert result.probe_type == ProbeType.TRACEROUTE
+    assert result.target == "example.com"
+
+    route = result.extra["route"]
+    assert isinstance(route, RouteSnapshot)
+    assert route.target == "example.com"
+    assert len(route.hops) == 3
+
+    hop1 = route.hops[0]
+    assert hop1.ttl == 1
+    assert hop1.address == "10.0.0.1"
+    assert hop1.avg_rtt_ms == 5.5
+    assert hop1.packet_loss_pct == 0.0
+    assert hop1.hostname is None  # reverse DNS is a separate, later concern (TASK-020+)
+
+    non_responding_hop = route.hops[1]
+    assert non_responding_hop.avg_rtt_ms is None
+    assert non_responding_hop.packet_loss_pct == 100.0
+
+
+def test_traceroute_probe_forwards_options_to_icmplib_traceroute(monkeypatch):
+    captured = {}
+
+    def fake_traceroute(host, **kwargs):
+        captured["host"] = host
+        captured["kwargs"] = kwargs
+        return []
+
+    monkeypatch.setattr(traceroute_probe.icmplib, "traceroute", fake_traceroute)
+
+    traceroute_probe.traceroute("example.com", max_hops=15, timeout=1.0)
+
+    assert captured["host"] == "example.com"
+    assert captured["kwargs"] == {"max_hops": 15, "timeout": 1.0}
+
+
+def test_traceroute_probe_classifies_socket_permission_error_as_permission_denied(monkeypatch):
+    """Per ADR-003's explicit requirement: icmplib.traceroute() has no
+    unprivileged fallback (unlike icmp_probe.ping()), so a
+    SocketPermissionError must be classified as PERMISSION_DENIED, not
+    retried. SocketPermissionError's real constructor requires a
+    `privileged: bool` argument (verified directly against the
+    installed icmplib package) -- passing True matches how icmplib
+    itself raises it internally when traceroute's mandatory privileged
+    socket creation fails."""
+    def raise_permission_error(host, **kwargs):
+        raise traceroute_probe.icmplib.exceptions.SocketPermissionError(True)
+
+    monkeypatch.setattr(traceroute_probe.icmplib, "traceroute", raise_permission_error)
+
+    result = traceroute_probe.traceroute("example.com")
+
+    assert result.success is False
+    assert result.error_type == ProbeErrorType.PERMISSION_DENIED
+    assert result.error  # non-empty descriptive string, exact wording not asserted
+
+
+def test_traceroute_probe_no_hops_found_is_unsuccessful(monkeypatch):
+    monkeypatch.setattr(traceroute_probe.icmplib, "traceroute", lambda host, **kwargs: [])
+
+    result = traceroute_probe.traceroute("example.com")
+
+    assert result.success is False
+    assert result.error == "traceroute produced no hops"
+
+
+def test_traceroute_probe_classifies_unexpected_exception_as_unknown(monkeypatch):
+    def raise_unexpected(host, **kwargs):
+        raise RuntimeError("something else went wrong")
+
+    monkeypatch.setattr(traceroute_probe.icmplib, "traceroute", raise_unexpected)
+
+    result = traceroute_probe.traceroute("example.com")
+
+    assert result.success is False
+    assert result.error_type == ProbeErrorType.UNKNOWN
+
+
+def test_traceroute_probe_reports_probe_unavailable_when_icmplib_missing(monkeypatch):
+    monkeypatch.setattr(traceroute_probe, "_ICMPLIB_AVAILABLE", False)
+
+    result = traceroute_probe.traceroute("example.com")
+
+    assert result.success is False
+    assert result.error == "icmplib not installed"
+    assert result.error_type == ProbeErrorType.PROBE_UNAVAILABLE

@@ -21,6 +21,7 @@ from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
 from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter
 from netscope.adapters.probes.tcp_adapter import TCPProbeAdapter
 from netscope.adapters.probes.tls_adapter import TLSProbeAdapter
+from netscope.adapters.probes.traceroute_adapter import TracerouteProbeAdapter
 from netscope.core.models import ProbeType
 from netscope.core.ports import Probe
 
@@ -28,21 +29,30 @@ from netscope.core.ports import Probe
 class ProbeNotRegisteredError(LookupError):
     """Raised when ProbeRegistry.get() is asked for a ProbeType that has
     no registered adapter. A defined, explicit failure mode -- callers
-    are never handed None or a silently-wrong probe."""
+    are never handed None or a silently-wrong probe.
+
+    As of TASK-019, every ProbeType member has a default adapter, so
+    this can only be reached today via a deliberately incomplete custom
+    `probes` mapping (e.g. in tests) -- not by any real ProbeType being
+    unimplemented. The error stays defined and tested regardless, since
+    a future ProbeType member (e.g. a second traceroute strategy, or a
+    wholly new probe kind) could reintroduce a genuinely-unregistered
+    case at any time.
+    """
 
 
 class ProbeRegistry:
     """Looks up a Probe-conforming adapter by ProbeType.
 
-    Registered by default: ICMP, DNS, HTTP, TCP, TLS -- the five
-    adapters that exist today (netscope.adapters.probes.icmp_adapter/
-    dns_adapter/http_adapter, added in TASK-007; tcp_adapter, added in
-    TASK-016; tls_adapter, added in TASK-017). TRACEROUTE is a valid
-    ProbeType member but has no adapter implementation yet (per
-    future-roadmap.md TASK-019) -- looking it up raises
-    ProbeNotRegisteredError rather than returning None or an incorrect
-    probe, so the failure is loud and immediate rather than a confusing
-    AttributeError three calls later.
+    Registered by default: ICMP, DNS, HTTP, TCP, TLS, TRACEROUTE -- all
+    six ProbeType members now have a default adapter
+    (netscope.adapters.probes.icmp_adapter/dns_adapter/http_adapter,
+    added in TASK-007; tcp_adapter, TASK-016; tls_adapter, TASK-017;
+    traceroute_adapter, TASK-019). Looking up any ProbeType member
+    today succeeds; ProbeNotRegisteredError remains the defined
+    behavior for whatever isn't registered in a given registry instance
+    (see its own docstring) rather than being retired now that no gap
+    currently exists.
     """
 
     def __init__(self, probes: dict[ProbeType, Probe] | None = None) -> None:
@@ -58,6 +68,7 @@ class ProbeRegistry:
             ProbeType.HTTP: HTTPProbeAdapter(),
             ProbeType.TCP: TCPProbeAdapter(),
             ProbeType.TLS: TLSProbeAdapter(),
+            ProbeType.TRACEROUTE: TracerouteProbeAdapter(),
         }
 
     def get(self, probe_type: ProbeType) -> Probe:
@@ -80,10 +91,10 @@ class ProbeRegistry:
     def register(self, probe_type: ProbeType, probe: Probe) -> None:
         """Register (or replace) the adapter used for `probe_type`.
 
-        Exists so a future probe (e.g. a traceroute adapter, TASK-019)
-        or a test fake can be added/swapped without changing this class
-        -- extending the registry never requires editing ProbeRegistry
-        itself, only calling register() on an instance.
+        Exists so a future probe type (should ProbeType ever gain a new
+        member) or a test fake can be added/swapped without changing
+        this class -- extending the registry never requires editing
+        ProbeRegistry itself, only calling register() on an instance.
         """
         self._probes[probe_type] = probe
 
