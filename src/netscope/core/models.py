@@ -78,12 +78,29 @@ class RawMeasurement:
 
 @dataclass
 class RouteHop:
+    """One point in a traceroute (TASK-019's traceroute_probe.py
+    produces these).
+
+    asn/organization/country are lookup-ready placeholders (TASK-020,
+    "Hop model" -- finalizing these fields per architecture-overview.md
+    SS5): all three default to None because nothing populates them yet.
+    They are intentionally NOT filled in by the traceroute probe itself
+    -- per architecture-overview.md SS5 and ADR-003, ASN/organization/
+    country come from a separate lookup adapter
+    (future-roadmap.md TASK-022 "ASN/ISP intelligence",
+    TASK-023 "Distance estimation"), not from icmplib.traceroute()'s
+    own output, which has no concept of any of the three. Populating
+    them is explicitly out of this task's scope.
+    """
+
     ttl: int
     address: Optional[str]
     hostname: Optional[str]
     avg_rtt_ms: Optional[float]
     packet_loss_pct: float
     asn: Optional[str] = None
+    organization: Optional[str] = None
+    country: Optional[str] = None
     is_unstable: bool = False
 
 

@@ -76,6 +76,60 @@ def test_route_snapshot_signature_changes_when_hops_change():
     assert snap_a.signature() != snap_b.signature()
 
 
+def test_route_hop_organization_and_country_default_to_none():
+    """TASK-020: asn/organization/country are lookup-ready placeholders
+    -- nothing populates them yet (that's TASK-022/023's job), so a Hop
+    built from just a traceroute measurement (no lookup performed)
+    must default all three to None. asn's default-to-None was already
+    established before this task; this test extends that same
+    guarantee to the two fields TASK-020 adds."""
+    hop = RouteHop(ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=1.0, packet_loss_pct=0.0)
+    assert hop.asn is None
+    assert hop.organization is None
+    assert hop.country is None
+
+
+def test_route_hop_can_be_constructed_with_explicit_lookup_fields():
+    """Once a future lookup adapter (TASK-022/023) populates these,
+    RouteHop must be able to carry the result -- constructing one with
+    asn/organization/country explicitly set must work."""
+    hop = RouteHop(
+        ttl=5,
+        address="93.184.216.34",
+        hostname="example.com",
+        avg_rtt_ms=15.2,
+        packet_loss_pct=0.0,
+        asn="AS15133",
+        organization="Edgecast Inc.",
+        country="US",
+    )
+    assert hop.asn == "AS15133"
+    assert hop.organization == "Edgecast Inc."
+    assert hop.country == "US"
+
+
+def test_route_snapshot_signature_is_unaffected_by_lookup_fields():
+    """A route's identity (its signature, used for churn detection)
+    must be based on the path itself (hop addresses), not on lookup
+    metadata that could be refreshed/updated independently -- two hops
+    at the same address with different ASN/organization/country data
+    (e.g. before and after a lookup was performed) must still produce
+    the identical signature, or route-churn detection would falsely
+    fire on a lookup update rather than an actual path change."""
+    hop_without_lookup = RouteHop(
+        ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=1.0, packet_loss_pct=0.0,
+    )
+    hop_with_lookup = RouteHop(
+        ttl=1, address="10.0.0.1", hostname="router.example.com", avg_rtt_ms=1.0, packet_loss_pct=0.0,
+        asn="AS64500", organization="Example ISP", country="US",
+    )
+
+    snap_a = RouteSnapshot(target="example.com", hops=[hop_without_lookup])
+    snap_b = RouteSnapshot(target="example.com", hops=[hop_with_lookup])
+
+    assert snap_a.signature() == snap_b.signature()
+
+
 def test_incident_is_active_when_ended_at_is_none():
     incident = Incident(started_at=datetime.now(timezone.utc))
     assert incident.is_active is True
