@@ -13,8 +13,11 @@ test_explanation.py).
 
 from __future__ import annotations
 
+import pytest
+
+from netscope.core.baseline import UserBaseline
 from netscope.core.models import ProbeType, RawMeasurement
-from netscope.core.ports import Probe
+from netscope.core.ports import BaselineRepository, Probe
 
 
 class _FakeICMPProbe:
@@ -106,6 +109,92 @@ def test_probe_type_attribute_exposes_the_existing_probe_type_enum():
     fake = _FakeDNSProbe()
     assert fake.probe_type is ProbeType.DNS
     assert isinstance(fake.probe_type, ProbeType)
+
+
+# ---------------------------------------------------------------------------
+# BaselineRepository (TASK-024)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBaselineRepository:
+    """A minimal, in-memory stand-in for a future persistence-layer
+    implementation (e.g. SQLite-backed). Deliberately does NOT inherit
+    from BaselineRepository -- Protocol is structural, mirroring how
+    _FakeICMPProbe/_FakeDNSProbe relate to Probe above. No real
+    database/file access is used -- fully offline and deterministic."""
+
+    def __init__(self) -> None:
+        self._stored: UserBaseline | None = None
+
+    def save(self, baseline: UserBaseline) -> None:
+        self._stored = baseline
+
+    def load(self) -> UserBaseline:
+        if self._stored is None:
+            return UserBaseline()
+        return self._stored
+
+
+class _MissingSaveMethod:
+    """Has load() but no save() -- must NOT satisfy BaselineRepository."""
+
+    def load(self) -> UserBaseline:
+        return UserBaseline()
+
+
+class _MissingLoadMethod:
+    """Has save() but no load() -- must NOT satisfy BaselineRepository."""
+
+    def save(self, baseline: UserBaseline) -> None:
+        pass
+
+
+def test_conforming_fake_satisfies_baseline_repository_protocol_structurally():
+    """No inheritance from BaselineRepository is used here -- same
+    structural-typing point as the Probe tests above."""
+    fake = _FakeBaselineRepository()
+    assert isinstance(fake, BaselineRepository)
+
+
+def test_object_missing_save_method_does_not_satisfy_baseline_repository():
+    assert isinstance(_MissingSaveMethod(), BaselineRepository) is False
+
+
+def test_object_missing_load_method_does_not_satisfy_baseline_repository():
+    assert isinstance(_MissingLoadMethod(), BaselineRepository) is False
+
+
+def test_unrelated_object_does_not_satisfy_baseline_repository():
+    assert isinstance(_NotAProbeAtAll(), BaselineRepository) is False
+
+
+def test_baseline_repository_round_trips_the_existing_user_baseline_model_not_a_new_type():
+    """Confirms the contract reuses core.baseline.UserBaseline rather
+    than introducing a duplicate persistence-facing model, mirroring the
+    equivalent RawMeasurement guarantee for Probe above."""
+    fake = _FakeBaselineRepository()
+    ub = UserBaseline()
+    ub.observe_latency("1.1.1.1", 20.0)
+
+    fake.save(ub)
+    loaded = fake.load()
+
+    assert isinstance(loaded, UserBaseline)
+    assert loaded is ub
+    assert loaded.latency["1.1.1.1"].mean == pytest.approx(20.0)
+
+
+def test_baseline_repository_load_with_nothing_saved_yet_returns_a_fresh_user_baseline():
+    """A conforming repository is free to return an empty baseline when
+    nothing has been persisted yet, rather than raising -- this is a
+    property of the port shape (load() -> UserBaseline, no Optional),
+    not a specific persistence implementation being tested here."""
+    fake = _FakeBaselineRepository()
+    loaded = fake.load()
+
+    assert isinstance(loaded, UserBaseline)
+    assert loaded.latency == {}
+    assert loaded.packet_loss == {}
 
 
 def test_ports_module_only_imports_stdlib_typing_and_core_models():

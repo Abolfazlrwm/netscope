@@ -64,6 +64,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from netscope.core.baseline import UserBaseline
 from netscope.core.models import ProbeType, RawMeasurement
 
 
@@ -96,4 +97,49 @@ class Probe(Protocol):
     probe_type: ProbeType
 
     def run(self, target: str, **options: Any) -> RawMeasurement:
+        ...
+
+
+@runtime_checkable
+class BaselineRepository(Protocol):
+    """Contract for persisting/loading the learned personal baseline.
+
+    WHY THIS CONTRACT EXISTS
+    -------------------------
+    `core.baseline`'s `UserBaseline` is explicitly documented (see
+    docs/architecture/module-boundaries.md's Intelligence section) as a
+    plain in-memory object that must not persist itself -- baseline
+    *state* is persisted by `persistence`, loaded/saved by `app`, via
+    this port. Without it, `app` would need to depend on a concrete
+    storage implementation (e.g. sqlite3) directly to round-trip a
+    `UserBaseline` across runs, which would violate the same
+    core-must-not-depend-on-infrastructure rule the `Probe` Protocol
+    above exists to uphold (adr-001-architecture-style.md, ADR-005).
+
+    SCOPE OF THIS PORT (TASK-024)
+    -------------------------------
+    This is the smallest contract that lets `app` round-trip a single
+    user's baseline: `save` to persist the current in-memory state, and
+    `load` to retrieve it (e.g. on startup, before observing new
+    measurements). NetScope is a single-user, local-first tool (ADR-005,
+    architecture-overview.md SS14) -- there is exactly one `UserBaseline`
+    per local installation, so no per-user key/id parameter is part of
+    this contract; whichever single baseline exists locally is what is
+    saved and loaded. `load` returning a *fresh* baseline when nothing
+    has been saved yet is a concrete `persistence` implementation detail,
+    not a concern of this port.
+
+    Per ADR-005, this is one of five aggregate-specific repository ports
+    expected in `core.ports` (`MeasurementRepository`, `RouteRepository`,
+    `BaselineRepository`, `ServiceRepository`, `IncidentRepository`);
+    only `BaselineRepository` is in scope for TASK-024. Concrete SQLite
+    persistence is explicitly out of scope here and belongs to a later
+    `persistence/` task -- this module continues to define contracts
+    only, per this file's existing design (see module docstring above).
+    """
+
+    def save(self, baseline: UserBaseline) -> None:
+        ...
+
+    def load(self) -> UserBaseline:
         ...

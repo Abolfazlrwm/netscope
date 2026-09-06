@@ -1,10 +1,14 @@
 """
-Characterization tests for netscope.intelligence.baseline.
+Characterization tests for netscope.core.baseline.
 
 These document the CURRENT behavior of MetricBaseline/UserBaseline.
 The algorithm itself (Welford's online mean/variance) is not changed
 by this task -- these tests exist to protect it during future
 integration work (see implementation-audit.md, TASK-008/TASK-009/TASK-010).
+
+Relocated from netscope.intelligence.baseline to netscope.core.baseline
+by TASK-024 (refactor: relocate baseline to core, add persistence port).
+This is a file move only -- no behavioral assertion below was changed.
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ import math
 
 import pytest
 
-from netscope.intelligence.baseline import MetricBaseline, UserBaseline
+from netscope.core.baseline import MetricBaseline, UserBaseline
 
 
 # ---------------------------------------------------------------------------
