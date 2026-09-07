@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import argparse
 
+from netscope.core.baseline import UserBaseline
+from netscope.core.scoring import score_measurements
 from netscope.diagnosis.engine import diagnose
 from netscope.explanation.explainer import explain
-from netscope.intelligence.experience_score import score_measurements
 from netscope.persistence.sqlite_store import SqliteStore
 from netscope.probes import dns_probe, http_probe, icmp_probe
 
@@ -32,7 +33,15 @@ def run_once(gateway: str | None = None) -> None:
     for m in measurements:
         store.save(m)
 
-    experience = score_measurements(measurements)
+    # NOTE: no BaselineRepository-backed load/persist wiring exists yet
+    # (that's app/use_cases.py's job per architecture-overview.md SS10,
+    # not yet built) -- this CLI already didn't persist a baseline
+    # across runs before TASK-025, so a fresh, empty UserBaseline() here
+    # preserves that exact status quo rather than adding new
+    # orchestration. It exists solely to satisfy scoring's new required
+    # `baseline` parameter.
+    baseline = UserBaseline()
+    experience = score_measurements(measurements, baseline)
     print(f"\nExperience score: {experience.score}/100 ({experience.level.value})\n")
 
     diagnosis = diagnose(local_gateway=local_gateway, public_dns=public_dns, public_cdn=public_cdn)
