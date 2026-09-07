@@ -135,17 +135,188 @@ class ExperienceEvent:
     contributing_measurements: list[RawMeasurement] = field(default_factory=list)
 
 
+class Severity(str, Enum):
+    """How severe a single piece of Evidence -- or an Incident it
+    contributed to -- is. Deliberately small and unopinionated: this
+    model only defines the shared vocabulary. Deciding *which* severity
+    a given observation deserves is diagnostic logic and belongs to
+    core/diagnosis.py (TASK-026), not here.
+
+    TASK-009 note: architecture-overview.md SS5 requires both Evidence
+    and Incident to carry a `severity` without specifying concrete
+    values, so this is this task's own minimal, explainable choice --
+    not read from an existing convention elsewhere in the codebase (no
+    prior Severity concept existed; ExperienceLevel is a different,
+    unrelated 5-bucket scale for "how good is my overall experience
+    right now" and is not reused here for "how severe is this one
+    signal", a different question).
+    """
+
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
+class Hypothesis(str, Enum):
+    """The classification a Diagnosis can settle on. Verbatim from the
+    enum architecture-overview.md SS11 specifies for the future
+    evidence/hypothesis-based diagnosis engine (TASK-026).
+
+    TASK-009 note: this task adds the enum as a canonical domain type
+    only, per its own scope (core/models.py). Nothing yet classifies
+    evidence into one of these values -- that selection logic is
+    core/diagnosis.py's job (TASK-026), not this task's.
+
+    INSUFFICIENT_EVIDENCE exists specifically so "not tested" -- or any
+    case where available Evidence can't confidently support a more
+    specific hypothesis -- has somewhere explicit to go, instead of
+    silently defaulting to "no issue detected" the way an all-None
+    input does in today's diagnosis/engine.py (the untested-gateway
+    bug TASK-026 fixes).
+    """
+
+    LOCAL_NETWORK_ISSUE = "local_network_issue"
+    ISP_ACCESS_ISSUE = "isp_access_issue"
+    DNS_ISSUE = "dns_issue"
+    ROUTING_DEGRADATION = "routing_degradation"
+    DESTINATION_ISSUE = "destination_issue"
+    SERVICE_ISSUE = "service_issue"
+    GENERAL_CONNECTIVITY_ISSUE = "general_connectivity_issue"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+
+
+@dataclass
+class Evidence:
+    """One structured signal a Diagnosis is built from -- replaces the
+    free-form `list[str]` the audit flagged (architecture-overview.md
+    SS5: "Must not be free-form text"; today's `diagnosis.engine.Diagnosis
+    .evidence: list[str]` and `core.models.Incident.evidence: list[str]`
+    are exactly that problem).
+
+    `tested` is this model's answer to the headline audit bug: whether
+    `metric` was actually measured at all. When `tested=False`,
+    `observed_value`/`expected_value`/`deviation`/`source` are all None
+    by construction (there is nothing to report -- fabricating a value
+    for something never measured is exactly what must not happen) and
+    this Evidence exists purely to record that absence as first-class
+    information a future Diagnosis can act on (e.g. lean toward
+    INSUFFICIENT_EVIDENCE), rather than the two states "tested and
+    failed" / "tested and healthy" being the only options an absent
+    Measurement could be squeezed into.
+
+    Fields otherwise follow architecture-overview.md SS5 verbatim:
+    `metric` (what was measured, e.g. "gateway_latency"),
+    `observed_value`, `expected_value` (from baseline, if available),
+    `deviation` (e.g. sigma, or None if no baseline yet), `severity`,
+    `source` (the RawMeasurement or RouteSnapshot it came from), and
+    `confidence` (this item's own confidence contribution, 0.0-1.0 --
+    the same scale core/scoring.py's MetricEvaluation.confidence
+    already uses for the analogous "how much should this count"
+    question).
+    """
+
+    metric: str
+    tested: bool = True
+    observed_value: Optional[float] = None
+    expected_value: Optional[float] = None
+    deviation: Optional[float] = None
+    severity: Severity = Severity.INFO
+    source: Optional[RawMeasurement | RouteSnapshot] = None
+    confidence: float = 1.0
+
+
+@dataclass
+class Diagnosis:
+    """The canonical "a diagnosed problem" model (architecture-overview.md
+    SS5/SS11). This is the single model TASK-009 introduces to resolve
+    the audit's headline structural finding (architecture-overview.md
+    SS1): `diagnosis/engine.py`'s own `Diagnosis` dataclass and
+    `core.models.Incident`'s diagnosis-shaped fields "ended up as two
+    competing models for the same concept."
+
+    `classification`: one Hypothesis -- replaces today's free-text
+    `likely_cause: str`.
+
+    `evidence`: the full structured Evidence list this classification
+    was built from -- replaces today's `evidence: list[str]`.
+
+    `ruled_out`: what was considered and excluded. Typed as
+    `list[Evidence | Hypothesis]` per architecture-overview.md SS5
+    ("ruled_out: list[Evidence-or-Hypothesis]") because a thing can be
+    ruled out two different ways -- a specific contradicting Evidence
+    item, or an entire Hypothesis excluded outright with no single
+    Evidence item pinned to it.
+
+    `confidence`: replaces today's per-branch hand-picked constant
+    (`80.0`/`70.0`/`65.0`/`90.0` in diagnosis/engine.py) -- SS11 says
+    this must instead be "derived from the strength/count of supporting
+    evidence". TASK-009 does not implement that derivation (no
+    selection/classification logic belongs in core/models.py); it only
+    gives the field somewhere correct to live for core/diagnosis.py
+    (TASK-026) to populate.
+
+    NOTE ON MIGRATION STATE: this canonical Diagnosis does not yet
+    replace `diagnosis.engine.Diagnosis` in production -- `ui/cli.py`
+    and `explanation/explainer.py` still import and use the old
+    diagnosis.engine.Diagnosis shape (likely_cause/confidence_pct/
+    evidence: list[str]/ruled_out: list[str]) and are deliberately left
+    untouched by TASK-009's scope (core/models.py only; rewriting
+    diagnosis/engine.py itself is explicitly TASK-026's job, which also
+    fixes the untested-gateway bug this model's Evidence.tested field
+    and Hypothesis.INSUFFICIENT_EVIDENCE value exist to support). Both
+    Diagnosis shapes therefore coexist temporarily by design until
+    TASK-026 migrates the real callers over.
+    """
+
+    classification: Hypothesis
+    evidence: list[Evidence] = field(default_factory=list)
+    confidence: float = 0.0
+    ruled_out: list[Evidence | Hypothesis] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=utcnow)
+
+
 @dataclass
 class Incident:
-    """A sustained deviation from the user's personal baseline."""
+    """A sustained deviation from the user's personal baseline.
+
+    TASK-009 reconciliation: architecture-overview.md SS5 says an
+    Incident "Must represent: started_at, ended_at (...kept as-is),
+    severity, the affected target/Service, evidence (the union of
+    evidence across the incident's lifetime, not just its start), and
+    the Diagnosis that explains it." The previous shape
+    (`signals: list[str]`, `likely_cause: Optional[str]`,
+    `confidence_pct: Optional[float]`, `evidence: list[str]`,
+    `explanation: Optional[str]`) duplicated exactly the free-text
+    diagnosis-shaped fields SS1 identifies as the audit's structural
+    complaint -- those fields are removed here and replaced by a single
+    `diagnosis: Diagnosis` reference plus a structured
+    `evidence: list[Evidence]`. `signals: list[str]` is dropped
+    entirely rather than kept alongside `evidence: list[Evidence]`:
+    architecture-overview.md's documented field set for Incident does
+    not include it, and `Evidence.metric` now serves the same
+    "which signal" role structurally instead of as loose strings.
+
+    `target` uses `str` (matching `RouteSnapshot.target`) rather than
+    the `Service` type architecture-overview.md SS5 also mentions,
+    because `Service` does not exist yet -- it is TASK-032's own
+    later, separately-scoped task ("Service targets", future-roadmap.md
+    Phase G). Introducing it here would be exactly the kind of
+    speculative/early-future-task modeling TASK-009 is scoped against.
+
+    `severity` and `diagnosis` default to None rather than a
+    fabricated non-null value: an Incident's constructor should not
+    have to assert a severity or attach a Diagnosis it wasn't actually
+    given one for (this task adds the *shape*; core/incidents.py,
+    TASK-028, is what actually produces populated Incidents from a
+    sequence of Diagnoses).
+    """
 
     started_at: datetime
     ended_at: Optional[datetime] = None
-    signals: list[str] = field(default_factory=list)  # e.g. ["latency", "loss", "route_change"]
-    likely_cause: Optional[str] = None
-    confidence_pct: Optional[float] = None
-    evidence: list[str] = field(default_factory=list)
-    explanation: Optional[str] = None
+    severity: Optional[Severity] = None
+    target: Optional[str] = None
+    evidence: list[Evidence] = field(default_factory=list)
+    diagnosis: Optional[Diagnosis] = None
 
     @property
     def is_active(self) -> bool:

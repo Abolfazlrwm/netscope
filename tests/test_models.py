@@ -10,14 +10,18 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from netscope.core.models import (
+    Diagnosis,
+    Evidence,
     ExperienceEvent,
     ExperienceLevel,
+    Hypothesis,
     Incident,
     ProbeErrorType,
     ProbeType,
     RawMeasurement,
     RouteHop,
     RouteSnapshot,
+    Severity,
 )
 
 
@@ -130,17 +134,6 @@ def test_route_snapshot_signature_is_unaffected_by_lookup_fields():
     assert snap_a.signature() == snap_b.signature()
 
 
-def test_incident_is_active_when_ended_at_is_none():
-    incident = Incident(started_at=datetime.now(timezone.utc))
-    assert incident.is_active is True
-
-
-def test_incident_is_not_active_once_ended_at_is_set():
-    now = datetime.now(timezone.utc)
-    incident = Incident(started_at=now, ended_at=now)
-    assert incident.is_active is False
-
-
 def test_experience_event_holds_contributing_measurements():
     m = RawMeasurement(probe_type=ProbeType.HTTP, target="example.com", success=True, latency_ms=10.0)
     event = ExperienceEvent(
@@ -184,3 +177,182 @@ def test_raw_measurement_error_type_can_be_set_to_a_probe_error_type():
         error_type=ProbeErrorType.PERMISSION_DENIED,
     )
     assert m.error_type == ProbeErrorType.PERMISSION_DENIED
+
+
+# ---------------------------------------------------------------------------
+# TASK-009 -- Evidence model
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_defaults_to_tested_true_with_no_fabricated_values():
+    """A normal, no-arguments-beyond-metric Evidence should not silently
+    claim an observed/expected value it wasn't given -- only `tested`
+    defaults True (most Evidence describes something that was actually
+    measured); everything else defaults to None/neutral."""
+    e = Evidence(metric="gateway_latency")
+    assert e.tested is True
+    assert e.observed_value is None
+    assert e.expected_value is None
+    assert e.deviation is None
+    assert e.severity == Severity.INFO
+    assert e.source is None
+    assert e.confidence == 1.0
+
+
+def test_evidence_can_represent_an_untested_metric_without_fabricating_a_value():
+    """This is the model-level fix the untested-gateway bug needs:
+    'not tested' must be constructible as first-class Evidence, not
+    inferred from an ambiguous None."""
+    e = Evidence(metric="gateway_latency", tested=False)
+    assert e.tested is False
+    assert e.observed_value is None
+    assert e.source is None
+
+
+def test_evidence_can_carry_a_full_observed_measurement():
+    m = RawMeasurement(probe_type=ProbeType.ICMP, target="192.168.1.1", success=True, latency_ms=8.0)
+    e = Evidence(
+        metric="gateway_latency",
+        observed_value=8.0,
+        expected_value=10.0,
+        deviation=-0.5,
+        severity=Severity.INFO,
+        source=m,
+        confidence=1.0,
+    )
+    assert e.source is m
+    assert e.deviation == -0.5
+
+
+def test_evidence_can_reference_a_route_snapshot_as_its_source():
+    """architecture-overview.md SS5: source is 'which Measurement or
+    RouteSnapshot it came from' -- both must be valid, not just
+    RawMeasurement."""
+    snap = RouteSnapshot(target="1.1.1.1", hops=[RouteHop(ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=2.0, packet_loss_pct=0.0)])
+    e = Evidence(metric="route_churn", observed_value=1.0, source=snap)
+    assert e.source is snap
+
+
+# ---------------------------------------------------------------------------
+# TASK-009 -- Hypothesis enum
+# ---------------------------------------------------------------------------
+
+
+def test_hypothesis_has_exactly_the_architecture_overview_ss11_values():
+    """Pinned per architecture-overview.md SS11 so a later accidental
+    addition/removal fails loudly."""
+    assert {member.value for member in Hypothesis} == {
+        "local_network_issue",
+        "isp_access_issue",
+        "dns_issue",
+        "routing_degradation",
+        "destination_issue",
+        "service_issue",
+        "general_connectivity_issue",
+        "insufficient_evidence",
+    }
+
+
+def test_hypothesis_includes_insufficient_evidence_as_an_explicit_member():
+    """This is what gives 'not tested' somewhere explicit to go, instead
+    of silently defaulting to a healthy-looking classification."""
+    assert Hypothesis.INSUFFICIENT_EVIDENCE in Hypothesis
+
+
+# ---------------------------------------------------------------------------
+# TASK-009 -- canonical Diagnosis model
+# ---------------------------------------------------------------------------
+
+
+def test_diagnosis_requires_a_classification_and_defaults_the_rest_empty():
+    d = Diagnosis(classification=Hypothesis.GENERAL_CONNECTIVITY_ISSUE)
+    assert d.classification == Hypothesis.GENERAL_CONNECTIVITY_ISSUE
+    assert d.evidence == []
+    assert d.confidence == 0.0
+    assert d.ruled_out == []
+    assert d.timestamp is not None
+
+
+def test_diagnosis_holds_structured_evidence_not_free_text():
+    e = Evidence(metric="gateway_latency", observed_value=300.0, expected_value=20.0, deviation=6.0, severity=Severity.CRITICAL)
+    d = Diagnosis(classification=Hypothesis.LOCAL_NETWORK_ISSUE, evidence=[e], confidence=0.85)
+    assert d.evidence == [e]
+    assert all(isinstance(item, Evidence) for item in d.evidence)
+
+
+def test_diagnosis_ruled_out_accepts_both_evidence_and_hypothesis_items():
+    """architecture-overview.md SS5: ruled_out is list[Evidence-or-Hypothesis]
+    -- a specific contradicting Evidence item, or a whole Hypothesis
+    excluded outright with no single Evidence item pinned to it."""
+    contradicting = Evidence(metric="public_dns_latency", observed_value=12.0, expected_value=15.0, severity=Severity.INFO)
+    d = Diagnosis(
+        classification=Hypothesis.LOCAL_NETWORK_ISSUE,
+        ruled_out=[contradicting, Hypothesis.DESTINATION_ISSUE],
+    )
+    assert contradicting in d.ruled_out
+    assert Hypothesis.DESTINATION_ISSUE in d.ruled_out
+
+
+def test_diagnosis_insufficient_evidence_can_be_built_purely_from_untested_evidence():
+    untested = Evidence(metric="gateway_latency", tested=False)
+    d = Diagnosis(classification=Hypothesis.INSUFFICIENT_EVIDENCE, evidence=[untested], confidence=0.0)
+    assert d.classification == Hypothesis.INSUFFICIENT_EVIDENCE
+    assert d.evidence[0].tested is False
+
+
+# ---------------------------------------------------------------------------
+# TASK-009 -- Incident/Diagnosis reconciliation
+# ---------------------------------------------------------------------------
+
+
+def test_incident_defaults_do_not_fabricate_a_severity_or_diagnosis():
+    """Unchanged constructor call from before TASK-009 (only started_at)
+    must still work -- but severity/diagnosis must default to None,
+    not to some invented 'safe' value, since this task only adds the
+    shape and does not itself diagnose anything."""
+    incident = Incident(started_at=datetime.now(timezone.utc))
+    assert incident.severity is None
+    assert incident.target is None
+    assert incident.evidence == []
+    assert incident.diagnosis is None
+
+
+def test_incident_is_active_when_ended_at_is_none():
+    incident = Incident(started_at=datetime.now(timezone.utc))
+    assert incident.is_active is True
+
+
+def test_incident_is_not_active_once_ended_at_is_set():
+    now = datetime.now(timezone.utc)
+    incident = Incident(started_at=now, ended_at=now)
+    assert incident.is_active is False
+
+
+def test_incident_references_a_diagnosis_instead_of_duplicating_its_fields():
+    """This is the actual reconciliation: Incident no longer carries its
+    own likely_cause/confidence_pct/evidence: list[str] -- it holds the
+    canonical Diagnosis that explains it, plus the structured Evidence
+    accumulated over the incident's lifetime."""
+    e = Evidence(metric="gateway_latency", observed_value=300.0, expected_value=20.0, deviation=6.0, severity=Severity.CRITICAL)
+    diagnosis = Diagnosis(classification=Hypothesis.LOCAL_NETWORK_ISSUE, evidence=[e], confidence=0.85)
+    incident = Incident(
+        started_at=datetime.now(timezone.utc),
+        severity=Severity.CRITICAL,
+        target="192.168.1.1",
+        evidence=[e],
+        diagnosis=diagnosis,
+    )
+    assert incident.diagnosis is diagnosis
+    assert incident.diagnosis.classification == Hypothesis.LOCAL_NETWORK_ISSUE
+    assert incident.evidence == [e]
+
+
+def test_incident_no_longer_has_the_old_duplicate_diagnosis_shaped_fields():
+    """Confirms the old free-text fields the audit flagged are actually
+    gone, not just unused -- prevents silently reintroducing them."""
+    field_names = {f.name for f in __import__("dataclasses").fields(Incident)}
+    assert "likely_cause" not in field_names
+    assert "confidence_pct" not in field_names
+    assert "signals" not in field_names
+    assert "explanation" not in field_names
+    assert field_names == {"started_at", "ended_at", "severity", "target", "evidence", "diagnosis"}
