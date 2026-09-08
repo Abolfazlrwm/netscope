@@ -11,14 +11,37 @@ from __future__ import annotations
 import argparse
 
 from netscope.core.baseline import UserBaseline
+from netscope.core.diagnosis import diagnose
+from netscope.core.models import Evidence, RawMeasurement, Severity
 from netscope.core.scoring import score_measurements
-from netscope.diagnosis.engine import diagnose
 from netscope.explanation.explainer import explain
 from netscope.persistence.sqlite_store import SqliteStore
 from netscope.probes import dns_probe, http_probe, icmp_probe
 
 PUBLIC_DNS = "1.1.1.1"
 PUBLIC_CDN_HTTP = "https://www.cloudflare.com/"
+
+
+def _to_evidence(metric: str, measurement: RawMeasurement | None) -> Evidence:
+    """Minimal glue turning this CLI's raw probe results into Evidence so
+    core/diagnosis.py's evidence-only diagnose() can be called at all.
+    This is NOT the "evidence generation" TASK-027 owns building
+    properly (real baseline-relative deviation/confidence) -- it is
+    deliberately the smallest possible bridge to keep the CLI runnable
+    now that diagnose()'s signature changed to accept Evidence instead
+    of raw measurements directly, per TASK-026's "minimal call-site
+    changes, no CLI architecture redesign" scope.
+    """
+    if measurement is None:
+        return Evidence(metric=metric, tested=False)
+    severity = Severity.CRITICAL if not measurement.success else Severity.INFO
+    return Evidence(
+        metric=metric,
+        tested=True,
+        observed_value=measurement.latency_ms,
+        severity=severity,
+        source=measurement,
+    )
 
 
 def run_once(gateway: str | None = None) -> None:
@@ -44,8 +67,16 @@ def run_once(gateway: str | None = None) -> None:
     experience = score_measurements(measurements, baseline)
     print(f"\nExperience score: {experience.score}/100 ({experience.level.value})\n")
 
-    diagnosis = diagnose(local_gateway=local_gateway, public_dns=public_dns, public_cdn=public_cdn)
-    print(explain(diagnosis))
+    evidence = [
+        _to_evidence("gateway_latency", local_gateway),
+        _to_evidence("dns_latency", public_dns),
+        _to_evidence("destination_latency", public_cdn),
+    ]
+    diagnosis = diagnose(evidence)
+    if diagnosis is None:
+        print("No issues detected.")
+    else:
+        print(explain(diagnosis))
 
     store.close()
 
