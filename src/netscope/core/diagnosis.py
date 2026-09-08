@@ -4,26 +4,41 @@ netscope.core.diagnosis
 Evidence/hypothesis-based diagnosis engine (TASK-026), replacing
 `diagnosis/engine.py`'s fixed three-way `if`/`elif` chain, per
 `docs/architecture/architecture-overview.md` SS11 and
-`docs/architecture/module-boundaries.md`'s Diagnosis section.
+`docs/architecture/module-boundaries.md`'s Diagnosis section --
+extended by TASK-027 ("Evidence generation") to add the
+measurement/route/baseline -> Evidence transformation functions this
+file's `diagnose()` deliberately does not do itself.
 
 WHY THIS LIVES IN core
 ------------------------
-Pure domain computation: no I/O, no adapters, no persistence, no UI. The
-only imports are the Python standard library and netscope.core.models,
-per adr-001-architecture-style.md and the same dependency-direction
-rule core/ports.py and core/scoring.py already document for themselves.
+Pure domain computation: no I/O, no adapters, no persistence, no UI.
 
-WHAT THIS MODULE DOES *NOT* DO
----------------------------------
-module-boundaries.md's Diagnosis section explicitly forbids collecting
-evidence and selecting a cause in the same function. This module never
-reads a RawMeasurement, RouteSnapshot, or UserBaseline directly -- its
-only input is an already-built `list[Evidence]` (core.models.Evidence).
-Converting raw measurements into Evidence is a separate concern left
-for a future task (TASK-027, "Evidence generation", explicitly owns
-formalizing that as its own testable unit) -- this keeps
-diagnose() a pure evidence-to-Diagnosis function from the start, rather
-than something TASK-027 has to un-conflate later.
+WHY EVIDENCE GENERATION IS IN *THIS* FILE, NOT A NEW core/evidence.py
+------------------------------------------------------------------------
+future-roadmap.md's TASK-027 row scopes itself explicitly as
+"`core/diagnosis.py`, refactored" / "same file, restructured", and
+module-boundaries.md's Diagnosis section says this module "Lives in:
+core/diagnosis.py" with no separate Evidence-generation module named
+anywhere in the architecture docs. Its "must not collect evidence and
+select a cause in the same function" rule is a rule about function
+boundaries (separately callable, separately testable), not file
+boundaries -- so the evidence-generation functions below and the
+cause-selection `diagnose()`/`_classify()` above satisfy it by being
+entirely independent top-level functions that never call each other,
+while staying in the one file the docs specify.
+
+One consequence: the evidence-generation functions below need
+`netscope.core.baseline` (to consult `UserBaseline`/`MetricBaseline`)
+and `netscope.core.routing` (to consume `RouteChurnResult`), which
+module-boundaries.md's original "Dependencies: core.models only" line
+predates -- that line described only the cause-selection half this
+file had before TASK-027. Both new imports are still `netscope.core.*`
+siblings, never leaving core, and deliberately NOT
+`netscope.core.scoring`: evidence generation and scoring are
+independent consumers of the same baseline, not dependent on each
+other, per adr-001-architecture-style.md's general dependency-direction
+rule (which core/ports.py, core/scoring.py, and this file's original
+TASK-026 docstring above already document for themselves).
 
 THE UNTESTED-GATEWAY BUG, AND THE FIX
 -----------------------------------------
@@ -45,12 +60,17 @@ never tested therefore can never satisfy "confirmed healthy" -- it can
 only ever be *unknown*, and unknown local-network status is exactly
 what routes a diagnosis to `Hypothesis.INSUFFICIENT_EVIDENCE` instead
 of confidently attributing a problem upstream (see `_classify` below,
-the `gateway_untested` branch).
+the `gateway_untested` branch). TASK-027's evidence-generation
+functions extend the same principle one layer earlier: a `None`
+measurement/churn-result input always produces `tested=False` Evidence,
+never a fabricated healthy or failed reading.
 """
 
 from __future__ import annotations
 
-from netscope.core.models import Diagnosis, Evidence, Hypothesis, Severity
+from netscope.core.baseline import MetricBaseline, UserBaseline
+from netscope.core.models import Diagnosis, Evidence, Hypothesis, RawMeasurement, RouteSnapshot, Severity
+from netscope.core.routing import RouteChurnResult
 
 # ---------------------------------------------------------------------------
 # Metric -> Hypothesis category vocabulary
@@ -247,4 +267,161 @@ def diagnose(evidence: list[Evidence]) -> Diagnosis | None:
         evidence=evidence,
         confidence=confidence,
         ruled_out=ruled_out,
+    )
+
+
+# =============================================================================
+# Evidence generation (TASK-027)
+# =============================================================================
+#
+# The functions below turn a RawMeasurement, a RouteChurnResult, or their
+# absence (None) into Evidence -- the transformation `diagnose()` above
+# deliberately never does itself. None of these functions call diagnose()
+# or _classify(), and diagnose()/_classify() never call these -- the two
+# halves are independently callable and independently tested, per
+# module-boundaries.md's "must not collect evidence and select a cause
+# in the same function" rule.
+#
+# Neither this section nor diagnose() ever mutates the UserBaseline it's
+# given: only MetricBaseline's already-read-only surface is used
+# (`.count`, `.mean`, `.stddev`, `.deviation_sigma()`) via plain dict
+# lookups (`baseline.latency.get(target)`), exactly mirroring how
+# core/scoring.py (TASK-025) reads a baseline without recording new
+# observations into it. Baseline learning/persistence stays entirely
+# outside this module, as it does for scoring.
+
+# Neither of the two numbers below is a new arbitrary threshold. Both are
+# read directly from decisions netscope.core.baseline has already made
+# (and TASK-025 already reused this same way for the analogous scoring
+# problem): MetricBaseline.deviation_sigma() itself refuses to produce a
+# real signal below 5 samples, and MetricBaseline.is_anomalous()'s own
+# default sigma_threshold is 2.5.
+_MATURE_SAMPLE_COUNT = 5
+_ANOMALY_SIGMA_THRESHOLD = 2.5
+
+
+def _evidence_from_metric_baseline(
+    metric: str,
+    target: str,
+    value: float | None,
+    store: dict[str, MetricBaseline],
+    source: RawMeasurement | RouteSnapshot | None,
+) -> Evidence:
+    """Shared baseline-comparison logic for both evidence_from_latency
+    and evidence_from_packet_loss below -- reads `store` (a UserBaseline's
+    `.latency` or `.packet_loss` dict) read-only via `.get(target)`,
+    never `UserBaseline`'s mutating `observe_*`/`_get`. Per-target
+    isolation falls out of this for free: `store.get(target)` can only
+    ever return that target's own MetricBaseline (or None), never
+    another target's.
+    """
+    if value is None:
+        # The measurement succeeded but didn't report this particular
+        # field (e.g. a probe type with no packet-loss figure) -- tested,
+        # but nothing to compare against a baseline; zero confidence so
+        # it can't be mistaken for either a healthy or a bad reading.
+        return Evidence(metric=metric, tested=True, source=source, confidence=0.0)
+
+    baseline_metric = store.get(target)
+    if baseline_metric is None or baseline_metric.count < _MATURE_SAMPLE_COUNT:
+        # Insufficient history: distinct from "value matches the mean"
+        # (core/scoring.py's TASK-025 precedent for this exact
+        # distinction). Confidence scales with how much history exists,
+        # 0.0 with none up to full at _MATURE_SAMPLE_COUNT; no claim is
+        # made about whether `value` is normal or abnormal.
+        count = baseline_metric.count if baseline_metric is not None else 0
+        confidence = min(count / _MATURE_SAMPLE_COUNT, 1.0)
+        return Evidence(metric=metric, tested=True, observed_value=value, source=source, severity=Severity.INFO, confidence=confidence)
+
+    if baseline_metric.stddev == 0.0:
+        # Mature but has never varied -- deviation_sigma() is defined to
+        # return 0.0 here too (division-by-zero guard), which would be
+        # indistinguishable from "value == mean" if relied on directly
+        # (same TASK-025 precedent). Checked explicitly instead.
+        if value == baseline_metric.mean:
+            return Evidence(
+                metric=metric, tested=True, observed_value=value, expected_value=baseline_metric.mean,
+                deviation=0.0, source=source, severity=Severity.INFO, confidence=1.0,
+            )
+        return Evidence(
+            metric=metric, tested=True, observed_value=value, expected_value=baseline_metric.mean,
+            deviation=None, source=source, severity=Severity.CRITICAL, confidence=1.0,
+        )
+
+    sigma = baseline_metric.deviation_sigma(value)
+    if sigma <= 0:
+        severity = Severity.INFO
+    elif sigma < _ANOMALY_SIGMA_THRESHOLD:
+        severity = Severity.WARNING
+    else:
+        severity = Severity.CRITICAL
+    return Evidence(
+        metric=metric, tested=True, observed_value=value, expected_value=baseline_metric.mean,
+        deviation=sigma, source=source, severity=severity, confidence=1.0,
+    )
+
+
+def evidence_from_latency(metric: str, measurement: RawMeasurement | None, baseline: UserBaseline) -> Evidence:
+    """RawMeasurement (or None) + baseline -> latency Evidence.
+
+    `measurement=None` means this target was never probed at all --
+    `tested=False`, never a fabricated healthy/bad reading (this is the
+    evidence-generation-layer instance of the untested-gateway fix: it
+    applies to every metric produced here, not only a literal gateway).
+    A `measurement` with `success=False` is unambiguous CRITICAL
+    evidence of its own -- it does not need, and does not consult, the
+    baseline at all (a failed probe has no latency to compare).
+    """
+    if measurement is None:
+        return Evidence(metric=metric, tested=False)
+    if not measurement.success:
+        return Evidence(metric=metric, tested=True, source=measurement, severity=Severity.CRITICAL, confidence=1.0)
+    return _evidence_from_metric_baseline(metric, measurement.target, measurement.latency_ms, baseline.latency, measurement)
+
+
+def evidence_from_packet_loss(metric: str, measurement: RawMeasurement | None, baseline: UserBaseline) -> Evidence:
+    """Same contract as evidence_from_latency, for packet-loss."""
+    if measurement is None:
+        return Evidence(metric=metric, tested=False)
+    if not measurement.success:
+        return Evidence(metric=metric, tested=True, source=measurement, severity=Severity.CRITICAL, confidence=1.0)
+    return _evidence_from_metric_baseline(metric, measurement.target, measurement.packet_loss_pct, baseline.packet_loss, measurement)
+
+
+def evidence_from_route_churn(
+    metric: str,
+    churn: RouteChurnResult | None,
+    latest_snapshot: RouteSnapshot | None = None,
+) -> Evidence:
+    """RouteChurnResult (core.routing.analyze_route_churn's own output --
+    not reimplemented here, per this task's "do not build a second
+    routing analysis system" scope) -> route-stability Evidence.
+
+    `churn=None` means route stability was never actually assessed (no
+    traceroute history exists yet to analyze) -- `tested=False`, exactly
+    like an unprobed target, never a fabricated "stable" reading.
+
+    Route churn has no baseline concept of its own (TASK-021's
+    `core.routing` is structural signature-change analysis only, with no
+    UserBaseline integration) -- so unlike latency/packet-loss, severity
+    here is derived directly from `change_count` rather than a sigma,
+    since there is no learned "normal churn rate" to compare against.
+    `latest_snapshot`, if the caller has it, is preserved as `source` so
+    this Evidence can point back to an actual RouteSnapshot -- fully
+    optional, since a RouteChurnResult alone doesn't carry one.
+    """
+    if churn is None:
+        return Evidence(metric=metric, tested=False)
+    if churn.is_stable:
+        return Evidence(metric=metric, tested=True, observed_value=0.0, expected_value=0.0, deviation=0.0, source=latest_snapshot, severity=Severity.INFO, confidence=1.0)
+    severity = Severity.WARNING if churn.change_count == 1 else Severity.CRITICAL
+    return Evidence(
+        metric=metric,
+        tested=True,
+        observed_value=float(churn.change_count),
+        expected_value=0.0,
+        deviation=float(churn.change_count),
+        source=latest_snapshot,
+        severity=severity,
+        confidence=1.0,
     )

@@ -11,8 +11,7 @@ from __future__ import annotations
 import argparse
 
 from netscope.core.baseline import UserBaseline
-from netscope.core.diagnosis import diagnose
-from netscope.core.models import Evidence, RawMeasurement, Severity
+from netscope.core.diagnosis import diagnose, evidence_from_latency
 from netscope.core.scoring import score_measurements
 from netscope.explanation.explainer import explain
 from netscope.persistence.sqlite_store import SqliteStore
@@ -20,28 +19,6 @@ from netscope.probes import dns_probe, http_probe, icmp_probe
 
 PUBLIC_DNS = "1.1.1.1"
 PUBLIC_CDN_HTTP = "https://www.cloudflare.com/"
-
-
-def _to_evidence(metric: str, measurement: RawMeasurement | None) -> Evidence:
-    """Minimal glue turning this CLI's raw probe results into Evidence so
-    core/diagnosis.py's evidence-only diagnose() can be called at all.
-    This is NOT the "evidence generation" TASK-027 owns building
-    properly (real baseline-relative deviation/confidence) -- it is
-    deliberately the smallest possible bridge to keep the CLI runnable
-    now that diagnose()'s signature changed to accept Evidence instead
-    of raw measurements directly, per TASK-026's "minimal call-site
-    changes, no CLI architecture redesign" scope.
-    """
-    if measurement is None:
-        return Evidence(metric=metric, tested=False)
-    severity = Severity.CRITICAL if not measurement.success else Severity.INFO
-    return Evidence(
-        metric=metric,
-        tested=True,
-        observed_value=measurement.latency_ms,
-        severity=severity,
-        source=measurement,
-    )
 
 
 def run_once(gateway: str | None = None) -> None:
@@ -61,16 +38,17 @@ def run_once(gateway: str | None = None) -> None:
     # not yet built) -- this CLI already didn't persist a baseline
     # across runs before TASK-025, so a fresh, empty UserBaseline() here
     # preserves that exact status quo rather than adding new
-    # orchestration. It exists solely to satisfy scoring's new required
-    # `baseline` parameter.
+    # orchestration. It's shared by both scoring (TASK-025) and evidence
+    # generation (TASK-027) below -- one baseline per run, consulted
+    # read-only by both, still not persisted across runs.
     baseline = UserBaseline()
     experience = score_measurements(measurements, baseline)
     print(f"\nExperience score: {experience.score}/100 ({experience.level.value})\n")
 
     evidence = [
-        _to_evidence("gateway_latency", local_gateway),
-        _to_evidence("dns_latency", public_dns),
-        _to_evidence("destination_latency", public_cdn),
+        evidence_from_latency("gateway_latency", local_gateway, baseline),
+        evidence_from_latency("dns_latency", public_dns, baseline),
+        evidence_from_latency("destination_latency", public_cdn, baseline),
     ]
     diagnosis = diagnose(evidence)
     if diagnosis is None:
