@@ -14,7 +14,7 @@ from netscope.core.baseline import UserBaseline
 from netscope.core.diagnosis import diagnose, evidence_from_latency
 from netscope.core.scoring import score_measurements
 from netscope.explanation.explainer import explain
-from netscope.persistence.sqlite_store import SqliteStore
+from netscope.persistence.measurement_repository import MeasurementRepository
 from netscope.probes import dns_probe, http_probe, icmp_probe
 
 PUBLIC_DNS = "1.1.1.1"
@@ -22,7 +22,7 @@ PUBLIC_CDN_HTTP = "https://www.cloudflare.com/"
 
 
 def run_once(gateway: str | None = None) -> None:
-    store = SqliteStore()
+    store = MeasurementRepository.open()
 
     local_gateway = icmp_probe.ping(gateway) if gateway else None
     public_dns = icmp_probe.ping(PUBLIC_DNS)
