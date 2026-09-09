@@ -4,6 +4,16 @@ Local-first persistence.
 Differentiator #9: privacy-first. Everything lives in a local SQLite
 file by default; nothing is sent anywhere unless the user explicitly
 opts into an export/report feature (reporting/evidence_report.py).
+
+TASK-029 note: schema creation now delegates to
+netscope.persistence.schema (the canonical, versioned schema covering
+all five ADR-005 aggregates) instead of this file's own separate,
+measurements-only DDL copy, so there is exactly one definition of the
+`measurements` table rather than two that could silently drift apart.
+`save`/`recent` themselves are unchanged -- migrating them onto the
+full schema/repository-port pattern (and fixing `recent()`'s
+`sqlite3.Row` leak, already flagged in module-boundaries.md's
+Persistence section) is TASK-030's job, not this task's.
 """
 
 from __future__ import annotations
@@ -13,25 +23,9 @@ import sqlite3
 from pathlib import Path
 
 from netscope.core.models import RawMeasurement
+from netscope.persistence.schema import initialize_database
 
 DEFAULT_DB_PATH = Path.home() / ".netscope" / "netscope.db"
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS measurements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    probe_type TEXT NOT NULL,
-    target TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    success INTEGER NOT NULL,
-    latency_ms REAL,
-    packet_loss_pct REAL,
-    jitter_ms REAL,
-    error TEXT,
-    extra_json TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_measurements_target_time
-    ON measurements(target, timestamp);
-"""
 
 
 class SqliteStore:
@@ -39,8 +33,7 @@ class SqliteStore:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path)
-        self._conn.executescript(SCHEMA)
-        self._conn.commit()
+        initialize_database(self._conn)
 
     def save(self, measurement: RawMeasurement) -> None:
         self._conn.execute(
