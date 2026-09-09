@@ -407,3 +407,70 @@ class NetworkContext:
         adapters/discovery/network_discovery.py's discover_context())
         rather than every call site constructing NetworkContext by hand."""
         return cls(snapshot=snapshot)
+
+
+# The five checks a Service can enable, per architecture-overview.md SS5
+# ("a set of enabled checks (icmp, dns, tcp, tls, http, each optional)")
+# and module-boundaries.md's Services section (same five, verbatim).
+# Deliberately excludes ProbeType.TRACEROUTE -- traceroute is route
+# analysis applied to a target generally (core.routing), not one of the
+# per-service health checks these two documents describe.
+SERVICE_CHECK_TYPES = frozenset({ProbeType.ICMP, ProbeType.DNS, ProbeType.TCP, ProbeType.TLS, ProbeType.HTTP})
+
+
+@dataclass
+class Service:
+    """A generically monitored target (TASK-032), per
+    architecture-overview.md SS5's Service paragraph and
+    module-boundaries.md's Services section.
+
+    NO HARDCODED PROVIDERS
+    ---------------------------
+    Both documents are explicit: "no hardcoded 'GitHub'/'Cloudflare'/
+    'Telegram' in the domain" / "a Service is always user- or
+    config-defined data, never a name baked into logic." This class
+    itself enforces that structurally rather than by convention alone --
+    there is no default `name`, no preset/well-known Service instances,
+    and no registry of recognized providers anywhere in this module.
+    Every Service that ever exists is data someone supplied (config or,
+    eventually, persistence), never something `core` invented.
+
+    FIELDS
+    ----------
+    `name`: a user- or config-supplied label (e.g. "My VPN provider") --
+    purely a display/identification string with no semantic meaning to
+    `core`.
+
+    `host`: the address/hostname this Service's checks target.
+
+    `enabled_checks`: which of the five checks
+    (`SERVICE_CHECK_TYPES`: icmp/dns/tcp/tls/http) are enabled for this
+    Service -- reuses the existing `ProbeType` enum rather than
+    introducing five new boolean fields or a second, parallel
+    vocabulary. Empty by default (no checks enabled yet), since "each
+    optional" means a Service isn't required to enable all five.
+
+    WHAT THIS CLASS DOES NOT DO
+    --------------------------------
+    Per this task's own roadmap scope (`core/models.py` only) and
+    module-boundaries.md's Services section (`app`'s aggregation use
+    case is a separate, later responsibility -- TASK-033), this class
+    holds data only. It does not run checks, does not aggregate
+    Measurements into a per-service Diagnosis, and does not call any
+    `adapters/probes/*` -- module-boundaries.md is explicit that a
+    Service's checks call "the exact same adapters/probes/* any other
+    measurement round uses," so this class has no reason to duplicate
+    or reference probe execution logic at all.
+    """
+
+    name: str
+    host: str
+    enabled_checks: set[ProbeType] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        invalid = set(self.enabled_checks) - SERVICE_CHECK_TYPES
+        if invalid:
+            raise ValueError(
+                f"Service.enabled_checks may only contain {sorted(c.value for c in SERVICE_CHECK_TYPES)}, "
+                f"got invalid: {sorted(c.value for c in invalid)}"
+            )

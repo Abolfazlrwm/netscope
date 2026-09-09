@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from netscope.core.models import (
     Diagnosis,
     Evidence,
@@ -21,6 +23,8 @@ from netscope.core.models import (
     RawMeasurement,
     RouteHop,
     RouteSnapshot,
+    SERVICE_CHECK_TYPES,
+    Service,
     Severity,
 )
 
@@ -356,3 +360,98 @@ def test_incident_no_longer_has_the_old_duplicate_diagnosis_shaped_fields():
     assert "signals" not in field_names
     assert "explanation" not in field_names
     assert field_names == {"started_at", "ended_at", "severity", "target", "evidence", "diagnosis"}
+
+
+# ---------------------------------------------------------------------------
+# TASK-032 -- Service model
+# ---------------------------------------------------------------------------
+
+
+def test_service_can_be_constructed_with_just_name_and_host():
+    s = Service(name="My VPN", host="vpn.example.com")
+    assert s.name == "My VPN"
+    assert s.host == "vpn.example.com"
+
+
+def test_service_enabled_checks_defaults_to_empty_not_all_or_none_fabricated():
+    """'each optional' (architecture-overview.md SS5) means a Service
+    isn't required to enable every check -- the default must not
+    silently assume all five are on."""
+    s = Service(name="minimal", host="1.1.1.1")
+    assert s.enabled_checks == set()
+
+
+def test_service_can_enable_a_subset_of_checks():
+    s = Service(name="web service", host="example.com", enabled_checks={ProbeType.HTTP, ProbeType.TLS})
+    assert s.enabled_checks == {ProbeType.HTTP, ProbeType.TLS}
+
+
+def test_service_can_enable_all_five_documented_checks():
+    s = Service(name="everything", host="example.com", enabled_checks=set(SERVICE_CHECK_TYPES))
+    assert s.enabled_checks == {ProbeType.ICMP, ProbeType.DNS, ProbeType.TCP, ProbeType.TLS, ProbeType.HTTP}
+
+
+def test_service_check_types_are_exactly_the_five_documented_checks():
+    """Pinned per architecture-overview.md SS5 / module-boundaries.md's
+    Services section -- a later accidental addition/removal fails
+    loudly."""
+    assert SERVICE_CHECK_TYPES == {ProbeType.ICMP, ProbeType.DNS, ProbeType.TCP, ProbeType.TLS, ProbeType.HTTP}
+
+
+def test_service_rejects_traceroute_as_an_enabled_check():
+    """Traceroute is route analysis applied to a target generally
+    (core.routing), not one of the five per-service health checks the
+    architecture documents describe -- must not be silently accepted."""
+    with pytest.raises(ValueError):
+        Service(name="bad", host="1.1.1.1", enabled_checks={ProbeType.TRACEROUTE})
+
+
+def test_service_rejects_a_mix_of_valid_and_invalid_checks():
+    with pytest.raises(ValueError):
+        Service(name="bad", host="1.1.1.1", enabled_checks={ProbeType.ICMP, ProbeType.TRACEROUTE})
+
+
+def test_service_has_no_hardcoded_provider_defaults():
+    """Structural guard for architecture-overview.md SS5's explicit
+    requirement: no default name, and no well-known-provider registry
+    living anywhere in this module's actual code (as opposed to
+    documentation/docstrings, which legitimately name these providers
+    as examples of what must NOT be hardcoded)."""
+    import ast
+    import inspect
+
+    from netscope.core import models as models_module
+
+    tree = ast.parse(inspect.getsource(models_module))
+    docstring_nodes = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef)):
+            body = getattr(node, "body", [])
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+                docstring_nodes.add(id(body[0].value))
+
+    hardcoded_providers = {"GitHub", "Cloudflare", "Telegram", "Google", "AWS"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstring_nodes:
+            for provider in hardcoded_providers:
+                assert provider not in node.value, f"hardcoded provider {provider!r} found in actual code (not a docstring)"
+
+
+def test_service_name_and_host_have_no_default_value():
+    """A Service must always be explicitly given a name/host -- both are
+    required, user-/config-supplied data, never something core invents
+    a default for."""
+    import dataclasses
+
+    fields_by_name = {f.name: f for f in dataclasses.fields(Service)}
+    assert fields_by_name["name"].default is dataclasses.MISSING
+    assert fields_by_name["host"].default is dataclasses.MISSING
+
+
+def test_two_services_with_separately_constructed_but_equal_enabled_checks_are_equal():
+    """Service is a plain dataclass (value semantics), not an identity-
+    based object -- two Services describing the same data should compare
+    equal."""
+    a = Service(name="svc", host="1.1.1.1", enabled_checks={ProbeType.ICMP})
+    b = Service(name="svc", host="1.1.1.1", enabled_checks={ProbeType.ICMP})
+    assert a == b
