@@ -1,8 +1,11 @@
 """
-Tests for netscope.persistence.measurement_repository (TASK-030).
+Tests for netscope.persistence.measurement_repository (TASK-030/031).
 
 Per future-roadmap.md's TASK-030 row: "Unit tests against temp-file
-SQLite; verify no sqlite3.Row crosses the repository boundary."
+SQLite; verify no sqlite3.Row crosses the repository boundary." TASK-031
+extends this with history-query tests: target/time-range/probe-type
+filtering, ordering, and limit validation for `history()` (and,
+transitively, `recent()`, now a thin wrapper around it).
 
 All tests use `:memory:` databases (via MeasurementRepository.open) --
 fully offline, deterministic, nothing left on disk.
@@ -12,7 +15,9 @@ from __future__ import annotations
 
 import ast
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
 from netscope.persistence.measurement_repository import MeasurementRepository
@@ -321,3 +326,311 @@ def test_save_is_wrapped_in_a_transaction():
 
     source = inspect.getsource(MeasurementRepository.save)
     assert "with self._conn" in source
+
+
+# ===========================================================================
+# TASK-031 -- history() query tests
+# ===========================================================================
+
+
+def _day(i: int, hour: int = 0) -> datetime:
+    return datetime(2026, 1, i, hour, tzinfo=timezone.utc)
+
+
+def _m(day: int, target="1.1.1.1", probe_type=ProbeType.ICMP, success=True) -> RawMeasurement:
+    return RawMeasurement(probe_type=probe_type, target=target, timestamp=_day(day), success=success)
+
+
+# --- A. Empty history ------------------------------------------------------
+
+
+def test_history_for_a_target_with_no_measurements_returns_empty_list():
+    repo = _repo()
+    assert repo.history("never-seen.example") == []
+    repo.close()
+
+
+# --- B. Target filtering -----------------------------------------------------
+
+
+def test_history_never_returns_another_targets_measurements():
+    repo = _repo()
+    repo.save(_m(1, target="1.1.1.1"))
+    repo.save(_m(1, target="8.8.8.8"))
+    results = repo.history("1.1.1.1")
+    assert len(results) == 1
+    assert all(r.target == "1.1.1.1" for r in results)
+    repo.close()
+
+
+# --- C. Full history (no time range) -----------------------------------------
+
+
+def test_history_without_a_time_range_returns_all_matching_measurements():
+    repo = _repo()
+    for day in [1, 2, 3, 4, 5]:
+        repo.save(_m(day))
+    assert len(repo.history("1.1.1.1")) == 5
+    repo.close()
+
+
+# --- D. Start boundary ---------------------------------------------------------
+
+
+def test_history_start_only_includes_the_boundary_and_everything_after():
+    repo = _repo()
+    for day in [1, 2, 3]:
+        repo.save(_m(day))
+    results = repo.history("1.1.1.1", start=_day(2))
+    assert sorted(r.timestamp.day for r in results) == [2, 3]  # day 2 (boundary) included, day 1 excluded
+    repo.close()
+
+
+def test_history_start_excludes_measurements_strictly_before_it():
+    repo = _repo()
+    repo.save(_m(1))
+    results = repo.history("1.1.1.1", start=_day(2))
+    assert results == []
+    repo.close()
+
+
+# --- E. End boundary -------------------------------------------------------------
+
+
+def test_history_end_only_includes_the_boundary_and_everything_before():
+    repo = _repo()
+    for day in [1, 2, 3]:
+        repo.save(_m(day))
+    results = repo.history("1.1.1.1", end=_day(2))
+    assert sorted(r.timestamp.day for r in results) == [1, 2]  # day 2 (boundary) included, day 3 excluded
+    repo.close()
+
+
+def test_history_end_excludes_measurements_strictly_after_it():
+    repo = _repo()
+    repo.save(_m(3))
+    results = repo.history("1.1.1.1", end=_day(2))
+    assert results == []
+    repo.close()
+
+
+# --- F. Start + end range, exact boundary matrix --------------------------------
+
+
+def test_history_start_and_end_range_includes_exactly_the_boundary_and_inside_values():
+    repo = _repo()
+    repo.save(_m(1))  # before range
+    repo.save(_m(2))  # at start boundary
+    repo.save(_m(3))  # inside range
+    repo.save(_m(4))  # at end boundary
+    repo.save(_m(5))  # after range
+
+    results = repo.history("1.1.1.1", start=_day(2), end=_day(4))
+    assert sorted(r.timestamp.day for r in results) == [2, 3, 4]
+    repo.close()
+
+
+# --- G. ProbeType filtering ------------------------------------------------------
+
+
+def test_history_probe_type_filter_returns_only_the_requested_type():
+    repo = _repo()
+    repo.save(_m(1, probe_type=ProbeType.ICMP))
+    repo.save(_m(2, probe_type=ProbeType.DNS))
+    repo.save(_m(3, probe_type=ProbeType.HTTP))
+
+    results = repo.history("1.1.1.1", probe_type=ProbeType.DNS)
+    assert len(results) == 1
+    assert results[0].probe_type == ProbeType.DNS
+    repo.close()
+
+
+# --- H. No ProbeType filter --------------------------------------------------------
+
+
+def test_history_without_a_probe_type_filter_returns_every_type():
+    repo = _repo()
+    repo.save(_m(1, probe_type=ProbeType.ICMP))
+    repo.save(_m(2, probe_type=ProbeType.DNS))
+    results = repo.history("1.1.1.1")
+    assert {r.probe_type for r in results} == {ProbeType.ICMP, ProbeType.DNS}
+    repo.close()
+
+
+# --- I. Ordering ------------------------------------------------------------------
+
+
+def test_history_orders_by_timestamp_not_insertion_order():
+    repo = _repo()
+    for day in [3, 1, 5, 2, 4]:  # deliberately out of order
+        repo.save(_m(day))
+    results = repo.history("1.1.1.1")
+    assert [r.timestamp.day for r in results] == [5, 4, 3, 2, 1]  # newest first, documented default
+    repo.close()
+
+
+# --- J. Limit ---------------------------------------------------------------------
+
+
+def test_history_limit_smaller_than_available_results():
+    repo = _repo()
+    for day in [1, 2, 3]:
+        repo.save(_m(day))
+    assert len(repo.history("1.1.1.1", limit=2)) == 2
+
+
+def test_history_limit_equal_to_available_results():
+    repo = _repo()
+    for day in [1, 2, 3]:
+        repo.save(_m(day))
+    assert len(repo.history("1.1.1.1", limit=3)) == 3
+
+
+def test_history_limit_larger_than_available_results():
+    repo = _repo()
+    for day in [1, 2, 3]:
+        repo.save(_m(day))
+    assert len(repo.history("1.1.1.1", limit=100)) == 3
+
+
+def test_history_limit_none_means_unlimited():
+    repo = _repo()
+    for day in range(1, 11):
+        repo.save(_m(day))
+    assert len(repo.history("1.1.1.1", limit=None)) == 10
+
+
+# --- K. Invalid limits ------------------------------------------------------------
+
+
+def test_history_limit_zero_raises_value_error():
+    repo = _repo()
+    with pytest.raises(ValueError):
+        repo.history("1.1.1.1", limit=0)
+    repo.close()
+
+
+def test_history_limit_negative_raises_value_error():
+    repo = _repo()
+    with pytest.raises(ValueError):
+        repo.history("1.1.1.1", limit=-1)
+    repo.close()
+
+
+def test_recent_also_rejects_invalid_limits_via_shared_history_logic():
+    """recent() delegates to history() -- the same validation applies,
+    not a separately (and possibly inconsistently) implemented check."""
+    repo = _repo()
+    with pytest.raises(ValueError):
+        repo.recent("1.1.1.1", limit=0)
+    repo.close()
+
+
+# --- L. Domain object reconstruction ------------------------------------------------
+
+
+def test_history_returns_raw_measurement_objects_with_correct_types():
+    repo = _repo()
+    repo.save(
+        RawMeasurement(
+            probe_type=ProbeType.DNS,
+            target="1.1.1.1",
+            timestamp=_day(1),
+            success=False,
+            error="dns failure",
+            error_type=ProbeErrorType.DNS_FAILURE,
+            extra={"attempted_resolvers": ["1.1.1.1", "8.8.8.8"]},
+        )
+    )
+    (result,) = repo.history("1.1.1.1")
+    assert isinstance(result, RawMeasurement)
+    assert result.probe_type is ProbeType.DNS
+    assert result.error_type is ProbeErrorType.DNS_FAILURE
+    assert isinstance(result.timestamp, datetime)
+    assert result.extra == {"attempted_resolvers": ["1.1.1.1", "8.8.8.8"]}
+    repo.close()
+
+
+# --- M. Failed measurements ---------------------------------------------------------
+
+
+def test_history_includes_failed_measurements_by_default():
+    repo = _repo()
+    repo.save(_m(1, success=True))
+    repo.save(_m(2, success=False))
+    results = repo.history("1.1.1.1")
+    assert len(results) == 2
+    assert {r.success for r in results} == {True, False}
+    repo.close()
+
+
+def test_history_time_range_still_includes_failed_measurements():
+    repo = _repo()
+    repo.save(_m(2, success=False))
+    results = repo.history("1.1.1.1", start=_day(1), end=_day(3))
+    assert len(results) == 1
+    assert results[0].success is False
+    repo.close()
+
+
+# --- N. Timezone preservation --------------------------------------------------------
+
+
+def test_history_range_filtering_works_with_timezone_aware_boundaries():
+    repo = _repo()
+    ts = datetime(2026, 6, 15, 12, 30, tzinfo=timezone.utc)
+    repo.save(RawMeasurement(probe_type=ProbeType.ICMP, target="1.1.1.1", timestamp=ts, success=True))
+
+    results = repo.history(
+        "1.1.1.1",
+        start=ts - timedelta(minutes=1),
+        end=ts + timedelta(minutes=1),
+    )
+    assert len(results) == 1
+    assert results[0].timestamp == ts
+    assert results[0].timestamp.tzinfo is not None
+    repo.close()
+
+
+def test_history_returned_timestamps_are_timezone_aware():
+    repo = _repo()
+    repo.save(_m(1))
+    (result,) = repo.history("1.1.1.1")
+    assert result.timestamp.tzinfo is not None
+    repo.close()
+
+
+# --- O. SQL parameterization / safety ------------------------------------------------
+
+
+def test_history_target_with_sql_special_characters_does_not_break_filtering():
+    """A target string containing quote/semicolon-like characters must
+    be treated as an exact, literal value -- never interpolated into
+    the SQL text (parameterized queries make this a behavioral, not
+    just cosmetic, guarantee)."""
+    repo = _repo()
+    tricky_target = "weird'; DROP TABLE measurements; --"
+    repo.save(_m(1, target=tricky_target))
+    repo.save(_m(1, target="1.1.1.1"))
+
+    results = repo.history(tricky_target)
+    assert len(results) == 1
+    assert results[0].target == tricky_target
+
+    # And the "attack" target must not have affected the other rows or
+    # dropped the table -- both are still queryable normally.
+    assert len(repo.history("1.1.1.1")) == 1
+    repo.close()
+
+
+def test_history_query_uses_parameterized_sql_not_string_interpolation():
+    """Static guard alongside the behavioral test above: the SQL text
+    built inside history() must never contain an f-string/%-formatted/
+    .format()-interpolated target value."""
+    import inspect
+
+    source = inspect.getsource(MeasurementRepository.history)
+    # No string-formatting operators applied to the query text itself.
+    assert 'f"SELECT' not in source
+    assert "query.format(" not in source
+    assert "% (" not in source

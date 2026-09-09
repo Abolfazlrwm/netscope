@@ -49,6 +49,43 @@ This module does not define or duplicate any DDL. It depends entirely
 on `persistence.schema` (TASK-029) for both the `measurements` table
 definition and database initialization (`create_connection`) -- there
 remains exactly one canonical schema-initialization path.
+
+HISTORY QUERIES (TASK-031)
+-------------------------------
+`history()` extends `save`/`recent` with target/time-range/probe-type
+filtering, per future-roadmap.md's TASK-031 row ("Implement time-range/
+target-filtered queries needed by CLI's `history` command"). Per that
+task's own "avoid having two unrelated SQL implementations that drift"
+guidance, `recent()` is now a thin wrapper around `history()` rather
+than a second, independent query -- there is exactly one place that
+builds a `measurements` SELECT and one place (`_row_to_measurement`)
+that converts a row back to a `RawMeasurement`.
+
+Ordering: both `history()` and `recent()` order `ORDER BY timestamp
+DESC` (newest first) -- this is `recent()`'s own pre-existing
+convention (TASK-030), kept as the one shared, documented default
+rather than introducing a second, inconsistent order for what is
+otherwise the same underlying query.
+
+Boundary semantics: `start`/`end` are both **inclusive**
+(`timestamp >= start AND timestamp <= end`) -- a measurement landing
+exactly on either boundary is included, not excluded.
+
+Limit validation: `limit=None` means unlimited (no SQL `LIMIT` clause
+at all, returning every matching row). `limit <= 0` raises `ValueError`
+explicitly rather than silently returning an empty list or being
+ignored -- an invalid limit is a caller bug, not a valid query for
+"nothing"/"everything".
+
+Timestamp comparison: `start`/`end` are compared as the same
+`.isoformat()` string form `save()` already writes (TASK-030's
+existing convention, unchanged) -- this relies on every stored
+timestamp using the same fixed-width, fixed-offset ISO 8601 form
+(guaranteed here since every `RawMeasurement.timestamp` defaults to
+`utcnow()`, always `+00:00`), under which lexicographic string
+ordering and chronological ordering coincide. This is not a new
+assumption introduced by this task -- `recent()`'s pre-existing
+`ORDER BY timestamp DESC` already relied on exactly this.
 """
 
 from __future__ import annotations
@@ -57,6 +94,7 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
 from netscope.persistence.schema import create_connection
@@ -127,14 +165,55 @@ class MeasurementRepository:
                 ),
             )
 
-    def recent(self, target: str, limit: int = 50) -> list[RawMeasurement]:
-        """The most recent `limit` measurements for `target`, newest
-        first, as `RawMeasurement` objects -- never `sqlite3.Row`."""
-        cur = self._conn.execute(
-            "SELECT * FROM measurements WHERE target = ? ORDER BY timestamp DESC LIMIT ?",
-            (target, limit),
-        )
+    def history(
+        self,
+        target: str,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        probe_type: Optional[ProbeType] = None,
+        limit: Optional[int] = None,
+    ) -> list[RawMeasurement]:
+        """Historical measurements for `target`, newest first, optionally
+        filtered by an inclusive `[start, end]` timestamp range and/or a
+        specific `probe_type`. `limit=None` returns every matching row;
+        `limit` must be a positive integer otherwise (see module
+        docstring for the full boundary/ordering/limit semantics this
+        task establishes).
+
+        Always returns `RawMeasurement` objects -- never `sqlite3.Row`.
+        """
+        if limit is not None and limit <= 0:
+            raise ValueError(f"limit must be a positive integer, got {limit!r}")
+
+        query = "SELECT * FROM measurements WHERE target = ?"
+        params: list = [target]
+
+        if start is not None:
+            query += " AND timestamp >= ?"
+            params.append(start.isoformat())
+        if end is not None:
+            query += " AND timestamp <= ?"
+            params.append(end.isoformat())
+        if probe_type is not None:
+            query += " AND probe_type = ?"
+            params.append(probe_type.value)
+
+        query += " ORDER BY timestamp DESC"
+
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        cur = self._conn.execute(query, params)
         return [_row_to_measurement(row) for row in cur.fetchall()]
+
+    def recent(self, target: str, limit: int = 50) -> list[RawMeasurement]:
+        """The most recent `limit` measurements for `target`. A thin,
+        backward-compatible wrapper around `history()` -- see that
+        method for the shared query/ordering/row-mapping logic.
+        """
+        return self.history(target, limit=limit)
 
     def close(self) -> None:
         self._conn.close()
