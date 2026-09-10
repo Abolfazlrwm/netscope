@@ -1,11 +1,12 @@
 """
-Tests for netscope.app.use_cases (TASK-033).
+Tests for netscope.app.use_cases (TASK-033/034).
 
 Per future-roadmap.md's TASK-033 row: "Unit tests using fake adapters
-implementing core.ports.Probe." No real ICMP/DNS/TCP/TLS/HTTP access --
-every probe here is a small in-memory fake conforming to the Probe
-Protocol structurally (same pattern tests/test_ports.py already
-established for Probe itself).
+implementing core.ports.Probe." TASK-034 adds: "Unit tests for the
+comparison logic with fake Diagnosis inputs" -- diagnose_service_with_
+connectivity is a pure function over two Diagnosis objects, so its
+tests construct Diagnosis/Evidence directly rather than going through
+fake probes at all.
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ from dataclasses import dataclass, field
 
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.container import Container
-from netscope.app.use_cases import diagnose_service, run_service_checks
+from netscope.app.use_cases import diagnose_service, diagnose_service_with_connectivity, run_service_checks
 from netscope.core.baseline import UserBaseline
-from netscope.core.models import Hypothesis, ProbeType, RawMeasurement, Service
+from netscope.core.models import Diagnosis, Evidence, Hypothesis, ProbeType, RawMeasurement, Service, Severity
 
 
 @dataclass
@@ -339,3 +340,229 @@ def test_core_models_does_not_import_app():
 
     _, full_paths = _imports_of(m)
     assert not any(p.startswith("netscope.app") for p in full_paths)
+
+
+# ===========================================================================
+# TASK-034 -- diagnose_service_with_connectivity (pure comparison logic)
+# ===========================================================================
+
+
+def _problem_diagnosis(classification=Hypothesis.SERVICE_ISSUE, metric="m", confidence=0.9) -> Diagnosis:
+    return Diagnosis(
+        classification=classification,
+        evidence=[Evidence(metric=metric, tested=True, observed_value=900.0, expected_value=20.0, deviation=6.0, severity=Severity.CRITICAL)],
+        confidence=confidence,
+    )
+
+
+def _insufficient_diagnosis(metric="m") -> Diagnosis:
+    """Matches diagnose()'s own real output shape for INSUFFICIENT_EVIDENCE:
+    confidence is always 0.0, never fabricated."""
+    return Diagnosis(
+        classification=Hypothesis.INSUFFICIENT_EVIDENCE,
+        evidence=[Evidence(metric=metric, tested=False)],
+        confidence=0.0,
+    )
+
+
+# --- Case A: service healthy + connectivity healthy ------------------------
+
+
+def test_both_healthy_produces_no_diagnosis():
+    assert diagnose_service_with_connectivity(None, None) is None
+
+
+# --- Case B: service unhealthy + connectivity healthy -----------------------
+
+
+def test_service_unhealthy_connectivity_healthy_is_service_specific():
+    service_diag = _problem_diagnosis(Hypothesis.SERVICE_ISSUE, metric="service_http_latency")
+    result = diagnose_service_with_connectivity(service_diag, None)
+
+    assert result is not None
+    assert result.classification == Hypothesis.SERVICE_ISSUE
+    assert result.confidence == service_diag.confidence
+    assert result.evidence == service_diag.evidence
+
+
+def test_service_unhealthy_connectivity_healthy_rules_out_general_connectivity():
+    service_diag = _problem_diagnosis(Hypothesis.SERVICE_ISSUE)
+    result = diagnose_service_with_connectivity(service_diag, None)
+    assert Hypothesis.GENERAL_CONNECTIVITY_ISSUE in result.ruled_out
+
+
+def test_service_unhealthy_connectivity_healthy_does_not_duplicate_an_existing_ruled_out_entry():
+    service_diag = Diagnosis(
+        classification=Hypothesis.SERVICE_ISSUE,
+        evidence=[Evidence(metric="service_http_latency", severity=Severity.CRITICAL)],
+        confidence=0.9,
+        ruled_out=[Hypothesis.GENERAL_CONNECTIVITY_ISSUE],
+    )
+    result = diagnose_service_with_connectivity(service_diag, None)
+    assert result.ruled_out.count(Hypothesis.GENERAL_CONNECTIVITY_ISSUE) == 1
+
+
+# --- Case C: service unhealthy + connectivity unhealthy ---------------------
+
+
+def test_both_unhealthy_attributes_to_general_connectivity_not_the_service():
+    """'Do NOT incorrectly blame the service alone' -- a confirmed
+    general problem is the more fundamental explanation."""
+    service_diag = _problem_diagnosis(Hypothesis.SERVICE_ISSUE, metric="service_http_latency")
+    general_diag = _problem_diagnosis(Hypothesis.ISP_ACCESS_ISSUE, metric="dns_latency")
+
+    result = diagnose_service_with_connectivity(service_diag, general_diag)
+
+    assert result.classification == Hypothesis.ISP_ACCESS_ISSUE
+    assert result.confidence == general_diag.confidence
+
+
+def test_both_unhealthy_merges_evidence_from_both_diagnoses():
+    service_diag = _problem_diagnosis(Hypothesis.SERVICE_ISSUE, metric="service_http_latency")
+    general_diag = _problem_diagnosis(Hypothesis.ISP_ACCESS_ISSUE, metric="dns_latency")
+
+    result = diagnose_service_with_connectivity(service_diag, general_diag)
+
+    metrics = {e.metric for e in result.evidence}
+    assert "service_http_latency" in metrics
+    assert "dns_latency" in metrics
+
+
+# --- Case D: service healthy + connectivity unhealthy -----------------------
+
+
+def test_service_healthy_connectivity_unhealthy_surfaces_the_general_problem():
+    general_diag = _problem_diagnosis(Hypothesis.LOCAL_NETWORK_ISSUE, metric="gateway_latency")
+    result = diagnose_service_with_connectivity(None, general_diag)
+
+    assert result is not None
+    assert result.classification == Hypothesis.LOCAL_NETWORK_ISSUE  # never reattributed as SERVICE_ISSUE
+
+
+def test_service_healthy_connectivity_unhealthy_does_not_fabricate_a_service_failure():
+    general_diag = _problem_diagnosis(Hypothesis.LOCAL_NETWORK_ISSUE)
+    result = diagnose_service_with_connectivity(None, general_diag)
+    assert result.classification != Hypothesis.SERVICE_ISSUE
+
+
+# --- Case E: insufficient evidence -------------------------------------------
+
+
+def test_service_insufficient_connectivity_healthy_preserves_service_uncertainty():
+    service_diag = _insufficient_diagnosis()
+    result = diagnose_service_with_connectivity(service_diag, None)
+    assert result is service_diag
+    assert result.classification == Hypothesis.INSUFFICIENT_EVIDENCE
+
+
+def test_service_healthy_connectivity_insufficient_still_confirms_service_is_fine():
+    general_diag = _insufficient_diagnosis()
+    result = diagnose_service_with_connectivity(None, general_diag)
+    assert result is None
+
+
+def test_both_insufficient_stays_insufficient():
+    service_diag = _insufficient_diagnosis(metric="service_http_latency")
+    general_diag = _insufficient_diagnosis(metric="dns_latency")
+    result = diagnose_service_with_connectivity(service_diag, general_diag)
+    assert result.classification == Hypothesis.INSUFFICIENT_EVIDENCE
+    assert result.confidence == 0.0
+
+
+def test_service_unhealthy_connectivity_insufficient_does_not_overconfidently_blame_service():
+    """THE KEY case: mirrors the untested-gateway fix one layer up. A
+    clear-looking service problem must not be confidently classified as
+    SERVICE_ISSUE when general connectivity's own status couldn't be
+    confirmed -- an unconfirmed alternative explanation blocks full
+    confidence in the specific one."""
+    service_diag = _problem_diagnosis(Hypothesis.SERVICE_ISSUE, metric="service_http_latency", confidence=0.95)
+    general_diag = _insufficient_diagnosis(metric="dns_latency")
+
+    result = diagnose_service_with_connectivity(service_diag, general_diag)
+
+    assert result.classification == Hypothesis.INSUFFICIENT_EVIDENCE
+    assert result.confidence == 0.0
+    assert result.classification != Hypothesis.SERVICE_ISSUE  # never fake 100%/high confidence from incomplete data
+
+
+def test_service_unhealthy_connectivity_insufficient_still_preserves_both_evidence_sets():
+    service_diag = _problem_diagnosis(Hypothesis.SERVICE_ISSUE, metric="service_http_latency")
+    general_diag = _insufficient_diagnosis(metric="dns_latency")
+
+    result = diagnose_service_with_connectivity(service_diag, general_diag)
+
+    metrics = {e.metric for e in result.evidence}
+    assert "service_http_latency" in metrics
+    assert "dns_latency" in metrics
+
+
+# --- Determinism / no mutation of inputs -------------------------------------
+
+
+def test_comparison_does_not_mutate_the_input_diagnoses():
+    service_diag = _problem_diagnosis(Hypothesis.SERVICE_ISSUE)
+    general_diag = _problem_diagnosis(Hypothesis.ISP_ACCESS_ISSUE, metric="dns_latency")
+    service_ruled_out_before = list(service_diag.ruled_out)
+    general_evidence_before = list(general_diag.evidence)
+
+    diagnose_service_with_connectivity(service_diag, general_diag)
+
+    assert service_diag.ruled_out == service_ruled_out_before
+    assert general_diag.evidence == general_evidence_before
+
+
+def test_comparison_result_is_a_real_diagnosis_object_not_a_dict_or_boolean():
+    result = diagnose_service_with_connectivity(_problem_diagnosis(), None)
+    assert isinstance(result, Diagnosis)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: diagnose_service() feeding into the comparison
+# ---------------------------------------------------------------------------
+
+
+def test_diagnose_service_output_can_feed_directly_into_the_comparison():
+    """Confirms the two TASK-033/034 functions compose without any glue
+    -- diagnose_service already produces exactly the Diagnosis shape
+    diagnose_service_with_connectivity expects."""
+    http = _FakeProbe(ProbeType.HTTP, latency_ms=900.0)
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.HTTP: http}))
+    service = Service(name="svc", host="example.com", enabled_checks={ProbeType.HTTP})
+    baseline = _mature_baseline("example.com", [20.0] * 6)
+
+    service_diagnosis = diagnose_service(service, container, baseline=baseline)
+    result = diagnose_service_with_connectivity(service_diagnosis, None)
+
+    assert result is not None
+    assert result.classification == Hypothesis.SERVICE_ISSUE
+
+
+def test_task_033_apis_remain_backward_compatible():
+    """run_service_checks and diagnose_service keep their exact TASK-033
+    signatures/behavior -- TASK-034 only adds a new function alongside
+    them."""
+    http = _FakeProbe(ProbeType.HTTP, latency_ms=20.0)
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.HTTP: http}))
+    service = Service(name="svc", host="example.com", enabled_checks={ProbeType.HTTP})
+
+    measurements = run_service_checks(service, container)
+    assert len(measurements) == 1
+
+    diagnosis = diagnose_service(service, container)
+    assert diagnosis is None  # single successful, untested-baseline check is still not a problem
+
+
+# ---------------------------------------------------------------------------
+# Dependency boundaries (re-verified for the new function)
+# ---------------------------------------------------------------------------
+
+
+def test_comparison_function_does_not_import_probes_or_container():
+    """diagnose_service_with_connectivity is pure -- it must not need
+    Container/ProbeRegistry at all, unlike run_service_checks/
+    diagnose_service in the same file."""
+    import inspect
+
+    source = inspect.getsource(diagnose_service_with_connectivity)
+    assert "container" not in source.lower()
+    assert "probe_registry" not in source.lower()
