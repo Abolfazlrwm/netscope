@@ -3,7 +3,7 @@ name = "netscope"
 version = "0.1.0"
 description = "Internet Experience Intelligence & Network Diagnostics Platform"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "icmplib>=3.0.4",   # LGPL-3.0 - ICMP ping (dynamic import, not modified)

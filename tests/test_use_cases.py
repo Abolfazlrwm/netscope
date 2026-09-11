@@ -15,10 +15,11 @@ import ast
 from dataclasses import dataclass, field
 
 from netscope.adapters.probes.registry import ProbeRegistry
+from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
-from netscope.app.use_cases import diagnose_service, diagnose_service_with_connectivity, run_service_checks
+from netscope.app.use_cases import diagnose_service, diagnose_service_with_connectivity, run_measurement_round, run_service_checks
 from netscope.core.baseline import UserBaseline
-from netscope.core.models import Diagnosis, Evidence, Hypothesis, ProbeType, RawMeasurement, Service, Severity
+from netscope.core.models import Diagnosis, Evidence, ExperienceLevel, Hypothesis, ProbeType, RawMeasurement, Service, Severity
 
 
 @dataclass
@@ -566,3 +567,143 @@ def test_comparison_function_does_not_import_probes_or_container():
     source = inspect.getsource(diagnose_service_with_connectivity)
     assert "container" not in source.lower()
     assert "probe_registry" not in source.lower()
+
+
+# ===========================================================================
+# TASK-035 -- run_measurement_round
+# ===========================================================================
+
+
+def _round_container(icmp=None, dns=None, http=None) -> Container:
+    probes = {}
+    probes[ProbeType.ICMP] = icmp if icmp is not None else _FakeProbe(ProbeType.ICMP, latency_ms=10.0)
+    probes[ProbeType.DNS] = dns if dns is not None else _FakeProbe(ProbeType.DNS, latency_ms=10.0)
+    probes[ProbeType.HTTP] = http if http is not None else _FakeProbe(ProbeType.HTTP, latency_ms=10.0)
+    return Container(probe_registry=ProbeRegistry(probes=probes))
+
+
+def test_round_without_a_gateway_does_not_probe_a_gateway():
+    icmp = _FakeProbe(ProbeType.ICMP, latency_ms=10.0)
+    container = _round_container(icmp=icmp)
+    config = NetScopeConfig()
+
+    measurements, _, _ = run_measurement_round(container, config)
+
+    assert icmp.calls == [config.public_dns_target]  # only the public DNS ICMP target, no gateway
+    assert len(measurements) == 3  # public_dns (icmp) + dns_lookup (dns) + public_cdn (http)
+
+
+def test_round_with_an_explicit_gateway_probes_it_first():
+    icmp = _FakeProbe(ProbeType.ICMP, latency_ms=10.0)
+    container = _round_container(icmp=icmp)
+    config = NetScopeConfig()
+
+    measurements, _, _ = run_measurement_round(container, config, gateway="192.168.1.1")
+
+    assert icmp.calls == ["192.168.1.1", config.public_dns_target]
+    assert len(measurements) == 4
+
+
+def test_round_falls_back_to_configs_default_gateway():
+    icmp = _FakeProbe(ProbeType.ICMP, latency_ms=10.0)
+    container = _round_container(icmp=icmp)
+    config = NetScopeConfig(gateway="10.0.0.1")
+
+    run_measurement_round(container, config)  # no gateway= argument given
+
+    assert icmp.calls[0] == "10.0.0.1"
+
+
+def test_round_explicit_gateway_argument_overrides_config_default():
+    icmp = _FakeProbe(ProbeType.ICMP, latency_ms=10.0)
+    container = _round_container(icmp=icmp)
+    config = NetScopeConfig(gateway="10.0.0.1")
+
+    run_measurement_round(container, config, gateway="192.168.1.1")
+
+    assert icmp.calls[0] == "192.168.1.1"
+
+
+def test_round_probes_configured_targets_not_hardcoded_ones():
+    icmp = _FakeProbe(ProbeType.ICMP, latency_ms=10.0)
+    dns = _FakeProbe(ProbeType.DNS, latency_ms=10.0)
+    http = _FakeProbe(ProbeType.HTTP, latency_ms=10.0)
+    container = _round_container(icmp=icmp, dns=dns, http=http)
+    config = NetScopeConfig(public_dns_target="9.9.9.9", dns_lookup_domain="custom.example", public_cdn_url="https://custom-cdn.example/")
+
+    run_measurement_round(container, config)
+
+    assert icmp.calls == ["9.9.9.9"]
+    assert dns.calls == ["custom.example"]
+    assert http.calls == ["https://custom-cdn.example/"]
+
+
+def test_round_returns_an_experience_event():
+    container = _round_container()
+    config = NetScopeConfig()
+
+    _, experience, _ = run_measurement_round(container, config)
+
+    assert experience.level in (ExperienceLevel.EXCELLENT, ExperienceLevel.GOOD, ExperienceLevel.DEGRADED, ExperienceLevel.POOR, ExperienceLevel.DOWN)
+    assert 0.0 <= experience.score <= 100.0
+
+
+def test_round_all_healthy_but_gateway_untested_is_insufficient_evidence():
+    """Preserves the pre-TASK-035 CLI's exact observable behavior: with
+    no gateway supplied, the round cannot confirm the local hop, so the
+    diagnosis is INSUFFICIENT_EVIDENCE, not a fabricated healthy
+    result."""
+    container = _round_container()
+    config = NetScopeConfig()
+
+    _, _, diagnosis = run_measurement_round(container, config)
+
+    assert diagnosis is not None
+    assert diagnosis.classification == Hypothesis.INSUFFICIENT_EVIDENCE
+
+
+def test_round_with_gateway_and_mature_baseline_all_healthy_is_none():
+    icmp = _FakeProbe(ProbeType.ICMP, latency_ms=10.0)
+    dns = _FakeProbe(ProbeType.DNS, latency_ms=10.0)
+    http = _FakeProbe(ProbeType.HTTP, latency_ms=10.0)
+    container = _round_container(icmp=icmp, dns=dns, http=http)
+    config = NetScopeConfig()
+
+    baseline = UserBaseline()
+    for target in ("192.168.1.1", config.public_dns_target, config.public_cdn_url):
+        for v in [10.0] * 6:
+            baseline.observe_latency(target, v)
+
+    _, _, diagnosis = run_measurement_round(container, config, gateway="192.168.1.1", baseline=baseline)
+
+    assert diagnosis is None
+
+
+def test_round_does_not_mutate_the_baseline_it_is_given():
+    container = _round_container()
+    config = NetScopeConfig()
+    baseline = UserBaseline()
+    for v in [10.0] * 6:
+        baseline.observe_latency(config.public_dns_target, v)
+    targets_before = set(baseline.latency.keys())
+    count_before = baseline.latency[config.public_dns_target].count
+
+    run_measurement_round(container, config, baseline=baseline)
+
+    assert set(baseline.latency.keys()) == targets_before
+    assert baseline.latency[config.public_dns_target].count == count_before
+
+
+def test_round_does_not_persist_measurements_itself():
+    """run_measurement_round is persistence-agnostic by design -- saving
+    is the caller's job (see its own docstring and ui/cli.py). Checks
+    actual code only (via AST), since the function's own docstring
+    legitimately explains this decision by name."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(run_measurement_round))
+    body_without_docstring = tree.body[0].body[1:]  # skip the docstring Expr node
+    code_only = ast.unparse(ast.Module(body=body_without_docstring, type_ignores=[]))
+    assert "MeasurementRepository" not in code_only
+    assert ".save(" not in code_only

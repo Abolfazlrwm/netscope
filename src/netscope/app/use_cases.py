@@ -1,10 +1,13 @@
 """
 netscope.app.use_cases
 
-Application-level use cases: per-service monitoring (TASK-033) and
-service-vs-general-connectivity comparison (TASK-034), per
-future-roadmap.md's TASK-033/034 rows and module-boundaries.md's
-Services section.
+Application-level use cases: per-service monitoring (TASK-033),
+service-vs-general-connectivity comparison (TASK-034), and the general
+measurement round (TASK-035) that replaces `ui/cli.py`'s old inline
+orchestration -- per future-roadmap.md's TASK-033/034/035 rows,
+module-boundaries.md's Services section, and
+architecture-overview.md SS3's `app` responsibility row, which names
+`run_measurement_round()` as one of `app`'s use cases explicitly.
 
 This is the first file in `app/use_cases.py` -- `app/__init__.py`
 (TASK-005) described this package's purpose ("expose use cases ...
@@ -55,18 +58,40 @@ consolidating or duplicating that here would be new, undeclared scope,
 not a comparison. `diagnose_service_with_connectivity` therefore takes
 an already-computed general-connectivity `Diagnosis | None` as a plain
 argument -- however the caller obtained it (today, most naturally
-`ui/cli.py`'s own measurement round) -- exactly mirroring the roadmap's
-own wording ("against a simultaneous generic-target Diagnosis").
+`run_measurement_round` below) -- exactly mirroring the roadmap's own
+wording ("against a simultaneous generic-target Diagnosis").
+
+TASK-035 SCOPE NOTE -- WHY run_measurement_round() ALSO SCORES/DIAGNOSES
+-----------------------------------------------------------------------------
+architecture-overview.md SS3 lists four illustrative `app` use-case
+names together: `run_measurement_round()`, `get_experience()`,
+`diagnose_now()`, `list_recent_incidents()`. TASK-035's own scope is
+"CLI foundation" (config/logging/composition-root, rebuilding the
+*existing* CLI behavior as a thin layer) -- not TASK-036's "Diagnostic
+command" (which explicitly introduces a *new* `netscope diagnose`
+command). Since today's CLI behavior already bundles running, scoring,
+and diagnosing into one round-trip (this predates the numbered task
+sequence), and TASK-035's job is to rebuild that *existing* behavior
+thinly rather than remove functionality for TASK-036 to re-add,
+`run_measurement_round()` here covers all three -- matching current
+observable CLI behavior exactly, just properly layered and testable.
+Splitting it into the finer `get_experience()`/`diagnose_now()`
+decomposition the doc's name list gestures at is left for whichever
+later task (TASK-036 or otherwise) actually needs that finer grain;
+pre-emptively guessing that decomposition now would be exactly the
+kind of speculative abstraction this task's instructions warn against.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
+from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.core.baseline import UserBaseline
 from netscope.core.diagnosis import diagnose, evidence_from_latency
-from netscope.core.models import Diagnosis, Evidence, Hypothesis, RawMeasurement, Service
+from netscope.core.models import Diagnosis, Evidence, ExperienceEvent, Hypothesis, ProbeType, RawMeasurement, Service
+from netscope.core.scoring import score_measurements
 
 
 def run_service_checks(service: Service, container: Container) -> list[RawMeasurement]:
@@ -258,3 +283,70 @@ def diagnose_service_with_connectivity(
         ruled_out=[],
         timestamp=service_diagnosis.timestamp,
     )
+
+
+def run_measurement_round(
+    container: Container,
+    config: NetScopeConfig,
+    gateway: Optional[str] = None,
+    baseline: Optional[UserBaseline] = None,
+) -> tuple[list[RawMeasurement], ExperienceEvent, Optional[Diagnosis]]:
+    """Run one general-connectivity measurement round (TASK-035),
+    replacing `ui/cli.py`'s old inline orchestration (direct calls into
+    `netscope.probes.icmp_probe`/`dns_probe`/`http_probe` -- the
+    untestable-without-real-network pattern architecture-overview.md
+    SS3's `app` test-strategy row and the implementation audit's STEP 9
+    both name). Every probe call goes through
+    `container.probe_registry.get(probe_type).run(...)`, the same
+    adapters `diagnose_service`/`run_service_checks` (TASK-033) already
+    use -- nothing here talks to `icmplib`/`dnspython`/`httpx` directly.
+
+    Measures, in order:
+    - the local gateway via ICMP, if `gateway` (or `config.gateway` when
+      `gateway` isn't given) is set -- `None` otherwise, exactly
+      preserving the pre-TASK-035 CLI's "no gateway supplied -> no
+      gateway measurement" behavior rather than fabricating one;
+    - `config.public_dns_target` via ICMP;
+    - `config.dns_lookup_domain` via DNS;
+    - `config.public_cdn_url` via HTTP.
+
+    `baseline` defaults to a fresh, empty `UserBaseline()` if not given
+    -- the same "no BaselineRepository-backed load/persist wiring exists
+    yet" status quo this codebase has documented since TASK-025/027;
+    this task doesn't add baseline persistence either.
+
+    Returns `(measurements, experience, diagnosis)` -- a plain tuple of
+    three already-existing domain types (`RawMeasurement`,
+    `ExperienceEvent`, `Diagnosis | None`) rather than a new bundling
+    dataclass, since all three are meaningful to the caller
+    independently (e.g. `ui/cli.py` persists `measurements`, prints
+    `experience.score`, and prints `explain(diagnosis)` separately) and
+    nothing about their relationship needs a dedicated type to express.
+
+    Does not persist `measurements` itself -- saving them is the
+    caller's responsibility (today, `ui/cli.py`, via a
+    `MeasurementRepository` it constructs), keeping this function's
+    single responsibility to "run and interpret a round," not "run,
+    interpret, and remember."
+    """
+    baseline = baseline if baseline is not None else UserBaseline()
+    gateway = gateway if gateway is not None else config.gateway
+    registry = container.probe_registry
+
+    local_gateway = registry.get(ProbeType.ICMP).run(gateway) if gateway else None
+    public_dns = registry.get(ProbeType.ICMP).run(config.public_dns_target)
+    dns_lookup = registry.get(ProbeType.DNS).run(config.dns_lookup_domain)
+    public_cdn = registry.get(ProbeType.HTTP).run(config.public_cdn_url)
+
+    measurements = [m for m in (local_gateway, public_dns, dns_lookup, public_cdn) if m is not None]
+
+    experience = score_measurements(measurements, baseline)
+
+    evidence = [
+        evidence_from_latency("gateway_latency", local_gateway, baseline),
+        evidence_from_latency("dns_latency", public_dns, baseline),
+        evidence_from_latency("destination_latency", public_cdn, baseline),
+    ]
+    diagnosis = diagnose(evidence)
+
+    return measurements, experience, diagnosis

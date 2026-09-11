@@ -1,73 +1,79 @@
 """
-Minimal CLI (MVP UI). Runs one full cycle:
-probes -> experience score -> diagnosis -> human explanation -> save to SQLite.
+netscope.ui.cli
 
-This is intentionally not the Textual TUI yet -- it exists to prove the
-architecture end-to-end with a working, runnable command.
+Thin CLI presentation layer (TASK-035 rebuild), per future-roadmap.md's
+TASK-035 row: "Rebuild ui/cli.py as a thin presentation layer calling
+app use cases only." Parses arguments, configures logging, loads
+config, builds the composition root, calls exactly one app use case
+(app.use_cases.run_measurement_round), persists the resulting
+measurements, and formats/prints the result -- no orchestration logic
+(probe calls, scoring, diagnosis) lives here anymore; all of that moved
+to app/use_cases.py, which is independently unit-testable with fake
+adapters (closing the audit's "untestable orchestration" gap
+architecture-decisions.md's CLI strategy entry names).
+
+Per architecture-overview.md SS3's dependency table, `ui` may depend on
+`app` and `core` (models, for typing/display only) -- never `adapters`
+or `persistence` directly. This module's only persistence touchpoint
+(`MeasurementRepository.open()`) is a deliberate, narrow exception:
+saving what a round just measured is presentation-adjacent bookkeeping,
+not business orchestration, and `run_measurement_round` (TASK-035)
+itself intentionally stays persistence-agnostic (see its own
+docstring) so this is the one place that decision is made. Everything
+that decides *what the numbers mean* (scoring, evidence, diagnosis)
+happens in `app`, not here.
 """
 
 from __future__ import annotations
 
 import argparse
 
-from netscope.core.baseline import UserBaseline
-from netscope.core.diagnosis import diagnose, evidence_from_latency
-from netscope.core.scoring import score_measurements
+from netscope.app.config import load_config
+from netscope.app.container import build_container, configure_logging
+from netscope.app.use_cases import run_measurement_round
 from netscope.explanation.explainer import explain
 from netscope.persistence.measurement_repository import MeasurementRepository
-from netscope.probes import dns_probe, http_probe, icmp_probe
-
-PUBLIC_DNS = "1.1.1.1"
-PUBLIC_CDN_HTTP = "https://www.cloudflare.com/"
 
 
-def run_once(gateway: str | None = None) -> None:
-    store = MeasurementRepository.open()
-
-    local_gateway = icmp_probe.ping(gateway) if gateway else None
-    public_dns = icmp_probe.ping(PUBLIC_DNS)
-    dns_lookup = dns_probe.resolve("example.com")
-    public_cdn = http_probe.fetch(PUBLIC_CDN_HTTP)
-
-    measurements = [m for m in [local_gateway, public_dns, dns_lookup, public_cdn] if m]
-    for m in measurements:
-        store.save(m)
-
-    # NOTE: no BaselineRepository-backed load/persist wiring exists yet
-    # (that's app/use_cases.py's job per architecture-overview.md SS10,
-    # not yet built) -- this CLI already didn't persist a baseline
-    # across runs before TASK-025, so a fresh, empty UserBaseline() here
-    # preserves that exact status quo rather than adding new
-    # orchestration. It's shared by both scoring (TASK-025) and evidence
-    # generation (TASK-027) below -- one baseline per run, consulted
-    # read-only by both, still not persisted across runs.
-    baseline = UserBaseline()
-    experience = score_measurements(measurements, baseline)
-    print(f"\nExperience score: {experience.score}/100 ({experience.level.value})\n")
-
-    evidence = [
-        evidence_from_latency("gateway_latency", local_gateway, baseline),
-        evidence_from_latency("dns_latency", public_dns, baseline),
-        evidence_from_latency("destination_latency", public_cdn, baseline),
-    ]
-    diagnosis = diagnose(evidence)
-    if diagnosis is None:
-        print("No issues detected.")
-    else:
-        print(explain(diagnosis))
-
-    store.close()
-
-
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Builds the CLI's argument parser -- extracted from main() so
+    argument-parsing behavior is testable without executing a real
+    measurement round (architecture-overview.md SS3's `ui` test-strategy
+    row: "argument-parsing edge cases")."""
     parser = argparse.ArgumentParser(prog="netscope", description="NetScope network diagnostics")
     parser.add_argument(
         "--gateway",
         help="IP of your local router/gateway, to localize local vs. upstream issues",
         default=None,
     )
-    args = parser.parse_args()
-    run_once(gateway=args.gateway)
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="enable verbose (INFO-level) logging",
+    )
+    return parser
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
+
+    configure_logging(verbose=args.verbose)
+    config = load_config()
+    container = build_container()
+
+    measurements, experience, diagnosis = run_measurement_round(container, config, gateway=args.gateway)
+
+    store = MeasurementRepository.open()
+    for measurement in measurements:
+        store.save(measurement)
+    store.close()
+
+    print(f"\nExperience score: {experience.score}/100 ({experience.level.value})\n")
+    if diagnosis is None:
+        print("No issues detected.")
+    else:
+        print(explain(diagnosis))
 
 
 if __name__ == "__main__":
