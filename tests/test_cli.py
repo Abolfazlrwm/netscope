@@ -31,9 +31,9 @@ import pytest
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
-from netscope.core.models import ProbeType, RawMeasurement
+from netscope.core.models import ProbeType, RawMeasurement, RouteHop, RouteSnapshot
 from netscope.persistence.measurement_repository import MeasurementRepository
-from netscope.ui.cli import build_arg_parser, run_diagnose_command
+from netscope.ui.cli import build_arg_parser, run_diagnose_command, run_route_command
 
 
 @dataclass
@@ -331,3 +331,271 @@ def test_cli_module_does_not_define_a_redundant_diagnosis_use_case():
     forbidden_names = {"diagnose_now", "run_diagnosis_cli", "cli_diagnose", "perform_diagnostic", "analyze_target"}
     defined_names = {name for name in dir(module) if not name.startswith("_")}
     assert forbidden_names.isdisjoint(defined_names)
+
+
+# ===========================================================================
+# TASK-037 -- route command
+# ===========================================================================
+
+
+@dataclass
+class _FakeTracerouteProbe:
+    """Conforms to core.ports.Probe structurally, exactly like
+    _FakeProbe above -- returns a scripted RawMeasurement carrying a
+    RouteSnapshot in .extra["route"], mirroring
+    probes/traceroute_probe.py's real, established convention."""
+
+    hops: list = field(default_factory=list)
+    success: bool = True
+    error: str = "permission denied"
+    calls: list = field(default_factory=list)
+    probe_type: ProbeType = ProbeType.TRACEROUTE
+
+    def run(self, target: str, **options) -> RawMeasurement:
+        self.calls.append(target)
+        if not self.success:
+            return RawMeasurement(probe_type=ProbeType.TRACEROUTE, target=target, success=False, error=self.error)
+        snapshot = RouteSnapshot(target=target, hops=self.hops)
+        return RawMeasurement(probe_type=ProbeType.TRACEROUTE, target=target, success=True, extra={"route": snapshot})
+
+
+def _sample_hops():
+    return [
+        RouteHop(ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=2.0, packet_loss_pct=0.0),
+        RouteHop(ttl=2, address="203.0.113.1", hostname=None, avg_rtt_ms=15.0, packet_loss_pct=0.0),
+    ]
+
+
+# --- A. Command registration --------------------------------------------------
+
+
+def test_parser_route_subcommand_is_recognized():
+    args = build_arg_parser().parse_args(["route", "example.com"])
+    assert args.command == "route"
+
+
+# --- B. Required target ------------------------------------------------------
+
+
+def test_parser_route_without_a_target_is_rejected():
+    with pytest.raises(SystemExit):
+        build_arg_parser().parse_args(["route"])
+
+
+# --- C. Target propagation (parser level) ------------------------------------
+
+
+def test_parser_route_captures_the_exact_target_given():
+    args = build_arg_parser().parse_args(["route", "example.com"])
+    assert args.target == "example.com"
+
+
+def test_parser_route_accepts_an_ip_address_target():
+    args = build_arg_parser().parse_args(["route", "1.1.1.1"])
+    assert args.target == "1.1.1.1"
+
+
+def test_parser_route_accepts_verbose_after_target():
+    args = build_arg_parser().parse_args(["route", "example.com", "-v"])
+    assert args.verbose is True
+    assert args.target == "example.com"
+
+
+def test_parser_route_rejects_unknown_options():
+    with pytest.raises(SystemExit):
+        build_arg_parser().parse_args(["route", "example.com", "--totally-unknown-flag"])
+
+
+# --- C/D. Target propagation + traceroute wiring (command level) ------------
+
+
+def test_route_command_invokes_the_traceroute_probe_via_the_container(capsys):
+    fake = _FakeTracerouteProbe(hops=_sample_hops())
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    run_route_command(container, "example.com")
+
+    assert fake.calls == ["example.com"]
+
+
+def test_route_command_propagates_the_exact_target(capsys):
+    fake = _FakeTracerouteProbe(hops=_sample_hops())
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    run_route_command(container, "192.0.2.55")
+
+    assert fake.calls == ["192.0.2.55"]
+
+
+# --- E. RouteSnapshot handling ------------------------------------------------
+
+
+def test_route_command_presents_every_hop_from_the_snapshot(capsys):
+    fake = _FakeTracerouteProbe(hops=_sample_hops())
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    run_route_command(container, "example.com")
+
+    captured = capsys.readouterr()
+    assert "10.0.0.1" in captured.out
+    assert "203.0.113.1" in captured.out
+
+
+def test_route_command_presents_a_hop_with_no_response_without_fabricating_data(capsys):
+    hops = [RouteHop(ttl=1, address=None, hostname=None, avg_rtt_ms=None, packet_loss_pct=100.0)]
+    fake = _FakeTracerouteProbe(hops=hops)
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    run_route_command(container, "example.com")
+
+    captured = capsys.readouterr()
+    assert "*" in captured.out  # unknown address shown honestly, not fabricated
+    assert "no response" in captured.out
+
+
+# --- F. Route-analysis wiring --------------------------------------------------
+
+
+def test_route_command_reports_stability_for_a_single_snapshot(capsys):
+    """A single traceroute has nothing to compare against --
+    analyze_route_churn's own documented behavior (TASK-021) reports
+    this as stable; the CLI must present that honestly, not claim
+    certainty beyond what was observed."""
+    fake = _FakeTracerouteProbe(hops=_sample_hops())
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    run_route_command(container, "example.com")
+
+    captured = capsys.readouterr()
+    assert "stable" in captured.out.lower()
+
+
+def test_route_command_does_not_reimplement_route_churn_logic():
+    """Static guard: the churn/stability decision must come from
+    core.routing.analyze_route_churn, never a re-derived boolean based
+    on hop counts or addresses computed inline in cli.py."""
+    import inspect
+
+    source = inspect.getsource(run_route_command)
+    assert "analyze_route_churn(" in source
+    assert "signature()" not in source  # that's analyze_route_churn's own internal mechanism
+
+
+# --- G. Human-readable output / H. no raw repr --------------------------------
+
+
+def test_route_command_output_is_human_readable_not_a_raw_repr(capsys):
+    fake = _FakeTracerouteProbe(hops=_sample_hops())
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    run_route_command(container, "example.com")
+
+    captured = capsys.readouterr()
+    assert "RouteSnapshot(" not in captured.out
+    assert "RouteHop(" not in captured.out
+    assert "RouteChurnResult(" not in captured.out
+
+
+def test_route_command_output_includes_the_target_name(capsys):
+    fake = _FakeTracerouteProbe(hops=_sample_hops())
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    run_route_command(container, "example.com")
+
+    captured = capsys.readouterr()
+    assert "example.com" in captured.out
+
+
+# --- Failure handling ----------------------------------------------------------
+
+
+def test_route_command_presents_a_failed_traceroute_cleanly(capsys):
+    fake = _FakeTracerouteProbe(success=False, error="permission denied: run as root/Administrator")
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    exit_code = run_route_command(container, "example.com")
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "permission denied" in captured.out.lower()
+    assert "RouteSnapshot(" not in captured.out
+
+
+def test_route_command_does_not_fabricate_a_route_on_failure(capsys):
+    fake = _FakeTracerouteProbe(success=False)
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    run_route_command(container, "example.com")
+
+    captured = capsys.readouterr()
+    assert "stable" not in captured.out.lower()
+    assert "hop" not in captured.out.lower()
+
+
+def test_route_command_returns_zero_on_successful_completion(capsys):
+    fake = _FakeTracerouteProbe(hops=_sample_hops())
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
+
+    exit_code = run_route_command(container, "example.com")
+
+    assert exit_code == 0
+
+
+# --- I. Existing commands remain intact ---------------------------------------
+
+
+def test_diagnose_subcommand_still_works_after_adding_route():
+    args = build_arg_parser().parse_args(["diagnose", "--gateway", "10.0.0.1"])
+    assert args.command == "diagnose"
+    assert args.gateway == "10.0.0.1"
+
+
+def test_bare_invocation_still_has_no_subcommand_after_adding_route():
+    args = build_arg_parser().parse_args([])
+    assert args.command is None
+
+
+def test_diagnose_command_function_still_callable_after_route_addition(capsys):
+    """Regression guard: adding route wiring must not have disturbed
+    run_diagnose_command's own signature/behavior."""
+    probes = {
+        ProbeType.ICMP: _FakeProbe(ProbeType.ICMP),
+        ProbeType.DNS: _FakeProbe(ProbeType.DNS),
+        ProbeType.HTTP: _FakeProbe(ProbeType.HTTP),
+    }
+    container = Container(probe_registry=ProbeRegistry(probes=probes))
+    config = NetScopeConfig()
+
+    exit_code = run_diagnose_command(container, config)
+
+    assert exit_code == 0
+
+
+# --- J. Dependency boundary (route-specific) -----------------------------------
+
+
+def test_cli_module_still_does_not_import_adapters_after_route_addition():
+    """route wiring reaches TracerouteProbeAdapter only through
+    container.probe_registry -- cli.py must never import
+    netscope.adapters.probes.traceroute_adapter or icmplib directly."""
+    import netscope.ui.cli as module
+
+    full_paths = _imports_of(module)
+    assert not any(p.startswith("netscope.adapters") for p in full_paths)
+    assert "icmplib" not in full_paths
+    assert "subprocess" not in full_paths
+
+
+def test_route_command_does_not_import_probe_internals_directly():
+    """Checks actual code only (AST, docstring stripped) -- the
+    function's own docstring legitimately explains this decision by
+    naming icmplib as what it deliberately avoids."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(run_route_command))
+    func_body = tree.body[0].body[1:]  # skip the docstring Expr node
+    code_only = ast.unparse(ast.Module(body=func_body, type_ignores=[]))
+    assert "icmplib" not in code_only
+    assert "TracerouteProbeAdapter(" not in code_only
+    assert "subprocess" not in code_only
