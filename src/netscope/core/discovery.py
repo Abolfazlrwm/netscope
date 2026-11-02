@@ -39,5 +39,4 @@ class DiscoveryProvider(Protocol):
     for a caller to parameterize beyond "discover now."
     """
 
-    def discover(self) -> NetworkSnapshot:
-        ...
+    def discover(self) -> NetworkSnapshot: ...

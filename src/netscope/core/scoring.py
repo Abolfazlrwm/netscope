@@ -45,7 +45,6 @@ outside this module's scope, exactly as instructed by TASK-025.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from netscope.core.baseline import MetricBaseline, UserBaseline
 from netscope.core.models import ExperienceEvent, ExperienceLevel, RawMeasurement, utcnow
@@ -92,9 +91,7 @@ class MetricEvaluation:
     confidence: float
 
 
-def _evaluate_metric(
-    store: dict[str, MetricBaseline], target: str, value: Optional[float]
-) -> MetricEvaluation:
+def _evaluate_metric(store: dict[str, MetricBaseline], target: str, value: float | None) -> MetricEvaluation:
     """Evaluate one metric value for `target` against its MetricBaseline
     in `store` (either a UserBaseline's `.latency` or `.packet_loss`
     dict). Read-only: never creates or mutates entries in `store`.

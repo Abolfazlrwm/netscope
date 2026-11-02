@@ -96,8 +96,7 @@ class Probe(Protocol):
 
     probe_type: ProbeType
 
-    def run(self, target: str, **options: Any) -> RawMeasurement:
-        ...
+    def run(self, target: str, **options: Any) -> RawMeasurement: ...
 
 
 @runtime_checkable
@@ -138,8 +137,6 @@ class BaselineRepository(Protocol):
     only, per this file's existing design (see module docstring above).
     """
 
-    def save(self, baseline: UserBaseline) -> None:
-        ...
+    def save(self, baseline: UserBaseline) -> None: ...
 
-    def load(self) -> UserBaseline:
-        ...
+    def load(self) -> UserBaseline: ...

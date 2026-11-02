@@ -10,13 +10,12 @@ library directly.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ProbeType(str, Enum):
@@ -65,11 +64,11 @@ class RawMeasurement:
     timestamp: datetime = field(default_factory=utcnow)
 
     success: bool = False
-    latency_ms: Optional[float] = None
-    packet_loss_pct: Optional[float] = None
-    jitter_ms: Optional[float] = None
-    error: Optional[str] = None
-    error_type: Optional[ProbeErrorType] = None
+    latency_ms: float | None = None
+    packet_loss_pct: float | None = None
+    jitter_ms: float | None = None
+    error: str | None = None
+    error_type: ProbeErrorType | None = None
 
     # Free-form extra data specific to the probe type
     # (e.g. resolved IP for DNS, status_code for HTTP, hop list for traceroute)
@@ -94,13 +93,13 @@ class RouteHop:
     """
 
     ttl: int
-    address: Optional[str]
-    hostname: Optional[str]
-    avg_rtt_ms: Optional[float]
+    address: str | None
+    hostname: str | None
+    avg_rtt_ms: float | None
     packet_loss_pct: float
-    asn: Optional[str] = None
-    organization: Optional[str] = None
-    country: Optional[str] = None
+    asn: str | None = None
+    organization: str | None = None
+    country: str | None = None
     is_unstable: bool = False
 
 
@@ -217,11 +216,11 @@ class Evidence:
 
     metric: str
     tested: bool = True
-    observed_value: Optional[float] = None
-    expected_value: Optional[float] = None
-    deviation: Optional[float] = None
+    observed_value: float | None = None
+    expected_value: float | None = None
+    deviation: float | None = None
     severity: Severity = Severity.INFO
-    source: Optional[RawMeasurement | RouteSnapshot] = None
+    source: RawMeasurement | RouteSnapshot | None = None
     confidence: float = 1.0
 
 
@@ -312,11 +311,11 @@ class Incident:
     """
 
     started_at: datetime
-    ended_at: Optional[datetime] = None
-    severity: Optional[Severity] = None
-    target: Optional[str] = None
+    ended_at: datetime | None = None
+    severity: Severity | None = None
+    target: str | None = None
     evidence: list[Evidence] = field(default_factory=list)
-    diagnosis: Optional[Diagnosis] = None
+    diagnosis: Diagnosis | None = None
 
     @property
     def is_active(self) -> bool:

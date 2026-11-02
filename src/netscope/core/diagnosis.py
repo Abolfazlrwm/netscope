@@ -151,9 +151,7 @@ def _classify(evidence: list[Evidence]) -> tuple[Hypothesis, list[Evidence], lis
 
     local_problem = any(_category(e.metric) == Hypothesis.LOCAL_NETWORK_ISSUE for e in problems)
     gateway_untested = any(_category(e.metric) == Hypothesis.LOCAL_NETWORK_ISSUE for e in untested)
-    gateway_confirmed_healthy = any(
-        _category(e.metric) == Hypothesis.LOCAL_NETWORK_ISSUE for e in healthy
-    )
+    gateway_confirmed_healthy = any(_category(e.metric) == Hypothesis.LOCAL_NETWORK_ISSUE for e in healthy)
 
     if not problems:
         if untested:
@@ -340,12 +338,24 @@ def _evidence_from_metric_baseline(
         # (same TASK-025 precedent). Checked explicitly instead.
         if value == baseline_metric.mean:
             return Evidence(
-                metric=metric, tested=True, observed_value=value, expected_value=baseline_metric.mean,
-                deviation=0.0, source=source, severity=Severity.INFO, confidence=1.0,
+                metric=metric,
+                tested=True,
+                observed_value=value,
+                expected_value=baseline_metric.mean,
+                deviation=0.0,
+                source=source,
+                severity=Severity.INFO,
+                confidence=1.0,
             )
         return Evidence(
-            metric=metric, tested=True, observed_value=value, expected_value=baseline_metric.mean,
-            deviation=None, source=source, severity=Severity.CRITICAL, confidence=1.0,
+            metric=metric,
+            tested=True,
+            observed_value=value,
+            expected_value=baseline_metric.mean,
+            deviation=None,
+            source=source,
+            severity=Severity.CRITICAL,
+            confidence=1.0,
         )
 
     sigma = baseline_metric.deviation_sigma(value)
@@ -356,8 +366,14 @@ def _evidence_from_metric_baseline(
     else:
         severity = Severity.CRITICAL
     return Evidence(
-        metric=metric, tested=True, observed_value=value, expected_value=baseline_metric.mean,
-        deviation=sigma, source=source, severity=severity, confidence=1.0,
+        metric=metric,
+        tested=True,
+        observed_value=value,
+        expected_value=baseline_metric.mean,
+        deviation=sigma,
+        source=source,
+        severity=severity,
+        confidence=1.0,
     )
 
 
@@ -413,7 +429,16 @@ def evidence_from_route_churn(
     if churn is None:
         return Evidence(metric=metric, tested=False)
     if churn.is_stable:
-        return Evidence(metric=metric, tested=True, observed_value=0.0, expected_value=0.0, deviation=0.0, source=latest_snapshot, severity=Severity.INFO, confidence=1.0)
+        return Evidence(
+            metric=metric,
+            tested=True,
+            observed_value=0.0,
+            expected_value=0.0,
+            deviation=0.0,
+            source=latest_snapshot,
+            severity=Severity.INFO,
+            confidence=1.0,
+        )
     severity = Severity.WARNING if churn.change_count == 1 else Severity.CRITICAL
     return Evidence(
         metric=metric,

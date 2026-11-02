@@ -99,15 +99,12 @@ def analyze_route_churn(snapshots: list[RouteSnapshot]) -> RouteChurnResult:
     target = snapshots[0].target
     for snap in snapshots:
         if snap.target != target:
-            raise ValueError(
-                f"all snapshots must share the same target; found {snap.target!r} "
-                f"alongside {target!r}"
-            )
+            raise ValueError(f"all snapshots must share the same target; found {snap.target!r} alongside {target!r}")
 
     unique_signatures = {snap.signature() for snap in snapshots}
 
     changes: list[RouteChange] = []
-    for previous, current in zip(snapshots, snapshots[1:]):
+    for previous, current in zip(snapshots, snapshots[1:], strict=False):
         previous_signature = previous.signature()
         current_signature = current.signature()
         if previous_signature != current_signature:
