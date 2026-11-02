@@ -23,11 +23,11 @@ from netscope.app.container import Container, build_container
 from netscope.core.discovery import DiscoveryProvider
 from netscope.core.models import NetworkContext, NetworkInterface, NetworkSnapshot, NetworkType
 
-
 # ---------------------------------------------------------------------------
 # Fake discovery provider works (contract conformance without any real
 # psutil/OS call at all)
 # ---------------------------------------------------------------------------
+
 
 class _FakeDiscoveryProvider:
     """A minimal, in-memory stand-in. Deliberately does NOT inherit from
@@ -60,6 +60,7 @@ def test_fake_discovery_provider_returns_its_configured_snapshot():
 # ---------------------------------------------------------------------------
 # Adapter returns expected models (psutil mocked -- deterministic)
 # ---------------------------------------------------------------------------
+
 
 class _FakeSnicAddr:
     def __init__(self, family, address):
@@ -151,6 +152,7 @@ def test_adapter_handles_interface_missing_from_stats_as_down(monkeypatch):
 # Empty interface handling
 # ---------------------------------------------------------------------------
 
+
 def test_adapter_returns_empty_snapshot_when_no_interfaces_reported(monkeypatch):
     import netscope.adapters.discovery.network_discovery as module
 
@@ -181,6 +183,7 @@ def test_adapter_returns_empty_snapshot_when_psutil_unavailable(monkeypatch):
 # Core has no psutil/socket imports; dependency direction is one-way
 # ---------------------------------------------------------------------------
 
+
 def _imported_top_level_modules(filepath: str) -> set[str]:
     import ast
 
@@ -204,8 +207,7 @@ def test_core_discovery_module_imports_no_psutil_socket_or_platform_apis():
     imported = _imported_top_level_modules(discovery_module.__file__)
     forbidden = {"psutil", "socket", "platform", "subprocess"}
     assert not (imported & forbidden), (
-        f"core/discovery.py imports {imported & forbidden} -- "
-        "OS/network-specific behavior belongs in adapters, not core"
+        f"core/discovery.py imports {imported & forbidden} -- OS/network-specific behavior belongs in adapters, not core"
     )
 
 
@@ -242,6 +244,7 @@ def test_discovery_adapter_module_depends_on_core_not_the_reverse():
 # ---------------------------------------------------------------------------
 # Container wiring
 # ---------------------------------------------------------------------------
+
 
 def test_build_container_exposes_a_working_discovery_provider():
     container = build_container()
@@ -296,6 +299,7 @@ def test_container_discovery_provider_snapshot_has_expected_shape_real_adapter_s
 # no mocking needed, since the classifier has no dependencies of its own.
 # ---------------------------------------------------------------------------
 
+
 def test_classify_wifi_like_interface_names_as_wifi():
     for name in ("wlan0", "wlp2s0", "wlx00c0ca123456", "Wi-Fi", "wi-fi 2", "wireless0"):
         assert classify_network_type(name) == NetworkType.WIFI, name
@@ -332,6 +336,7 @@ def test_classification_is_case_insensitive():
 # TASK-012 -- Adapter wiring: existing discovery behavior remains unchanged,
 # network_type is now populated alongside the fields TASK-010 already added.
 # ---------------------------------------------------------------------------
+
 
 def test_adapter_populates_network_type_alongside_existing_fields(monkeypatch):
     """Extends (does not duplicate) TASK-010's
@@ -372,6 +377,7 @@ def test_network_interface_construction_without_network_type_still_defaults_to_u
 # pure construction/wrapping tests, since NetworkContext has no
 # dependencies of its own.
 # ---------------------------------------------------------------------------
+
 
 def test_network_context_can_be_constructed_with_an_existing_snapshot():
     snapshot = NetworkSnapshot(interfaces=[NetworkInterface(name="eth0", is_up=True)])
@@ -427,14 +433,14 @@ def test_core_models_module_has_no_infrastructure_imports_after_adding_network_c
     imported = _imported_top_level_modules(models_module.__file__)
     forbidden = {"psutil", "icmplib", "dns", "httpx", "socket"}
     assert not (imported & forbidden), (
-        f"core/models.py imports {imported & forbidden} -- "
-        "NetworkContext and other core models must stay infrastructure-independent"
+        f"core/models.py imports {imported & forbidden} -- NetworkContext and other core models must stay infrastructure-independent"
     )
 
 
 # ---------------------------------------------------------------------------
 # TASK-013 -- Discovery adapter integration (discover_context())
 # ---------------------------------------------------------------------------
+
 
 def test_discover_context_produces_a_network_context_wrapping_the_discovered_snapshot(monkeypatch):
     import netscope.adapters.discovery.network_discovery as module

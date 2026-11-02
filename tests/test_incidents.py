@@ -17,12 +17,12 @@ clock or touches the network.
 from __future__ import annotations
 
 import ast
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from netscope.core.incidents import MonitoringRound, detect_incident
 from netscope.core.models import Diagnosis, Evidence, Hypothesis, Incident, Severity
 
-_T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _ts(i: int) -> datetime:
@@ -281,5 +281,12 @@ def test_incidents_module_only_imports_stdlib_and_core_models():
 
     assert top_level <= {"__future__", "dataclasses", "datetime", "netscope"}
     assert full_paths <= {"__future__", "dataclasses", "datetime", "netscope.core.models"}
-    for forbidden in ("netscope.ui", "netscope.adapters", "netscope.persistence", "netscope.core.diagnosis", "netscope.core.scoring", "netscope.core.baseline"):
+    for forbidden in (
+        "netscope.ui",
+        "netscope.adapters",
+        "netscope.persistence",
+        "netscope.core.diagnosis",
+        "netscope.core.scoring",
+        "netscope.core.baseline",
+    ):
         assert forbidden not in full_paths

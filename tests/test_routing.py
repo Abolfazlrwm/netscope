@@ -9,7 +9,7 @@ test_experience_score.py, test_diagnosis.py, test_ports.py).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -28,7 +28,7 @@ def _snapshot(target: str, addresses: list[str], timestamp: datetime, **hop_kwar
     return RouteSnapshot(target=target, timestamp=timestamp, hops=hops)
 
 
-_T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _at(minutes: int) -> datetime:
@@ -38,6 +38,7 @@ def _at(minutes: int) -> datetime:
 # ---------------------------------------------------------------------------
 # Stability / no-change cases
 # ---------------------------------------------------------------------------
+
 
 def test_single_snapshot_is_reported_as_stable_with_no_changes():
     snap = _snapshot("example.com", ["10.0.0.1", "10.0.0.2"], _at(0))
@@ -66,6 +67,7 @@ def test_two_identical_route_snapshots_are_stable():
 # ---------------------------------------------------------------------------
 # Change detection
 # ---------------------------------------------------------------------------
+
 
 def test_two_different_route_snapshots_produce_one_change():
     snap_a = _snapshot("example.com", ["10.0.0.1", "10.0.0.2"], _at(0))
@@ -126,6 +128,7 @@ def test_back_and_forth_route_counts_two_changes_but_only_two_unique_signatures(
 # Immunity to lookup-metadata-only changes (builds on TASK-020's guarantee)
 # ---------------------------------------------------------------------------
 
+
 def test_churn_detection_is_unaffected_by_asn_organization_country_changes():
     """A hop's asn/organization/country (TASK-020 fields) being filled
     in or changed by a future lookup, with the address staying
@@ -142,9 +145,14 @@ def test_churn_detection_is_unaffected_by_asn_organization_country_changes():
         timestamp=_at(5),
         hops=[
             RouteHop(
-                ttl=1, address="10.0.0.1", hostname="router.example.com",
-                avg_rtt_ms=11.0, packet_loss_pct=0.0,
-                asn="AS64500", organization="Example ISP", country="US",
+                ttl=1,
+                address="10.0.0.1",
+                hostname="router.example.com",
+                avg_rtt_ms=11.0,
+                packet_loss_pct=0.0,
+                asn="AS64500",
+                organization="Example ISP",
+                country="US",
             )
         ],
     )
@@ -158,6 +166,7 @@ def test_churn_detection_is_unaffected_by_asn_organization_country_changes():
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
+
 
 def test_empty_snapshot_list_raises_value_error():
     with pytest.raises(ValueError):
@@ -176,6 +185,7 @@ def test_mismatched_targets_raises_value_error():
 # RouteChurnResult itself
 # ---------------------------------------------------------------------------
 
+
 def test_route_churn_result_snapshot_count_matches_input_length():
     snapshots = [_snapshot("example.com", ["10.0.0.1"], _at(i)) for i in range(5)]
 
@@ -192,5 +202,6 @@ def test_route_churn_result_does_not_decide_diagnosis():
     listing the dataclass's own fields rather than just trusting the
     docstring."""
     import dataclasses
+
     field_names = {f.name for f in dataclasses.fields(RouteChurnResult)}
     assert field_names == {"target", "snapshot_count", "unique_signature_count", "changes"}

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from netscope.core.baseline import MetricBaseline, UserBaseline
+from netscope.core.baseline import UserBaseline
 from netscope.core.models import ExperienceLevel, ProbeType, RawMeasurement
 from netscope.core.scoring import score_measurements
 

@@ -206,6 +206,7 @@ def test_ports_module_only_imports_stdlib_typing_and_core_models():
     accidentally adds a real import of one of these libraries fails this
     test immediately rather than being caught only by manual review."""
     import ast
+
     import netscope.core.ports as ports_module
 
     with open(ports_module.__file__, encoding="utf-8") as f:
@@ -222,6 +223,5 @@ def test_ports_module_only_imports_stdlib_typing_and_core_models():
 
     allowed = {"__future__", "typing", "netscope"}
     assert imported_modules <= allowed, (
-        f"core/ports.py imports {imported_modules - allowed}, which are "
-        "not in the allowed set for a dependency-light core contract"
+        f"core/ports.py imports {imported_modules - allowed}, which are not in the allowed set for a dependency-light core contract"
     )

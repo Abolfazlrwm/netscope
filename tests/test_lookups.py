@@ -34,6 +34,7 @@ _TEST_DB = """
 # Successful lookup
 # ---------------------------------------------------------------------------
 
+
 def test_successful_lookup_returns_asn_and_matching_prefix():
     adapter = AsnLookupAdapter(ipasn_string=_TEST_DB)
 
@@ -78,6 +79,7 @@ def test_comment_lines_are_skipped():
 # Longest-prefix-match specifically
 # ---------------------------------------------------------------------------
 
+
 def test_longest_prefix_match_prefers_the_most_specific_matching_entry():
     """An address inside both a /24 and the database's /0 default
     route must match the /24 (the more specific entry), not the
@@ -106,6 +108,7 @@ def test_default_route_matches_addresses_outside_any_specific_prefix():
 # No match (legitimate, not an error) -- database with no default route
 # ---------------------------------------------------------------------------
 
+
 def test_no_match_returns_none_asn_and_prefix_not_an_error():
     """With no default route in the database, a genuinely-uncovered
     address returns an unmatched result -- no exception."""
@@ -121,6 +124,7 @@ def test_no_match_returns_none_asn_and_prefix_not_an_error():
 # ---------------------------------------------------------------------------
 # IPv6 support
 # ---------------------------------------------------------------------------
+
 
 def test_ipv6_lookup_works():
     adapter = AsnLookupAdapter(ipasn_string="2001:db8::/32\t65000\n")
@@ -143,6 +147,7 @@ def test_ipv6_no_match_is_unmatched_not_an_error():
 # Invalid input
 # ---------------------------------------------------------------------------
 
+
 def test_invalid_ip_address_raises_value_error():
     adapter = AsnLookupAdapter(ipasn_string=_TEST_DB)
 
@@ -160,6 +165,7 @@ def test_empty_string_ip_address_raises_value_error():
 # ---------------------------------------------------------------------------
 # Unavailable lookup data
 # ---------------------------------------------------------------------------
+
 
 def test_malformed_database_content_raises_asn_lookup_unavailable_error():
     with pytest.raises(AsnLookupUnavailableError):
@@ -208,12 +214,14 @@ def test_malformed_single_line_reports_the_offending_line_number():
 # Dependency direction / import boundaries / no third-party dependency
 # ---------------------------------------------------------------------------
 
+
 def test_core_models_module_does_not_import_lookup_infrastructure():
     """core must remain infrastructure-independent -- lookup logic
     belongs only in adapters/lookups.py, confirmed the same way every
     other infrastructure-import boundary in this project is checked
     (AST inspection via the module's own __file__)."""
     import ast
+
     import netscope.core.models as models_module
 
     with open(models_module.__file__, encoding="utf-8") as f:
@@ -236,6 +244,7 @@ def test_lookups_module_has_no_third_party_dependency():
     implementation install cleanly on Windows/Python 3.13 without a
     native compiler."""
     import ast
+
     import netscope.adapters.lookups as module
 
     with open(module.__file__, encoding="utf-8") as f:

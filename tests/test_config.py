@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from netscope.app.config import NetScopeConfig, load_config
 
-
 # ---------------------------------------------------------------------------
 # Zero required configuration
 # ---------------------------------------------------------------------------
@@ -79,7 +78,7 @@ def test_load_config_ignores_unknown_keys_rather_than_raising(tmp_path):
 
 def test_load_config_with_only_unknown_keys_returns_defaults(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text('totally_unrecognized = 123\n')
+    path.write_text("totally_unrecognized = 123\n")
     config = load_config(path)
     assert config == NetScopeConfig()
 

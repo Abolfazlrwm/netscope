@@ -7,11 +7,12 @@ exhaustive dataclass coverage.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 from netscope.core.models import (
+    SERVICE_CHECK_TYPES,
     Diagnosis,
     Evidence,
     ExperienceEvent,
@@ -23,7 +24,6 @@ from netscope.core.models import (
     RawMeasurement,
     RouteHop,
     RouteSnapshot,
-    SERVICE_CHECK_TYPES,
     Service,
     Severity,
 )
@@ -48,7 +48,7 @@ def test_raw_measurement_defaults_are_unsuccessful_and_empty():
 def test_raw_measurement_timestamp_defaults_to_utc_now():
     m = RawMeasurement(probe_type=ProbeType.DNS, target="example.com")
     assert m.timestamp.tzinfo is not None
-    assert m.timestamp.tzinfo == timezone.utc
+    assert m.timestamp.tzinfo == UTC
 
 
 def test_route_snapshot_signature_uses_hop_addresses_in_order():
@@ -125,11 +125,21 @@ def test_route_snapshot_signature_is_unaffected_by_lookup_fields():
     the identical signature, or route-churn detection would falsely
     fire on a lookup update rather than an actual path change."""
     hop_without_lookup = RouteHop(
-        ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=1.0, packet_loss_pct=0.0,
+        ttl=1,
+        address="10.0.0.1",
+        hostname=None,
+        avg_rtt_ms=1.0,
+        packet_loss_pct=0.0,
     )
     hop_with_lookup = RouteHop(
-        ttl=1, address="10.0.0.1", hostname="router.example.com", avg_rtt_ms=1.0, packet_loss_pct=0.0,
-        asn="AS64500", organization="Example ISP", country="US",
+        ttl=1,
+        address="10.0.0.1",
+        hostname="router.example.com",
+        avg_rtt_ms=1.0,
+        packet_loss_pct=0.0,
+        asn="AS64500",
+        organization="Example ISP",
+        country="US",
     )
 
     snap_a = RouteSnapshot(target="example.com", hops=[hop_without_lookup])
@@ -141,7 +151,7 @@ def test_route_snapshot_signature_is_unaffected_by_lookup_fields():
 def test_experience_event_holds_contributing_measurements():
     m = RawMeasurement(probe_type=ProbeType.HTTP, target="example.com", success=True, latency_ms=10.0)
     event = ExperienceEvent(
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         score=95.0,
         level=ExperienceLevel.EXCELLENT,
         contributing_measurements=[m],
@@ -314,7 +324,7 @@ def test_incident_defaults_do_not_fabricate_a_severity_or_diagnosis():
     must still work -- but severity/diagnosis must default to None,
     not to some invented 'safe' value, since this task only adds the
     shape and does not itself diagnose anything."""
-    incident = Incident(started_at=datetime.now(timezone.utc))
+    incident = Incident(started_at=datetime.now(UTC))
     assert incident.severity is None
     assert incident.target is None
     assert incident.evidence == []
@@ -322,12 +332,12 @@ def test_incident_defaults_do_not_fabricate_a_severity_or_diagnosis():
 
 
 def test_incident_is_active_when_ended_at_is_none():
-    incident = Incident(started_at=datetime.now(timezone.utc))
+    incident = Incident(started_at=datetime.now(UTC))
     assert incident.is_active is True
 
 
 def test_incident_is_not_active_once_ended_at_is_set():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     incident = Incident(started_at=now, ended_at=now)
     assert incident.is_active is False
 
@@ -340,7 +350,7 @@ def test_incident_references_a_diagnosis_instead_of_duplicating_its_fields():
     e = Evidence(metric="gateway_latency", observed_value=300.0, expected_value=20.0, deviation=6.0, severity=Severity.CRITICAL)
     diagnosis = Diagnosis(classification=Hypothesis.LOCAL_NETWORK_ISSUE, evidence=[e], confidence=0.85)
     incident = Incident(
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
         severity=Severity.CRITICAL,
         target="192.168.1.1",
         evidence=[e],
@@ -395,7 +405,7 @@ def test_service_check_types_are_exactly_the_five_documented_checks():
     """Pinned per architecture-overview.md SS5 / module-boundaries.md's
     Services section -- a later accidental addition/removal fails
     loudly."""
-    assert SERVICE_CHECK_TYPES == {ProbeType.ICMP, ProbeType.DNS, ProbeType.TCP, ProbeType.TLS, ProbeType.HTTP}
+    assert {ProbeType.ICMP, ProbeType.DNS, ProbeType.TCP, ProbeType.TLS, ProbeType.HTTP} == SERVICE_CHECK_TYPES
 
 
 def test_service_rejects_traceroute_as_an_enabled_check():

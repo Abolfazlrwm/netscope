@@ -32,8 +32,21 @@ import ast
 import pytest
 
 from netscope.core.baseline import UserBaseline
-from netscope.core.diagnosis import diagnose, evidence_from_latency, evidence_from_packet_loss, evidence_from_route_churn
-from netscope.core.models import Diagnosis, Evidence, Hypothesis, ProbeType, RawMeasurement, RouteHop, RouteSnapshot, Severity
+from netscope.core.diagnosis import (
+    diagnose,
+    evidence_from_latency,
+    evidence_from_packet_loss,
+    evidence_from_route_churn,
+)
+from netscope.core.models import (
+    Evidence,
+    Hypothesis,
+    ProbeType,
+    RawMeasurement,
+    RouteHop,
+    RouteSnapshot,
+    Severity,
+)
 from netscope.core.routing import analyze_route_churn
 
 
@@ -42,7 +55,9 @@ def _healthy(metric: str, observed=10.0, expected=10.0) -> Evidence:
 
 
 def _bad(metric: str, severity=Severity.CRITICAL, observed=300.0, expected=20.0, deviation=6.0, confidence=1.0) -> Evidence:
-    return Evidence(metric=metric, tested=True, observed_value=observed, expected_value=expected, deviation=deviation, severity=severity, confidence=confidence)
+    return Evidence(
+        metric=metric, tested=True, observed_value=observed, expected_value=expected, deviation=deviation, severity=severity, confidence=confidence
+    )
 
 
 def _untested(metric: str) -> Evidence:

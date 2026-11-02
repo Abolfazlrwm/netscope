@@ -19,10 +19,10 @@ import pytest
 
 from netscope.core.baseline import MetricBaseline, UserBaseline
 
-
 # ---------------------------------------------------------------------------
 # MetricBaseline
 # ---------------------------------------------------------------------------
+
 
 def test_metric_baseline_starts_empty():
     b = MetricBaseline()
@@ -112,6 +112,7 @@ def test_metric_baseline_anomalous_value_has_high_deviation_sigma():
 # ---------------------------------------------------------------------------
 # UserBaseline
 # ---------------------------------------------------------------------------
+
 
 def test_user_baseline_tracks_targets_independently():
     ub = UserBaseline()

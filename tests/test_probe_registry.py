@@ -21,10 +21,10 @@ from netscope.app.container import Container, build_container
 from netscope.core.models import ProbeType, RawMeasurement
 from netscope.core.ports import Probe
 
-
 # ---------------------------------------------------------------------------
 # Registry returns the correct adapter
 # ---------------------------------------------------------------------------
+
 
 def test_registry_returns_icmp_adapter_for_icmp_probe_type():
     registry = ProbeRegistry()
@@ -72,6 +72,7 @@ def test_registry_returns_traceroute_adapter_for_traceroute_probe_type():
 # All registered adapters satisfy the Probe protocol
 # ---------------------------------------------------------------------------
 
+
 def test_all_default_registered_probes_satisfy_probe_protocol():
     registry = ProbeRegistry()
     for probe_type in registry.available_types():
@@ -91,6 +92,7 @@ def test_available_types_reports_exactly_the_six_implemented_probes():
 # ---------------------------------------------------------------------------
 # Unknown probe type behavior is defined
 # ---------------------------------------------------------------------------
+
 
 def test_unregistered_probe_type_raises_probe_not_registered_error():
     """TASK-019 registered the last remaining ProbeType (TRACEROUTE was
@@ -133,6 +135,7 @@ def test_empty_registry_raises_for_every_probe_type():
 # Registry is extensible without modifying the class
 # ---------------------------------------------------------------------------
 
+
 def test_register_adds_a_new_probe_type_without_modifying_the_class():
     """Same reasoning as test_unregistered_probe_type_raises_probe_not_registered_error
     above: constructs a deliberately-incomplete registry and registers
@@ -153,6 +156,7 @@ def test_register_adds_a_new_probe_type_without_modifying_the_class():
 def test_register_can_replace_an_existing_probe_type():
     """Useful for tests: swap the real ICMP adapter for a fake without
     touching ProbeRegistry itself."""
+
     class _FakeICMPProbe:
         probe_type = ProbeType.ICMP
 
@@ -184,6 +188,7 @@ def test_registry_constructor_accepts_a_custom_probe_mapping():
 # Registry does not import low-level libraries
 # ---------------------------------------------------------------------------
 
+
 def test_registry_module_does_not_import_network_libraries_directly():
     """The registry only knows about adapters and core -- it must not
     import icmplib/dns/httpx/psutil directly, which would indicate it's
@@ -206,8 +211,7 @@ def test_registry_module_does_not_import_network_libraries_directly():
 
     forbidden = {"icmplib", "dns", "httpx", "psutil"}
     assert not (imported_modules & forbidden), (
-        f"registry.py imports {imported_modules & forbidden} directly -- "
-        "it must only route to adapters, never perform measurement itself"
+        f"registry.py imports {imported_modules & forbidden} directly -- it must only route to adapters, never perform measurement itself"
     )
     # Sanity: it should import netscope (core + adapters), confirming
     # the AST walk itself is actually finding real imports.
@@ -217,6 +221,7 @@ def test_registry_module_does_not_import_network_libraries_directly():
 # ---------------------------------------------------------------------------
 # Container creates a working registry
 # ---------------------------------------------------------------------------
+
 
 def test_build_container_returns_a_container_with_a_probe_registry():
     container = build_container()
