@@ -83,7 +83,7 @@ def connect(host: str, port: int, timeout: float = 2.0) -> RawMeasurement:
             success=True,
             latency_ms=elapsed_ms,
         )
-    except socket.timeout:
+    except TimeoutError:
         elapsed_ms = (time.perf_counter() - start) * 1000
         return RawMeasurement(
             probe_type=ProbeType.TCP,

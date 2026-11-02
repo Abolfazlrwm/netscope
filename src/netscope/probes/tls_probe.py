@@ -25,7 +25,6 @@ diagnosing a connection, rather than conflating the two into one number.
 
 from __future__ import annotations
 
-import socket
 import ssl
 import time
 
@@ -48,7 +47,7 @@ def handshake(host: str, port: int, timeout: float = 2.0) -> RawMeasurement:
 
     try:
         sock = tcp_probe._open_connected_socket(host, port, timeout)
-    except socket.timeout:
+    except TimeoutError:
         return RawMeasurement(
             probe_type=ProbeType.TLS,
             target=target,
@@ -106,7 +105,7 @@ def handshake(host: str, port: int, timeout: float = 2.0) -> RawMeasurement:
                 "cipher": cipher[0] if cipher else None,
             },
         )
-    except socket.timeout:
+    except TimeoutError:
         elapsed_ms = (time.perf_counter() - start) * 1000
         return RawMeasurement(
             probe_type=ProbeType.TLS,

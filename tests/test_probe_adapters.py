@@ -28,10 +28,10 @@ from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, Rout
 from netscope.core.ports import Probe
 from netscope.probes import dns_probe, http_probe, icmp_probe, tcp_probe, tls_probe, traceroute_probe
 
-
 # ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
+
 
 def test_icmp_adapter_satisfies_probe_protocol():
     assert isinstance(ICMPProbeAdapter(), Probe)
@@ -49,6 +49,7 @@ def test_http_adapter_satisfies_probe_protocol():
 # Correct ProbeType
 # ---------------------------------------------------------------------------
 
+
 def test_icmp_adapter_reports_icmp_probe_type():
     assert ICMPProbeAdapter().probe_type == ProbeType.ICMP
 
@@ -64,6 +65,7 @@ def test_http_adapter_reports_http_probe_type():
 # ---------------------------------------------------------------------------
 # Returns RawMeasurement, existing (successful) behavior preserved exactly
 # ---------------------------------------------------------------------------
+
 
 def test_icmp_adapter_returns_raw_measurement_and_forwards_target_and_options(monkeypatch):
     captured = {}
@@ -145,6 +147,7 @@ def test_adapters_work_with_no_extra_options_using_underlying_defaults(monkeypat
 # not swallow, alter, or reinterpret that result in any way)
 # ---------------------------------------------------------------------------
 
+
 def test_icmp_adapter_passes_through_failed_measurement_unchanged(monkeypatch):
     failed = RawMeasurement(
         probe_type=ProbeType.ICMP,
@@ -219,6 +222,7 @@ def test_icmp_adapter_does_not_add_its_own_error_handling(monkeypatch):
 # Adapters contain no measurement logic of their own
 # ---------------------------------------------------------------------------
 
+
 def test_adapter_modules_do_not_import_network_libraries_directly():
     """Adapters delegate to the existing probes.* modules -- they must
     not import icmplib/dnspython/httpx/socket/ssl themselves, which
@@ -228,9 +232,10 @@ def test_adapter_modules_do_not_import_network_libraries_directly():
     to adding tls_adapter to the same check) and tls_adapter. Extended
     by TASK-019 to also cover traceroute_adapter."""
     import ast
-    import netscope.adapters.probes.icmp_adapter as icmp_adapter
+
     import netscope.adapters.probes.dns_adapter as dns_adapter
     import netscope.adapters.probes.http_adapter as http_adapter
+    import netscope.adapters.probes.icmp_adapter as icmp_adapter
     import netscope.adapters.probes.tcp_adapter as tcp_adapter_module
     import netscope.adapters.probes.tls_adapter as tls_adapter_module
     import netscope.adapters.probes.traceroute_adapter as traceroute_adapter_module
@@ -269,9 +274,11 @@ def test_adapter_modules_do_not_import_network_libraries_directly():
 # ICMP), so these are fully offline and deterministic.
 # ---------------------------------------------------------------------------
 
+
 def test_icmp_adapter_successful_measurement_has_no_error_type(monkeypatch):
     monkeypatch.setattr(
-        icmp_probe, "ping",
+        icmp_probe,
+        "ping",
         lambda target, **kwargs: RawMeasurement(probe_type=ProbeType.ICMP, target=target, success=True, latency_ms=5.0),
     )
 
@@ -283,9 +290,13 @@ def test_icmp_adapter_successful_measurement_has_no_error_type(monkeypatch):
 
 def test_icmp_adapter_classifies_missing_library_as_probe_unavailable(monkeypatch):
     monkeypatch.setattr(
-        icmp_probe, "ping",
+        icmp_probe,
+        "ping",
         lambda target, **kwargs: RawMeasurement(
-            probe_type=ProbeType.ICMP, target=target, success=False, error="icmplib not installed",
+            probe_type=ProbeType.ICMP,
+            target=target,
+            success=False,
+            error="icmplib not installed",
         ),
     )
 
@@ -296,7 +307,8 @@ def test_icmp_adapter_classifies_missing_library_as_probe_unavailable(monkeypatc
 
 def test_icmp_adapter_classifies_permission_error_as_permission_denied(monkeypatch):
     monkeypatch.setattr(
-        icmp_probe, "ping",
+        icmp_probe,
+        "ping",
         lambda target, **kwargs: RawMeasurement(
             probe_type=ProbeType.ICMP,
             target=target,
@@ -316,9 +328,14 @@ def test_icmp_adapter_classifies_no_response_with_no_error_string_as_timeout(mon
     loss, is_alive=False) -- this failed-with-no-error-string case is
     the timeout case."""
     monkeypatch.setattr(
-        icmp_probe, "ping",
+        icmp_probe,
+        "ping",
         lambda target, **kwargs: RawMeasurement(
-            probe_type=ProbeType.ICMP, target=target, success=False, packet_loss_pct=100.0, error=None,
+            probe_type=ProbeType.ICMP,
+            target=target,
+            success=False,
+            packet_loss_pct=100.0,
+            error=None,
         ),
     )
 
@@ -329,9 +346,13 @@ def test_icmp_adapter_classifies_no_response_with_no_error_string_as_timeout(mon
 
 def test_icmp_adapter_classifies_unrecognized_error_as_unknown(monkeypatch):
     monkeypatch.setattr(
-        icmp_probe, "ping",
+        icmp_probe,
+        "ping",
         lambda target, **kwargs: RawMeasurement(
-            probe_type=ProbeType.ICMP, target=target, success=False, error="some totally different failure",
+            probe_type=ProbeType.ICMP,
+            target=target,
+            success=False,
+            error="some totally different failure",
         ),
     )
 
@@ -344,21 +365,17 @@ def test_classify_icmp_error_helper_directly_covers_all_four_cases():
     """Direct unit tests of the classification function itself, not
     just through the adapter -- keeps the mapping's correctness visible
     without needing to reconstruct a full adapter call each time."""
-    assert _classify_icmp_error(
-        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=True)
-    ) is None
-    assert _classify_icmp_error(
-        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="icmplib not installed")
-    ) == ProbeErrorType.PROBE_UNAVAILABLE
-    assert _classify_icmp_error(
-        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="Permission denied")
-    ) == ProbeErrorType.PERMISSION_DENIED
-    assert _classify_icmp_error(
-        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error=None)
-    ) == ProbeErrorType.TIMEOUT
-    assert _classify_icmp_error(
-        RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="weird")
-    ) == ProbeErrorType.UNKNOWN
+    assert _classify_icmp_error(RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=True)) is None
+    assert (
+        _classify_icmp_error(RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="icmplib not installed"))
+        == ProbeErrorType.PROBE_UNAVAILABLE
+    )
+    assert (
+        _classify_icmp_error(RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="Permission denied"))
+        == ProbeErrorType.PERMISSION_DENIED
+    )
+    assert _classify_icmp_error(RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error=None)) == ProbeErrorType.TIMEOUT
+    assert _classify_icmp_error(RawMeasurement(probe_type=ProbeType.ICMP, target="x", success=False, error="weird")) == ProbeErrorType.UNKNOWN
 
 
 # ---------------------------------------------------------------------------
@@ -370,9 +387,11 @@ def test_classify_icmp_error_helper_directly_covers_all_four_cases():
 # fully offline and deterministic.
 # ---------------------------------------------------------------------------
 
+
 def test_dns_adapter_successful_measurement_has_no_error_type(monkeypatch):
     monkeypatch.setattr(
-        dns_probe, "resolve",
+        dns_probe,
+        "resolve",
         lambda hostname, **kwargs: RawMeasurement(probe_type=ProbeType.DNS, target=hostname, success=True, latency_ms=5.0),
     )
 
@@ -384,9 +403,13 @@ def test_dns_adapter_successful_measurement_has_no_error_type(monkeypatch):
 
 def test_dns_adapter_classifies_missing_library_as_probe_unavailable(monkeypatch):
     monkeypatch.setattr(
-        dns_probe, "resolve",
+        dns_probe,
+        "resolve",
         lambda hostname, **kwargs: RawMeasurement(
-            probe_type=ProbeType.DNS, target=hostname, success=False, error="dnspython not installed",
+            probe_type=ProbeType.DNS,
+            target=hostname,
+            success=False,
+            error="dnspython not installed",
         ),
     )
 
@@ -400,9 +423,13 @@ def test_dns_adapter_classifies_timeout_as_timeout(monkeypatch):
     'The DNS operation timed out.' (verified directly against the
     installed dnspython package)."""
     monkeypatch.setattr(
-        dns_probe, "resolve",
+        dns_probe,
+        "resolve",
         lambda hostname, **kwargs: RawMeasurement(
-            probe_type=ProbeType.DNS, target=hostname, success=False, error="The DNS operation timed out.",
+            probe_type=ProbeType.DNS,
+            target=hostname,
+            success=False,
+            error="The DNS operation timed out.",
         ),
     )
 
@@ -418,9 +445,13 @@ def test_dns_adapter_classifies_nxdomain_as_dns_failure(monkeypatch):
     falls into the same DNS_FAILURE bucket, since none of them fit the
     ICMP-scoped TIMEOUT/PERMISSION_DENIED/PROBE_UNAVAILABLE values."""
     monkeypatch.setattr(
-        dns_probe, "resolve",
+        dns_probe,
+        "resolve",
         lambda hostname, **kwargs: RawMeasurement(
-            probe_type=ProbeType.DNS, target=hostname, success=False, error="The DNS query name does not exist.",
+            probe_type=ProbeType.DNS,
+            target=hostname,
+            success=False,
+            error="The DNS query name does not exist.",
         ),
     )
 
@@ -432,21 +463,20 @@ def test_dns_adapter_classifies_nxdomain_as_dns_failure(monkeypatch):
 def test_classify_dns_error_helper_directly_covers_all_cases():
     """Direct unit tests of the classification function itself, not
     just through the adapter -- mirrors the equivalent ICMP test."""
-    assert _classify_dns_error(
-        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=True)
-    ) is None
-    assert _classify_dns_error(
-        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error="dnspython not installed")
-    ) == ProbeErrorType.PROBE_UNAVAILABLE
-    assert _classify_dns_error(
-        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error="The DNS operation timed out.")
-    ) == ProbeErrorType.TIMEOUT
-    assert _classify_dns_error(
-        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error="NXDOMAIN or whatever else dnspython says")
-    ) == ProbeErrorType.DNS_FAILURE
-    assert _classify_dns_error(
-        RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error=None)
-    ) == ProbeErrorType.UNKNOWN
+    assert _classify_dns_error(RawMeasurement(probe_type=ProbeType.DNS, target="x", success=True)) is None
+    assert (
+        _classify_dns_error(RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error="dnspython not installed"))
+        == ProbeErrorType.PROBE_UNAVAILABLE
+    )
+    assert (
+        _classify_dns_error(RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error="The DNS operation timed out."))
+        == ProbeErrorType.TIMEOUT
+    )
+    assert (
+        _classify_dns_error(RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error="NXDOMAIN or whatever else dnspython says"))
+        == ProbeErrorType.DNS_FAILURE
+    )
+    assert _classify_dns_error(RawMeasurement(probe_type=ProbeType.DNS, target="x", success=False, error=None)) == ProbeErrorType.UNKNOWN
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +486,7 @@ def test_classify_dns_error_helper_directly_covers_all_cases():
 # probe level, where that classification actually happens. socket.socket
 # is fully mocked throughout -- no real network access is used or needed.
 # ---------------------------------------------------------------------------
+
 
 class _FakeSocket:
     """Records settimeout()/close() calls; connect() either succeeds
@@ -547,7 +578,7 @@ def test_tcp_probe_classifies_each_socket_exception_type_correctly(monkeypatch):
     for every exception branch tcp_probe.connect() implements, using
     the real exception types (never string matching)."""
     cases = [
-        (tcp_probe.socket.timeout(), ProbeErrorType.TIMEOUT),
+        (TimeoutError(), ProbeErrorType.TIMEOUT),
         (ConnectionRefusedError("Connection refused"), ProbeErrorType.CONNECTION_REFUSED),
         (PermissionError("Operation not permitted"), ProbeErrorType.PERMISSION_DENIED),
         (OSError("Network is unreachable"), ProbeErrorType.UNKNOWN),
@@ -589,6 +620,7 @@ def test_tcp_probe_closes_socket_after_failed_attempt(monkeypatch):
 # where that classification happens. socket/ssl are fully mocked
 # throughout -- no real network or TLS handshake is used or needed.
 # ---------------------------------------------------------------------------
+
 
 class _FakeTLSSocket:
     def __init__(self, version="TLSv1.3", cipher_name="TLS_AES_256_GCM_SHA384"):
@@ -691,6 +723,7 @@ def test_tls_probe_classifies_tcp_layer_failure_before_handshake_using_tcp_error
     ProbeErrorType values TASK-016 established -- reused, not
     reinvented. latency_ms stays None since handshake timing never
     started."""
+
     def raise_refused(host, port, timeout):
         raise ConnectionRefusedError("refused")
 
@@ -736,7 +769,7 @@ def test_tls_probe_classifies_handshake_timeout_as_timeout(monkeypatch):
     fake_tcp_socket = _FakeSocket()
     monkeypatch.setattr(tcp_probe, "_open_connected_socket", lambda host, port, timeout: fake_tcp_socket)
 
-    fake_context = _FakeSSLContext(wrap_raises=tls_probe.socket.timeout())
+    fake_context = _FakeSSLContext(wrap_raises=TimeoutError())
     monkeypatch.setattr(tls_probe.ssl, "create_default_context", lambda: fake_context)
 
     result = tls_probe.handshake("example.com", 443)
@@ -802,6 +835,7 @@ def test_open_connected_socket_closes_partial_socket_on_connect_failure(monkeypa
 # implementation directly (existing HTTP tests above only ever mocked
 # http_probe.fetch() itself at the adapter boundary).
 # ---------------------------------------------------------------------------
+
 
 class _FakeHTTPXResponse:
     """Context-manager fake for the object yielded by
@@ -900,9 +934,7 @@ def test_http_probe_docstring_and_behavior_agree_on_ttfb(monkeypatch):
 
 
 def test_http_probe_successful_measurement_preserves_expected_fields(monkeypatch):
-    fake_response = _FakeHTTPXResponse(
-        status_code=200, http_version="HTTP/2", url="https://example.com/final", chunks=[b"data"]
-    )
+    fake_response = _FakeHTTPXResponse(status_code=200, http_version="HTTP/2", url="https://example.com/final", chunks=[b"data"])
     fake_client = _FakeHTTPXClient(response=fake_response)
     monkeypatch.setattr(http_probe.httpx, "Client", lambda **kwargs: fake_client)
 
@@ -1022,6 +1054,7 @@ def test_http_adapter_still_delegates_correctly_after_task_018_changes(monkeypat
 # separately, not part of this automated suite.)
 # ---------------------------------------------------------------------------
 
+
 class _FakeIcmplibHop:
     """Fake for icmplib.Hop -- mirrors the real class's is_alive/
     avg_rtt/packet_loss properties (verified against the installed
@@ -1126,6 +1159,7 @@ def test_traceroute_probe_classifies_socket_permission_error_as_permission_denie
     installed icmplib package) -- passing True matches how icmplib
     itself raises it internally when traceroute's mandatory privileged
     socket creation fails."""
+
     def raise_permission_error(host, **kwargs):
         raise traceroute_probe.icmplib.exceptions.SocketPermissionError(True)
 
