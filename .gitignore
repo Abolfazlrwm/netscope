@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 .venv/
 venv/
 .env
@@ -11,3 +15,8 @@ build/
 .idea/
 .vscode/
 .DS_Store
+
+# NetScope's own runtime data (created by the tool, never committed)
+*.db
+*.sqlite
+*.db-journal
