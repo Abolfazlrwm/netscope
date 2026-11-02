@@ -65,7 +65,6 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass
-from typing import Optional
 
 
 class AsnLookupUnavailableError(RuntimeError):
@@ -87,8 +86,8 @@ class AsnLookupResult:
     normal, expected outcome, not an error condition."""
 
     ip_address: str
-    asn: Optional[int]
-    prefix: Optional[str]
+    asn: int | None
+    prefix: str | None
 
     @property
     def matched(self) -> bool:
@@ -128,9 +127,7 @@ def _parse_database(text: str) -> dict[int, dict[int, tuple[int, str]]]:
     return by_prefixlen
 
 
-def _longest_prefix_match(
-    by_prefixlen: dict[int, dict[int, tuple[int, str]]], ip_address: str
-) -> tuple[Optional[int], Optional[str]]:
+def _longest_prefix_match(by_prefixlen: dict[int, dict[int, tuple[int, str]]], ip_address: str) -> tuple[int | None, str | None]:
     """Pure-Python longest-prefix-match: checks candidate networks from
     the most specific prefix length down to the least specific (0,
     the default route), returning the first (most specific) match.
@@ -178,13 +175,14 @@ class AsnLookupAdapter:
     lookup anyway.
     """
 
-    def __init__(self, ipasn_file: Optional[str] = None, ipasn_string: Optional[str] = None) -> None:
+    def __init__(self, ipasn_file: str | None = None, ipasn_string: str | None = None) -> None:
         if ipasn_file is None and ipasn_string is None:
             raise ValueError("either ipasn_file or ipasn_string must be provided")
 
         if ipasn_string is not None:
             text = ipasn_string
         else:
+            assert ipasn_file is not None  # narrowed by the either/or guard above
             try:
                 with open(ipasn_file, encoding="utf-8") as f:
                     text = f.read()

@@ -56,9 +56,7 @@ class ProbeRegistry:
     """
 
     def __init__(self, probes: dict[ProbeType, Probe] | None = None) -> None:
-        self._probes: dict[ProbeType, Probe] = (
-            dict(probes) if probes is not None else self._default_probes()
-        )
+        self._probes: dict[ProbeType, Probe] = dict(probes) if probes is not None else self._default_probes()
 
     @staticmethod
     def _default_probes() -> dict[ProbeType, Probe]:
@@ -83,10 +81,7 @@ class ProbeRegistry:
             return self._probes[probe_type]
         except KeyError as exc:
             registered = ", ".join(sorted(t.value for t in self._probes)) or "(none)"
-            raise ProbeNotRegisteredError(
-                f"No probe adapter registered for {probe_type!r}. "
-                f"Registered probe types: {registered}."
-            ) from exc
+            raise ProbeNotRegisteredError(f"No probe adapter registered for {probe_type!r}. Registered probe types: {registered}.") from exc
 
     def register(self, probe_type: ProbeType, probe: Probe) -> None:
         """Register (or replace) the adapter used for `probe_type`.

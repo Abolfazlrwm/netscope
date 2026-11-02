@@ -33,6 +33,7 @@ from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, utcn
 
 try:
     import httpx
+
     _HTTPX_AVAILABLE = True
 except ImportError:
     _HTTPX_AVAILABLE = False
@@ -43,7 +44,7 @@ def fetch(url: str, timeout: float = 5.0) -> RawMeasurement:
     # check example.com" should probe https://example.com, not fail on a
     # missing scheme. Explicit schemes (including http://) pass through
     # untouched.
-    if ":" not in url:
+    if "://" not in url:
         url = f"https://{url}"
     if not _HTTPX_AVAILABLE:
         return RawMeasurement(
@@ -56,19 +57,18 @@ def fetch(url: str, timeout: float = 5.0) -> RawMeasurement:
 
     start = time.perf_counter()
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            with client.stream("GET", url) as response:
-                # Read only the first available chunk, then stop --
-                # this is the actual "first byte" moment. response
-                # headers/status_code are already available at this
-                # point (httpx reads them before the `with` block body
-                # runs); iterating is what reaches into the body itself.
-                for _ in response.iter_bytes():
-                    break
-                ttfb_ms = (time.perf_counter() - start) * 1000
-                # Explicitly done with the body now -- do not download
-                # the rest, matching this probe's TTFB-only responsibility.
-                response.close()
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client, client.stream("GET", url) as response:
+            # Read only the first available chunk, then stop --
+            # this is the actual "first byte" moment. response
+            # headers/status_code are already available at this
+            # point (httpx reads them before the `with` block body
+            # runs); iterating is what reaches into the body itself.
+            for _ in response.iter_bytes():
+                break
+            ttfb_ms = (time.perf_counter() - start) * 1000
+            # Explicitly done with the body now -- do not download
+            # the rest, matching this probe's TTFB-only responsibility.
+            response.close()
 
         return RawMeasurement(
             probe_type=ProbeType.HTTP,

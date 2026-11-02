@@ -21,11 +21,11 @@ own docstring in core/models.py for why it exists as a separate type.
 from __future__ import annotations
 
 from netscope.adapters.discovery.network_type_classifier import classify_network_type
-from netscope.core.discovery import DiscoveryProvider
 from netscope.core.models import NetworkContext, NetworkInterface, NetworkSnapshot, utcnow
 
 try:
     import psutil
+
     _PSUTIL_AVAILABLE = True
 except ImportError:
     _PSUTIL_AVAILABLE = False

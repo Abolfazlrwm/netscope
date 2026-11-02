@@ -12,6 +12,7 @@ from netscope.core.models import ProbeType, RawMeasurement, utcnow
 
 try:
     import dns.resolver
+
     _DNSPYTHON_AVAILABLE = True
 except ImportError:
     _DNSPYTHON_AVAILABLE = False

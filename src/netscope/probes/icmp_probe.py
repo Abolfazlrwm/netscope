@@ -11,6 +11,7 @@ from netscope.core.models import ProbeType, RawMeasurement, utcnow
 
 try:
     import icmplib
+
     _ICMPLIB_AVAILABLE = True
 except ImportError:
     _ICMPLIB_AVAILABLE = False

@@ -50,6 +50,7 @@ from netscope.core.models import (
 
 try:
     import icmplib
+
     _ICMPLIB_AVAILABLE = True
 except ImportError:
     _ICMPLIB_AVAILABLE = False

@@ -52,7 +52,6 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 DEFAULT_CONFIG_PATH = Path.home() / ".netscope" / "config.toml"
 
@@ -82,10 +81,10 @@ class NetScopeConfig:
     public_dns_target: str = "1.1.1.1"
     dns_lookup_domain: str = "example.com"
     public_cdn_url: str = "https://www.cloudflare.com/"
-    gateway: Optional[str] = None
+    gateway: str | None = None
 
 
-def load_config(path: Optional[Path] = None) -> NetScopeConfig:
+def load_config(path: Path | None = None) -> NetScopeConfig:
     """Load NetScopeConfig from a TOML file at `path` (default
     `~/.netscope/config.toml`), or return built-in defaults unchanged
     if the file doesn't exist -- a missing config file is not an error,
