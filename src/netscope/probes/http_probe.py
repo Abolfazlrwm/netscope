@@ -39,6 +39,12 @@ except ImportError:
 
 
 def fetch(url: str, timeout: float = 5.0) -> RawMeasurement:
+    # Convenience normalization: bare hostnames get https:// -- "netscope
+    # check example.com" should probe https://example.com, not fail on a
+    # missing scheme. Explicit schemes (including http://) pass through
+    # untouched.
+    if ":" not in url:
+        url = f"https://{url}"
     if not _HTTPX_AVAILABLE:
         return RawMeasurement(
             probe_type=ProbeType.HTTP,
