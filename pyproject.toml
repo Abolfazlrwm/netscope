@@ -61,3 +61,47 @@ where = ["src"]
 [tool.setuptools.package-data]
 netscope = ["py.typed"]
 
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore::DeprecationWarning:textual.*",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff — lint + format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 150
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+]
+ignore = [
+    "SIM105", # contextlib.suppress suggestion — explicit try/except is clearer in probe error paths
+    "SIM102", # nested-if collapsing — the diagnosis engine's guard chains read better expanded
+    "SIM115", # open-without-context — lookup adapters open their database once in __init__ by design
+    "UP042",  # (str, Enum) -> StrEnum — changes str(member) semantics across models; not worth the churn
+    "E501",   # long docstring lines are the codebase's documented-why style; ruff format still applies
+    "C408",   # dict(**overrides) merge idioms in test builders are clearer than literal+update
+    "SIM108", # the scoring engine's if/else branch carries its own explanation comment
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "B023"]  # B023: per-iteration monkeypatch lambdas are called within their own loop pass
+
