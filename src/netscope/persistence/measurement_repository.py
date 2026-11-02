@@ -94,7 +94,6 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
 from netscope.persistence.schema import create_connection
@@ -129,7 +128,7 @@ class MeasurementRepository:
         self._conn.row_factory = sqlite3.Row
 
     @classmethod
-    def open(cls, db_path: Path | str = DEFAULT_DB_PATH) -> "MeasurementRepository":
+    def open(cls, db_path: Path | str = DEFAULT_DB_PATH) -> MeasurementRepository:
         """Open (creating and initializing if needed) a database file
         and return a repository backed by it -- delegates entirely to
         `persistence.schema.create_connection`, the one canonical
@@ -169,10 +168,10 @@ class MeasurementRepository:
         self,
         target: str,
         *,
-        start: Optional[datetime] = None,
-        end: Optional[datetime] = None,
-        probe_type: Optional[ProbeType] = None,
-        limit: Optional[int] = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        probe_type: ProbeType | None = None,
+        limit: int | None = None,
     ) -> list[RawMeasurement]:
         """Historical measurements for `target`, newest first, optionally
         filtered by an inclusive `[start, end]` timestamp range and/or a
@@ -214,6 +213,35 @@ class MeasurementRepository:
         method for the shared query/ordering/row-mapping logic.
         """
         return self.history(target, limit=limit)
+
+    def latest(
+        self,
+        limit: int = 200,
+        *,
+        probe_type: ProbeType | None = None,
+    ) -> list[RawMeasurement]:
+        """The most recent `limit` measurements across ALL targets
+        (v0.2, `netscope history`/TUI support), newest first,
+        optionally filtered to one `probe_type`.
+
+        Unlike `history()` this is not target-scoped: a history view
+        wants "whatever was measured recently" without knowing the
+        target list up front. Ties on timestamp (measurements of one
+        round share near-identical clocks) break by insertion id,
+        newest first, so ordering is deterministic."""
+        if limit <= 0:
+            raise ValueError(f"limit must be a positive integer, got {limit!r}")
+
+        query = "SELECT * FROM measurements"
+        params: list = []
+        if probe_type is not None:
+            query += " WHERE probe_type = ?"
+            params.append(probe_type.value)
+        query += " ORDER BY timestamp DESC, id DESC LIMIT ?"
+        params.append(limit)
+
+        cur = self._conn.execute(query, params)
+        return [_row_to_measurement(row) for row in cur.fetchall()]
 
     def close(self) -> None:
         self._conn.close()

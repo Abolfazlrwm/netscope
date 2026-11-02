@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import ast
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -31,7 +31,7 @@ def _measurement(**overrides) -> RawMeasurement:
     defaults = dict(
         probe_type=ProbeType.ICMP,
         target="1.1.1.1",
-        timestamp=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
         success=True,
         latency_ms=12.5,
         packet_loss_pct=0.0,
@@ -124,7 +124,7 @@ def test_error_type_is_none_when_measurement_succeeded():
 
 
 def test_timestamp_reconstructs_as_a_timezone_aware_datetime():
-    ts = datetime(2026, 3, 14, 15, 9, 26, tzinfo=timezone.utc)
+    ts = datetime(2026, 3, 14, 15, 9, 26, tzinfo=UTC)
     repo = _repo()
     repo.save(_measurement(timestamp=ts))
     (loaded,) = repo.recent("1.1.1.1")
@@ -157,8 +157,8 @@ def test_empty_extra_round_trips_as_empty_dict():
 
 def test_recent_orders_newest_first():
     repo = _repo()
-    older = _measurement(timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc), latency_ms=10.0)
-    newer = _measurement(timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc), latency_ms=20.0)
+    older = _measurement(timestamp=datetime(2026, 1, 1, tzinfo=UTC), latency_ms=10.0)
+    newer = _measurement(timestamp=datetime(2026, 1, 2, tzinfo=UTC), latency_ms=20.0)
     repo.save(older)
     repo.save(newer)
     loaded = repo.recent("1.1.1.1")
@@ -169,7 +169,7 @@ def test_recent_orders_newest_first():
 def test_recent_respects_limit():
     repo = _repo()
     for i in range(5):
-        repo.save(_measurement(timestamp=datetime(2026, 1, 1 + i, tzinfo=timezone.utc)))
+        repo.save(_measurement(timestamp=datetime(2026, 1, 1 + i, tzinfo=UTC)))
     loaded = repo.recent("1.1.1.1", limit=2)
     assert len(loaded) == 2
     repo.close()
@@ -229,7 +229,8 @@ def test_measurement_repository_delegates_schema_creation_to_persistence_schema(
     rather than defining its own CREATE TABLE statements."""
     import netscope.persistence.measurement_repository as module
 
-    source = inspect_source = open(module.__file__).read()
+    with open(module.__file__) as f:
+        source = f.read()
     assert "CREATE TABLE" not in source
     assert "from netscope.persistence.schema import create_connection" in source
 
@@ -275,11 +276,11 @@ def test_no_production_code_still_imports_sqlite_store():
 
 
 def test_core_modules_do_not_import_sqlite3():
+    import netscope.core.baseline
     import netscope.core.diagnosis
     import netscope.core.incidents
     import netscope.core.models
     import netscope.core.scoring
-    import netscope.core.baseline
 
     for module in (
         netscope.core.diagnosis,
@@ -334,7 +335,7 @@ def test_save_is_wrapped_in_a_transaction():
 
 
 def _day(i: int, hour: int = 0) -> datetime:
-    return datetime(2026, 1, i, hour, tzinfo=timezone.utc)
+    return datetime(2026, 1, i, hour, tzinfo=UTC)
 
 
 def _m(day: int, target="1.1.1.1", probe_type=ProbeType.ICMP, success=True) -> RawMeasurement:
@@ -578,7 +579,7 @@ def test_history_time_range_still_includes_failed_measurements():
 
 def test_history_range_filtering_works_with_timezone_aware_boundaries():
     repo = _repo()
-    ts = datetime(2026, 6, 15, 12, 30, tzinfo=timezone.utc)
+    ts = datetime(2026, 6, 15, 12, 30, tzinfo=UTC)
     repo.save(RawMeasurement(probe_type=ProbeType.ICMP, target="1.1.1.1", timestamp=ts, success=True))
 
     results = repo.history(
