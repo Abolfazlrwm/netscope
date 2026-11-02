@@ -105,3 +105,22 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011", "B023"]  # B023: per-iteration monkeypatch lambdas are called within their own loop pass
 
+# ---------------------------------------------------------------------------
+# Mypy — best-effort strictness on the domain core
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["netscope"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = false
+warn_redundant_casts = true
+no_implicit_optional = true
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["src/netscope"]
+omit = ["src/netscope/ui/tui/*"]
