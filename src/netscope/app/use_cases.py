@@ -84,14 +84,27 @@ kind of speculative abstraction this task's instructions warn against.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.core.baseline import UserBaseline
 from netscope.core.diagnosis import diagnose, evidence_from_latency
-from netscope.core.models import Diagnosis, Evidence, ExperienceEvent, Hypothesis, ProbeType, RawMeasurement, Service
+from netscope.core.models import (
+    Diagnosis,
+    Evidence,
+    ExperienceEvent,
+    Hypothesis,
+    ProbeType,
+    RawMeasurement,
+    RouteSnapshot,
+    Service,
+)
+from netscope.core.routing import RouteChurnResult, analyze_route_churn
 from netscope.core.scoring import score_measurements
+
+from typing import Optional
+
 
 
 def run_service_checks(service: Service, container: Container) -> list[RawMeasurement]:
@@ -350,3 +363,105 @@ def run_measurement_round(
     diagnosis = diagnose(evidence)
 
     return measurements, experience, diagnosis
+
+
+
+
+class RouteAnalysisResult(NamedTuple):
+    """Everything one `netscope route` / TUI route view needs: the raw
+    traceroute measurement, the enriched snapshot, and the churn
+    analysis over it. `snapshot`/`churn` are None exactly when the
+    traceroute itself failed (never a fabricated empty route)."""
+
+    measurement: RawMeasurement
+    snapshot: RouteSnapshot | None = None
+    churn: RouteChurnResult | None = None
+
+    @property
+    def success(self) -> bool:
+        return self.measurement.success and self.snapshot is not None
+
+
+def run_route_analysis(
+    target: str,
+    container: Container,
+    *,
+    resolve_hostnames: bool = True,
+) -> RouteAnalysisResult:
+    """Trace the route to `target` and enrich it: ASN per hop (when an
+    offline ASN database is wired in the container), reverse-DNS hostnames
+    (when `resolve_hostnames` and a resolver is wired), then route-stability
+    analysis via the existing `core.routing.analyze_route_churn`.
+
+    Every capability degrades gracefully: no ASN database -> hops keep
+    asn=None; resolution failure -> hostname=None; failed traceroute ->
+    RouteAnalysisResult with snapshot/churn None (the CLI reports the
+    error, never an empty route)."""
+    measurement = container.probe_registry.get(ProbeType.TRACEROUTE).run(target)
+    if not measurement.success:
+        return RouteAnalysisResult(measurement=measurement)
+
+    snapshot = measurement.extra.get("route")
+    if snapshot is None:
+        return RouteAnalysisResult(measurement=measurement)
+
+    _enrich_snapshot(snapshot, container, resolve_hostnames=resolve_hostnames)
+    churn = analyze_route_churn([snapshot])
+    return RouteAnalysisResult(measurement=measurement, snapshot=snapshot, churn=churn)
+
+
+def _enrich_snapshot(snapshot: RouteSnapshot, container: Container, *, resolve_hostnames: bool) -> None:
+    """Fill in RouteHop lookup fields the traceroute probe deliberately
+    leaves None (see RouteHop's own docstring): ASN from the optional
+    offline database, hostnames from the optional reverse-DNS resolver.
+    Mutates the snapshot's hops in place -- enrichment is a display
+    concern and RouteSnapshot.signature() is immune to it (hop addresses
+    only)."""
+    if container.asn_lookup is not None:
+        for hop in snapshot.hops:
+            if hop.address is None or hop.asn is not None:
+                continue
+            try:
+                result = container.asn_lookup.lookup(hop.address)
+            except ValueError:
+                continue  # hostname hop, not an IP -- nothing to look up
+            if result.matched and result.asn is not None:
+                hop.asn = f"AS{result.asn}"
+
+    if resolve_hostnames and container.hostname_resolver is not None:
+        hostnames = container.hostname_resolver.resolve_all([hop.address for hop in snapshot.hops])
+        for hop in snapshot.hops:
+            if hop.address is not None and hop.hostname is None:
+                hop.hostname = hostnames.get(hop.address)
+
+
+# ---------------------------------------------------------------------------
+# Target checks (v0.2) -- `netscope check <host>`: any user-supplied target
+# through the exact same per-service checks `diagnose_service` uses.
+# ---------------------------------------------------------------------------
+
+
+def check_target(
+    target: str,
+    container: Container,
+    checks: frozenset[ProbeType] | set[ProbeType],
+    baseline: UserBaseline | None = None,
+) -> tuple[list[RawMeasurement], ExperienceEvent, Diagnosis | None]:
+    """Run `checks` (a subset of the five service check types) against
+    an arbitrary user-supplied target, and score + diagnose the results
+    -- `netscope check <host>`'s use case.
+
+    Reuses `run_service_checks` and the `service_*` metric vocabulary
+    unchanged (so diagnosis categorizes failures as SERVICE_ISSUE --
+    from the general pipeline's perspective, "this one target is
+    broken" IS the service-issue question), and additionally returns an
+    ExperienceEvent so the CLI can show the 0-100 score for the target.
+    A failed check is CRITICAL evidence on its own; an empty `checks`
+    set yields INSUFFICIENT_EVIDENCE, never a fabricated healthy
+    result."""
+    baseline = baseline if baseline is not None else UserBaseline()
+    service = Service(name=target, host=target, enabled_checks=set(checks))
+    measurements = run_service_checks(service, container)
+    experience = score_measurements(measurements, baseline)
+    evidence = [evidence_from_latency(f"service_{m.probe_type.value}_latency", m, baseline) for m in measurements]
+    return measurements, experience, diagnose(evidence)
