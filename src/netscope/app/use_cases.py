@@ -84,7 +84,8 @@ kind of speculative abstraction this task's instructions warn against.
 
 from __future__ import annotations
 
-from typing import NamedTuple, Optional
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
@@ -102,9 +103,6 @@ from netscope.core.models import (
 )
 from netscope.core.routing import RouteChurnResult, analyze_route_churn
 from netscope.core.scoring import score_measurements
-
-from typing import Optional
-
 
 
 def run_service_checks(service: Service, container: Container) -> list[RawMeasurement]:
@@ -129,8 +127,8 @@ def run_service_checks(service: Service, container: Container) -> list[RawMeasur
 def diagnose_service(
     service: Service,
     container: Container,
-    baseline: Optional[UserBaseline] = None,
-) -> Optional[Diagnosis]:
+    baseline: UserBaseline | None = None,
+) -> Diagnosis | None:
     """Run `service`'s enabled checks and aggregate the resulting
     measurements into a single per-service `Diagnosis` (or `None` if
     every enabled check came back healthy -- `core.diagnosis.diagnose`'s
@@ -158,10 +156,7 @@ def diagnose_service(
     """
     baseline = baseline if baseline is not None else UserBaseline()
     measurements = run_service_checks(service, container)
-    evidence = [
-        evidence_from_latency(f"service_{measurement.probe_type.value}_latency", measurement, baseline)
-        for measurement in measurements
-    ]
+    evidence = [evidence_from_latency(f"service_{measurement.probe_type.value}_latency", measurement, baseline) for measurement in measurements]
     return diagnose(evidence)
 
 
@@ -184,9 +179,9 @@ def _merge_evidence(first: list[Evidence], second: list[Evidence]) -> list[Evide
 
 
 def diagnose_service_with_connectivity(
-    service_diagnosis: Optional[Diagnosis],
-    general_diagnosis: Optional[Diagnosis],
-) -> Optional[Diagnosis]:
+    service_diagnosis: Diagnosis | None,
+    general_diagnosis: Diagnosis | None,
+) -> Diagnosis | None:
     """Compare a Service's own Diagnosis against a simultaneous,
     already-computed general-connectivity Diagnosis (TASK-034), to
     localize whether a problem is service-specific or a broader
@@ -245,7 +240,7 @@ def diagnose_service_with_connectivity(
     """
     general_status = general_diagnosis.classification if general_diagnosis is not None else None
 
-    if general_status is not None and general_status is not Hypothesis.INSUFFICIENT_EVIDENCE:
+    if general_diagnosis is not None and general_status is not None and general_status is not Hypothesis.INSUFFICIENT_EVIDENCE:
         # A confirmed general-connectivity problem is the more
         # fundamental explanation, regardless of the service's own
         # status -- never reattributed to the service.
@@ -289,6 +284,7 @@ def diagnose_service_with_connectivity(
     # general_status is INSUFFICIENT_EVIDENCE and the service has a
     # confirmed problem: cannot rule out a broader cause we couldn't
     # confirm either way -- do not overconfidently blame the service.
+    assert general_diagnosis is not None  # INSUFFICIENT_EVIDENCE status implies a Diagnosis carried it
     return Diagnosis(
         classification=Hypothesis.INSUFFICIENT_EVIDENCE,
         evidence=_merge_evidence(service_diagnosis.evidence, general_diagnosis.evidence),
@@ -301,48 +297,39 @@ def diagnose_service_with_connectivity(
 def run_measurement_round(
     container: Container,
     config: NetScopeConfig,
-    gateway: Optional[str] = None,
-    baseline: Optional[UserBaseline] = None,
-) -> tuple[list[RawMeasurement], ExperienceEvent, Optional[Diagnosis]]:
-    """Run one general-connectivity measurement round (TASK-035),
-    replacing `ui/cli.py`'s old inline orchestration (direct calls into
-    `netscope.probes.icmp_probe`/`dns_probe`/`http_probe` -- the
-    untestable-without-real-network pattern architecture-overview.md
-    SS3's `app` test-strategy row and the implementation audit's STEP 9
-    both name). Every probe call goes through
-    `container.probe_registry.get(probe_type).run(...)`, the same
-    adapters `diagnose_service`/`run_service_checks` (TASK-033) already
-    use -- nothing here talks to `icmplib`/`dnspython`/`httpx` directly.
+    gateway: str | None = None,
+    baseline: UserBaseline | None = None,
+) -> tuple[list[RawMeasurement], ExperienceEvent, Diagnosis | None]:
+    """Run one general-connectivity measurement round, scored against
+    the user's personal baseline -- now actually *persisted* (v0.2):
 
-    Measures, in order:
-    - the local gateway via ICMP, if `gateway` (or `config.gateway` when
-      `gateway` isn't given) is set -- `None` otherwise, exactly
-      preserving the pre-TASK-035 CLI's "no gateway supplied -> no
-      gateway measurement" behavior rather than fabricating one;
-    - `config.public_dns_target` via ICMP;
-    - `config.dns_lookup_domain` via DNS;
-    - `config.public_cdn_url` via HTTP.
+    1. `baseline` resolution: an explicitly passed baseline wins;
+       otherwise the container's `BaselineRepository` loads the learned
+       baseline from disk (fresh empty one on first run); with no
+       repository wired, a fresh in-memory baseline is used -- the
+       pre-0.2 behavior, preserved for tests/fakes.
+    2. Measurements, in order:
+       - the local gateway via ICMP, if `gateway` (or `config.gateway`
+         when `gateway` isn't given) is set -- None otherwise;
+       - `config.public_dns_target` via ICMP;
+       - `config.dns_lookup_domain` via DNS;
+       - `config.public_cdn_url` via HTTP.
+    3. Scoring/diagnosis compare this round against the baseline loaded
+       in step 1 -- the round is judged against *past* history, never
+       against itself.
+    4. Only then are this round's successful readings observed into the
+       baseline (Welford update) and saved -- so tomorrow's rounds are
+       judged against slightly more history than today's. This is the
+       load/observe/persist wiring architecture-overview.md SS10 always
+       assigned to the app layer; scoring and diagnosis themselves stay
+       read-only against the baseline, exactly as their own docstrings
+       require.
 
-    `baseline` defaults to a fresh, empty `UserBaseline()` if not given
-    -- the same "no BaselineRepository-backed load/persist wiring exists
-    yet" status quo this codebase has documented since TASK-025/027;
-    this task doesn't add baseline persistence either.
-
-    Returns `(measurements, experience, diagnosis)` -- a plain tuple of
-    three already-existing domain types (`RawMeasurement`,
-    `ExperienceEvent`, `Diagnosis | None`) rather than a new bundling
-    dataclass, since all three are meaningful to the caller
-    independently (e.g. `ui/cli.py` persists `measurements`, prints
-    `experience.score`, and prints `explain(diagnosis)` separately) and
-    nothing about their relationship needs a dedicated type to express.
-
-    Does not persist `measurements` itself -- saving them is the
-    caller's responsibility (today, `ui/cli.py`, via a
-    `MeasurementRepository` it constructs), keeping this function's
-    single responsibility to "run and interpret a round," not "run,
-    interpret, and remember."
+    Returns `(measurements, experience, diagnosis)`. Does not persist
+    `measurements` itself -- saving those stays the caller's job (same
+    convention as before); only the *baseline* is persisted here.
     """
-    baseline = baseline if baseline is not None else UserBaseline()
+    baseline = baseline if baseline is not None else container.load_baseline()
     gateway = gateway if gateway is not None else config.gateway
     registry = container.probe_registry
 
@@ -362,12 +349,39 @@ def run_measurement_round(
     ]
     diagnosis = diagnose(evidence)
 
+    observe_measurements(baseline, measurements)
+    if container.baseline_repository is not None:
+        container.baseline_repository.save(baseline)
+
     return measurements, experience, diagnosis
 
 
+def observe_measurements(baseline: UserBaseline, measurements: list[RawMeasurement]) -> None:
+    """Record successful readings into `baseline` (the app layer's
+    baseline-observe responsibility, per architecture-overview.md SS10).
+
+    Only successful measurements with an actual reading are observed:
+    a failed probe has no latency to learn from, and observing failure
+    artifacts (None) would corrupt the running statistics. Failed
+    rounds influence diagnosis through the evidence layer instead."""
+    for m in measurements:
+        if not m.success:
+            continue
+        if m.latency_ms is not None:
+            baseline.observe_latency(m.target, m.latency_ms)
+        if m.packet_loss_pct is not None:
+            baseline.observe_packet_loss(m.target, m.packet_loss_pct)
 
 
-class RouteAnalysisResult(NamedTuple):
+# ---------------------------------------------------------------------------
+# Route analysis (v0.2) -- previously inline in ui/cli.py's route command,
+# promoted to an app use case so the TUI and CLI share one implementation
+# and so ASN/hostname enrichment (adapter territory) stays out of ui.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RouteAnalysisResult:
     """Everything one `netscope route` / TUI route view needs: the raw
     traceroute measurement, the enriched snapshot, and the churn
     analysis over it. `snapshot`/`churn` are None exactly when the
@@ -465,3 +479,72 @@ def check_target(
     experience = score_measurements(measurements, baseline)
     evidence = [evidence_from_latency(f"service_{m.probe_type.value}_latency", m, baseline) for m in measurements]
     return measurements, experience, diagnose(evidence)
+
+
+# ---------------------------------------------------------------------------
+# History (v0.2) -- `netscope history` and the TUI history tab: recent
+# measurement rounds grouped out of the persisted measurement log.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HistoryRound:
+    """One reconstructed measurement round: measurements that landed
+    within one time window, plus the experience score recomputed for
+    them against the *current* baseline (a history view's honest
+    approximation -- the historical baseline at each round's time is
+    not reconstructible from the measurement log alone)."""
+
+    timestamp: datetime
+    measurements: list[RawMeasurement] = field(default_factory=list)
+    experience: ExperienceEvent | None = None
+
+    @property
+    def all_success(self) -> bool:
+        return bool(self.measurements) and all(m.success for m in self.measurements)
+
+
+def recent_rounds(
+    container: Container,
+    limit: int = 50,
+    *,
+    max_gap_seconds: int = 120,
+) -> list[HistoryRound]:
+    """Reconstruct the most recent measurement rounds from the
+    persistence log, oldest first, for `netscope history` and the TUI
+    history tab.
+
+    Measurements are stored flat (one row each); a "round" is
+    reconstructed by grouping consecutive measurements whose timestamps
+    are at most `max_gap_seconds` apart. Requires a wired
+    measurement_repository -- without one (bare test containers) there
+    is no history, and the result is an empty list rather than an
+    error."""
+    if container.measurement_repository is None:
+        return []
+
+    # Fetch a generous window: rounds average ~4 measurements, and
+    # grouping discards partial leading/trailing rounds.
+    raw = container.measurement_repository.latest(limit=limit * 10)
+    if not raw:
+        return []
+
+    ascending = sorted(raw, key=lambda m: m.timestamp)
+    rounds: list[HistoryRound] = []
+    current: HistoryRound | None = None
+    gap = timedelta(seconds=max_gap_seconds)
+    for m in ascending:
+        if current is None or (m.timestamp - current.timestamp) > gap:
+            current = HistoryRound(timestamp=m.timestamp)
+            rounds.append(current)
+        current.measurements.append(m)
+
+    baseline = container.load_baseline()
+    for round_ in rounds[-limit:]:
+        round_.experience = score_measurements(round_.measurements, baseline)
+        # The re-computed score describes THAT round, stamped with its own
+        # time -- score_measurements stamps utcnow() (its convention for
+        # live rounds), which would mislabel historical rows.
+        if round_.experience is not None:
+            round_.experience.timestamp = round_.timestamp
+    return rounds[-limit:]

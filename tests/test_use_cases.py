@@ -17,9 +17,23 @@ from dataclasses import dataclass, field
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
-from netscope.app.use_cases import diagnose_service, diagnose_service_with_connectivity, run_measurement_round, run_service_checks
+from netscope.app.use_cases import (
+    diagnose_service,
+    diagnose_service_with_connectivity,
+    run_measurement_round,
+    run_service_checks,
+)
 from netscope.core.baseline import UserBaseline
-from netscope.core.models import Diagnosis, Evidence, ExperienceLevel, Hypothesis, ProbeType, RawMeasurement, Service, Severity
+from netscope.core.models import (
+    Diagnosis,
+    Evidence,
+    ExperienceLevel,
+    Hypothesis,
+    ProbeType,
+    RawMeasurement,
+    Service,
+    Severity,
+)
 
 
 @dataclass
@@ -321,9 +335,12 @@ def test_use_cases_module_only_imports_netscope_app_and_core():
     import netscope.app.use_cases as m
 
     top_level, full_paths = _imports_of(m)
-    assert top_level <= {"__future__", "typing", "netscope"}
+    # v0.2 adds `dataclasses`/`datetime` (stdlib) for the RouteAnalysisResult/
+    # HistoryRound dataclasses and round grouping -- the netscope-level
+    # invariant (app + core only, never adapters/persistence/ui) is unchanged.
+    assert top_level <= {"__future__", "typing", "dataclasses", "datetime", "netscope"}
     for path in full_paths:
-        if path in ("__future__", "typing"):
+        if path in ("__future__", "typing", "dataclasses", "datetime"):
             continue
         assert path.startswith("netscope.app.") or path.startswith("netscope.core.")
 
@@ -679,26 +696,48 @@ def test_round_with_gateway_and_mature_baseline_all_healthy_is_none():
     assert diagnosis is None
 
 
-def test_round_does_not_mutate_the_baseline_it_is_given():
+def test_round_observes_successful_readings_into_the_baseline():
+    """v0.2 contract (replaces the pre-0.2 read-only contract): a round
+    judges itself against the baseline it was handed, THEN observes its
+    successful readings into it -- so the next round is judged against
+    slightly more history. Failed probes are never observed: a failed
+    probe has no latency to learn from."""
     container = _round_container()
     config = NetScopeConfig()
     baseline = UserBaseline()
     for v in [10.0] * 6:
         baseline.observe_latency(config.public_dns_target, v)
-    targets_before = set(baseline.latency.keys())
     count_before = baseline.latency[config.public_dns_target].count
 
     run_measurement_round(container, config, baseline=baseline)
 
-    assert set(baseline.latency.keys()) == targets_before
-    assert baseline.latency[config.public_dns_target].count == count_before
+    # The DNS ICMP target is a _FakeProbe success with a latency: observed.
+    assert baseline.latency[config.public_dns_target].count == count_before + 1
+    # The HTTP target also succeeded and now exists in the baseline.
+    assert config.public_cdn_url in baseline.latency
+    # DNS lookup (a successful DNS probe) too.
+    assert config.dns_lookup_domain in baseline.latency
 
 
-def test_round_does_not_persist_measurements_itself():
-    """run_measurement_round is persistence-agnostic by design -- saving
-    is the caller's job (see its own docstring and ui/cli.py). Checks
-    actual code only (via AST), since the function's own docstring
-    legitimately explains this decision by name."""
+def test_round_does_not_observe_failed_probes_into_the_baseline():
+    icmp = _FakeProbe(ProbeType.ICMP, latency_ms=10.0)
+    failing_http = _FakeProbe(ProbeType.HTTP, latency_ms=None, success=False)
+    container = _round_container(icmp=icmp, http=failing_http)
+    config = NetScopeConfig()
+    baseline = UserBaseline()
+
+    run_measurement_round(container, config, baseline=baseline)
+
+    # DNS ICMP succeeded (observed), the HTTP probe failed (not observed).
+    assert config.public_dns_target in baseline.latency
+    assert config.public_cdn_url not in baseline.latency
+
+
+def test_round_persists_only_the_baseline_itself():
+    """v0.2 persistence contract: the round persists the *baseline* via
+    the container's BaselineRepository (that is the whole point of
+    learned baselines outliving a process), but still never persists
+    measurements itself -- that stays the caller's job."""
     import ast
     import inspect
 
@@ -706,4 +745,6 @@ def test_round_does_not_persist_measurements_itself():
     body_without_docstring = tree.body[0].body[1:]  # skip the docstring Expr node
     code_only = ast.unparse(ast.Module(body=body_without_docstring, type_ignores=[]))
     assert "MeasurementRepository" not in code_only
-    assert ".save(" not in code_only
+    # Exactly one .save() call, and it is the baseline repository's.
+    assert code_only.count(".save(") == 1
+    assert "baseline_repository" in code_only
