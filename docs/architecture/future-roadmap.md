@@ -1,6 +1,8 @@
 # NetScope — Future Roadmap (TASK-005 → TASK-055)
 
-**Status:** Proposed (documentation only — none of these tasks are implemented by this document)
+**Status (v0.2, 2026-11):** TASK-001 → TASK-037 and the MVP phases below are **implemented and tested** (525 offline tests). The v0.2 release additionally landed, ahead of the original plan: baseline persistence (the missing BaselineRepository wiring), default-gateway auto-detection, the `--json` output flag (TASK-038), `check`/`history`/`monitor` commands, route ASN/hostname enrichment, and the first TUI dashboard (a single-screen version of Phase I's dashboard screen). Remaining, in rough order: per-service persisted configs (TASK-032's storage half), route history + churn across runs, evidence-report export (TASK-039), the full multi-screen TUI (Phase I screens 2–6), GeoIP distance (TASK-023, license-gated), and the Phase J/K quality/release polish that v0.2 already partially covered (CI, linting, packaging, docs).
+
+**Original proposal:** Proposed (documentation only — the numbered tasks below are the plan the implementation followed; see the status note above for where things stand now)
 
 Each task below is sized to be one focused implementation, a limited set of file
 changes, focused tests, one review, and normally one commit — per the task-size rule.
