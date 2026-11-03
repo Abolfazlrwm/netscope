@@ -86,9 +86,12 @@ def test_parser_diagnose_subcommand_is_recognized():
     assert args.command == "diagnose"
 
 
-def test_parser_diagnose_defaults_gateway_to_none():
+def test_parser_diagnose_defaults_gateway_to_auto():
+    """v0.2: --gateway defaults to 'auto' (OS-detected default gateway,
+    falling back to config/none) so gateway localization works out of
+    the box -- see app/gateway.py's resolution policy."""
     args = build_arg_parser().parse_args(["diagnose"])
-    assert args.gateway is None
+    assert args.gateway == "auto"
 
 
 def test_parser_diagnose_accepts_gateway_flag():
@@ -190,7 +193,9 @@ def test_diagnose_command_returns_zero_even_when_a_problem_is_diagnosed(capsys):
     failure -- no exit-code taxonomy for diagnosis outcomes."""
     bad_http = _FakeProbe(ProbeType.HTTP, latency_ms=900.0)
     container = Container(
-        probe_registry=ProbeRegistry(probes={ProbeType.ICMP: _FakeProbe(ProbeType.ICMP), ProbeType.DNS: _FakeProbe(ProbeType.DNS), ProbeType.HTTP: bad_http})
+        probe_registry=ProbeRegistry(
+            probes={ProbeType.ICMP: _FakeProbe(ProbeType.ICMP), ProbeType.DNS: _FakeProbe(ProbeType.DNS), ProbeType.HTTP: bad_http}
+        )
     )
     config = NetScopeConfig()
 
@@ -232,7 +237,9 @@ def test_diagnose_command_prints_a_diagnostic_message_without_a_gateway(capsys):
 def test_diagnose_command_never_prints_a_raw_diagnosis_repr(capsys):
     bad_http = _FakeProbe(ProbeType.HTTP, latency_ms=900.0)
     container = Container(
-        probe_registry=ProbeRegistry(probes={ProbeType.ICMP: _FakeProbe(ProbeType.ICMP), ProbeType.DNS: _FakeProbe(ProbeType.DNS), ProbeType.HTTP: bad_http})
+        probe_registry=ProbeRegistry(
+            probes={ProbeType.ICMP: _FakeProbe(ProbeType.ICMP), ProbeType.DNS: _FakeProbe(ProbeType.DNS), ProbeType.HTTP: bad_http}
+        )
     )
     config = NetScopeConfig()
 
@@ -472,12 +479,15 @@ def test_route_command_reports_stability_for_a_single_snapshot(capsys):
 
 def test_route_command_does_not_reimplement_route_churn_logic():
     """Static guard: the churn/stability decision must come from
-    core.routing.analyze_route_churn, never a re-derived boolean based
-    on hop counts or addresses computed inline in cli.py."""
+    core.routing.analyze_route_churn (reached via the
+    run_route_analysis use case since v0.2 -- the enrichment and
+    analysis live in app/, never re-derived here from hop counts or
+    addresses computed inline)."""
     import inspect
 
     source = inspect.getsource(run_route_command)
-    assert "analyze_route_churn(" in source
+    assert "run_route_analysis(" in source
+    assert "analyze_route_churn(" not in source  # it lives in the use case now, called exactly once there
     assert "signature()" not in source  # that's analyze_route_churn's own internal mechanism
 
 
