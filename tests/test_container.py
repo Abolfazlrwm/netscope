@@ -13,10 +13,8 @@ from __future__ import annotations
 import logging
 
 from netscope.adapters.probes.registry import ProbeRegistry
-from netscope.app.container import Container, _NETSCOPE_PACKAGES, configure_logging
-from netscope.core.models import ProbeType
+from netscope.app.container import _NETSCOPE_PACKAGES, Container, configure_logging
 from netscope.persistence.measurement_repository import MeasurementRepository
-
 
 # ---------------------------------------------------------------------------
 # measurement_repository defaults to None -- no side effects from bare
