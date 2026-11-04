@@ -25,6 +25,7 @@ class ProbeType(str, Enum):
     TLS = "tls"
     HTTP = "http"
     TRACEROUTE = "traceroute"
+    BANDWIDTH = "bandwidth"
 
 
 class ProbeErrorType(str, Enum):
