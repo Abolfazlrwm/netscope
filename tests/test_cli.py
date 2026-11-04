@@ -282,7 +282,7 @@ def test_diagnose_command_does_not_require_a_repository(capsys):
 
 
 def _imports_of(module) -> set[str]:
-    tree = ast.parse(open(module.__file__).read())
+    tree = ast.parse(open(module.__file__, encoding="utf-8").read())
     full_paths = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

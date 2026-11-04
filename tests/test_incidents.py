@@ -267,7 +267,7 @@ def test_incident_confidence_is_traceable_via_the_referenced_diagnosis_not_fabri
 def test_incidents_module_only_imports_stdlib_and_core_models():
     import netscope.core.incidents as incidents_module
 
-    tree = ast.parse(open(incidents_module.__file__).read())
+    tree = ast.parse(open(incidents_module.__file__, encoding="utf-8").read())
     top_level = set()
     full_paths = set()
     for node in ast.walk(tree):

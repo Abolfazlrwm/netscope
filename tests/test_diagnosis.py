@@ -510,7 +510,7 @@ def test_diagnosis_module_only_imports_stdlib_and_netscope_core():
     library, never leaving core."""
     import netscope.core.diagnosis as diagnosis_module
 
-    tree = ast.parse(open(diagnosis_module.__file__).read())
+    tree = ast.parse(open(diagnosis_module.__file__, encoding="utf-8").read())
     top_level_modules = set()
     full_module_paths = set()
     for node in ast.walk(tree):

@@ -262,7 +262,7 @@ def test_create_connection_creates_parent_directory_for_a_file_path(tmp_path):
 
 
 def _imports_of(module) -> set[str]:
-    tree = ast.parse(open(module.__file__).read())
+    tree = ast.parse(open(module.__file__, encoding="utf-8").read())
     modules = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

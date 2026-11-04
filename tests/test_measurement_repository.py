@@ -229,7 +229,7 @@ def test_measurement_repository_delegates_schema_creation_to_persistence_schema(
     rather than defining its own CREATE TABLE statements."""
     import netscope.persistence.measurement_repository as module
 
-    with open(module.__file__) as f:
+    with open(module.__file__, encoding="utf-8") as f:
         source = f.read()
     assert "CREATE TABLE" not in source
     assert "from netscope.persistence.schema import create_connection" in source
@@ -289,7 +289,7 @@ def test_core_modules_do_not_import_sqlite3():
         netscope.core.scoring,
         netscope.core.baseline,
     ):
-        tree = ast.parse(open(module.__file__).read())
+        tree = ast.parse(open(module.__file__, encoding="utf-8").read())
         imported = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -302,7 +302,7 @@ def test_core_modules_do_not_import_sqlite3():
 def test_measurement_repository_does_not_import_ui_or_adapters():
     import netscope.persistence.measurement_repository as module
 
-    tree = ast.parse(open(module.__file__).read())
+    tree = ast.parse(open(module.__file__, encoding="utf-8").read())
     full_paths = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

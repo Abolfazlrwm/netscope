@@ -300,7 +300,7 @@ def test_diagnose_service_evidence_metric_names_are_scoped_to_service_and_catego
 
 
 def _imports_of(module) -> tuple[set[str], set[str]]:
-    tree = ast.parse(open(module.__file__).read())
+    tree = ast.parse(open(module.__file__, encoding="utf-8").read())
     top_level, full_paths = set(), set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
