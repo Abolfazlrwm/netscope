@@ -1,0 +1,3 @@
+# Default owners for everything in the repository.
+# These owners will be requested for review when a pull request is opened.
+*       @Abolfazlrwm
