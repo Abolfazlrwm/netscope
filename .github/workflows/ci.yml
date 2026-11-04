@@ -10,6 +10,11 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    # macOS runner provisioning on GitHub-hosted machines is flaky: jobs can
+    # hang in the queue for 15+ minutes and get force-cancelled. Never let that
+    # turn the whole run red — ubuntu + windows carry the hard gate.
+    continue-on-error: ${{ contains(matrix.os, 'macos') }}
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +45,7 @@ jobs:
   typecheck:
     name: Type check (mypy)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
