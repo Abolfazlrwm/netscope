@@ -2,8 +2,8 @@
 
 **Internet Experience Intelligence & Network Diagnostics — from raw measurements to "what's wrong, and where", with evidence.**
 
-[![CI](https://github.com/your-username/netscope/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/netscope/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/your-username/netscope)
+[![CI](https://github.com/Abolfazlrwm/netscope/actions/workflows/ci.yml/badge.svg)](https://github.com/Abolfazlrwm/netscope/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/Abolfazlrwm/netscope)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 [![Tests](https://img.shields.io/badge/tests-525%20passing-brightgreen)](#development)
@@ -42,7 +42,7 @@ pip install netscope
 pip install "netscope[tui]"
 
 # From source
-git clone https://github.com/your-username/netscope
+git clone https://github.com/Abolfazlrwm/netscope
 cd netscope && pip install -e ".[tui,dev]"
 ```
 

@@ -7,7 +7,7 @@ contributions are reviewed against it.
 ## Development setup
 
 ```bash
-git clone https://github.com/your-username/netscope
+git clone https://github.com/Abolfazlrwm/netscope
 cd netscope
 make install     # or: pip install -e ".[tui,dev]"
 make test        # pytest — fully offline, should take ~2 seconds

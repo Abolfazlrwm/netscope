@@ -43,10 +43,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/USERNAME/netscope"
-Documentation = "https://github.com/USERNAME/netscope/tree/main/docs"
-Issues = "https://github.com/USERNAME/netscope/issues"
-Changelog = "https://github.com/USERNAME/netscope/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Abolfazlrwm/netscope"
+Documentation = "https://github.com/Abolfazlrwm/netscope/tree/main/docs"
+Issues = "https://github.com/Abolfazlrwm/netscope/issues"
+Changelog = "https://github.com/Abolfazlrwm/netscope/blob/main/CHANGELOG.md"
 
 [project.scripts]
 netscope = "netscope.ui.cli:main"
