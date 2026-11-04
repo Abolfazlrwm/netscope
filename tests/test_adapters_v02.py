@@ -92,10 +92,19 @@ def test_detect_default_gateway_never_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_resolver_resolves_localhost_addresses():
+def test_resolver_resolves_localhost_addresses(monkeypatch):
+    import socket
+
+    def localhost_ptr(addr):
+        return ("localhost", [], [addr])
+
+    # macOS runners may legitimately report no PTR record for 127.0.0.1 —
+    # patch the resolver's real dependency so the test stays deterministic
+    # and fully offline on every platform.
+    monkeypatch.setattr(socket, "gethostbyaddr", localhost_ptr)
     resolver = HostnameResolver(timeout=3.0)
     results = resolver.resolve_all(["127.0.0.1"])
-    assert results["127.0.0.1"] is not None  # localhost always has a reverse record
+    assert results["127.0.0.1"] == "localhost"
 
 
 def test_resolver_handles_unresolvable_and_none_addresses():
