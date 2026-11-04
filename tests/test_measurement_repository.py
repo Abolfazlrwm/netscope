@@ -261,7 +261,7 @@ def test_no_production_code_still_imports_sqlite_store():
 
     src_root = pathlib.Path(__file__).resolve().parents[1] / "src"
     for path in src_root.rglob("*.py"):
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
