@@ -16,6 +16,7 @@ avoiding unnecessary abstraction.
 
 from __future__ import annotations
 
+from netscope.adapters.probes.bandwidth_adapter import BandwidthProbeAdapter
 from netscope.adapters.probes.dns_adapter import DNSProbeAdapter
 from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
 from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter
@@ -44,15 +45,15 @@ class ProbeNotRegisteredError(LookupError):
 class ProbeRegistry:
     """Looks up a Probe-conforming adapter by ProbeType.
 
-    Registered by default: ICMP, DNS, HTTP, TCP, TLS, TRACEROUTE -- all
-    six ProbeType members now have a default adapter
+    Registered by default: ICMP, DNS, HTTP, TCP, TLS, TRACEROUTE,
+    BANDWIDTH -- every ProbeType member now has a default adapter
     (netscope.adapters.probes.icmp_adapter/dns_adapter/http_adapter,
     added in TASK-007; tcp_adapter, TASK-016; tls_adapter, TASK-017;
-    traceroute_adapter, TASK-019). Looking up any ProbeType member
-    today succeeds; ProbeNotRegisteredError remains the defined
-    behavior for whatever isn't registered in a given registry instance
-    (see its own docstring) rather than being retired now that no gap
-    currently exists.
+    traceroute_adapter, TASK-019; bandwidth_adapter, v0.3). Looking up
+    any ProbeType member today succeeds; ProbeNotRegisteredError
+    remains the defined behavior for whatever isn't registered in a
+    given registry instance (see its own docstring) rather than being
+    retired now that no gap currently exists.
     """
 
     def __init__(self, probes: dict[ProbeType, Probe] | None = None) -> None:
@@ -67,6 +68,7 @@ class ProbeRegistry:
             ProbeType.TCP: TCPProbeAdapter(),
             ProbeType.TLS: TLSProbeAdapter(),
             ProbeType.TRACEROUTE: TracerouteProbeAdapter(),
+            ProbeType.BANDWIDTH: BandwidthProbeAdapter(),
         }
 
     def get(self, probe_type: ProbeType) -> Probe:

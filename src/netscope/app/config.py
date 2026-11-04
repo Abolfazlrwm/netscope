@@ -58,7 +58,7 @@ DEFAULT_CONFIG_PATH = Path.home() / ".netscope" / "config.toml"
 # The only NetScopeConfig fields load_config() will accept from a TOML
 # file -- an unrecognized key is ignored (see load_config's docstring)
 # rather than silently becoming an unintended dataclass field.
-_KNOWN_FIELDS = frozenset({"public_dns_target", "dns_lookup_domain", "public_cdn_url", "gateway"})
+_KNOWN_FIELDS = frozenset({"public_dns_target", "dns_lookup_domain", "public_cdn_url", "gateway", "bandwidth_url", "bandwidth_seconds"})
 
 
 @dataclass
@@ -82,6 +82,12 @@ class NetScopeConfig:
     dns_lookup_domain: str = "example.com"
     public_cdn_url: str = "https://www.cloudflare.com/"
     gateway: str | None = None
+    # The endpoint the `speed` command downloads from. The byte count in
+    # the query is the SERVER's cap, not a fixed download size -- the
+    # probe stops at `bandwidth_seconds` regardless, so a large cap
+    # never means a large download on a slow link.
+    bandwidth_url: str = "https://speed.cloudflare.com/__down?bytes=104857600"
+    bandwidth_seconds: float = 6.0
 
 
 def load_config(path: Path | None = None) -> NetScopeConfig:
