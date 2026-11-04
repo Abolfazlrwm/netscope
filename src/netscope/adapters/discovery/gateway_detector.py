@@ -48,7 +48,7 @@ _PROC_NET_ROUTE = Path("/proc/net/route")
 def _detect_linux() -> str | None:
     """Linux: read the default route from /proc/net/route."""
     try:
-        lines = _PROC_NET_ROUTE.read_text().splitlines()
+        lines = _PROC_NET_ROUTE.read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     for line in lines[1:]:  # first line is the header

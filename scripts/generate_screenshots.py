@@ -65,7 +65,7 @@ def cli_screenshot() -> None:
     console.print()
     console.print(diagnosis_panel(diagnosis))
     svg = console.export_svg(title="netscope diagnose")
-    (IMAGES / "cli-diagnose.svg").write_text(svg)
+    (IMAGES / "cli-diagnose.svg").write_text(svg, encoding="utf-8")
     print("cli-diagnose.svg written")
 
 
@@ -82,7 +82,7 @@ def route_screenshot() -> None:
     console.print("[bold]Route to fastly.com[/] [dim]· 4 hops · stability: stable[/]")
     console.print(route_table(hops))
     svg = console.export_svg(title="netscope route")
-    (IMAGES / "cli-route.svg").write_text(svg)
+    (IMAGES / "cli-route.svg").write_text(svg, encoding="utf-8")
     print("cli-route.svg written")
 
 
@@ -104,7 +104,7 @@ async def tui_screenshot() -> None:
             await pilot.pause(0.25)
         await pilot.pause()
         svg = app.export_screenshot(title="netscope tui")
-    (IMAGES / "tui-dashboard.svg").write_text(svg)
+    (IMAGES / "tui-dashboard.svg").write_text(svg, encoding="utf-8")
     print("tui-dashboard.svg written")
 
 
