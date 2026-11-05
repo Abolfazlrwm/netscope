@@ -28,6 +28,7 @@ from rich.table import Table
 from rich.text import Text
 
 from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS
+from netscope.core.baseline import VERDICT_AS_USUAL, VERDICT_FASTER, VERDICT_SLOWER
 from netscope.core.models import Diagnosis, ExperienceEvent, ExperienceLevel, Hypothesis, RawMeasurement, RouteHop
 
 _console: Console | None = None
@@ -191,6 +192,13 @@ def score_panel(experience: ExperienceEvent, *, subtitle: str | None = None) -> 
     return Panel(body, border_style=border, expand=False)
 
 
+_VERDICT_STYLES = {
+    VERDICT_AS_USUAL: ("as usual", "dim"),
+    VERDICT_SLOWER: ("slower than usual", "yellow"),
+    VERDICT_FASTER: ("faster than usual", "cyan"),
+}
+
+
 def speed_panel(measurement: RawMeasurement) -> Panel:
     """The `netscope speed` headline panel: big median Mbps with the
     peak, bytes and window as dim evidence lines. A failed measurement
@@ -219,6 +227,13 @@ def speed_panel(measurement: RawMeasurement) -> Panel:
     if isinstance(sample_count, (int, float)) and sample_count:
         evidence.append(f"{int(sample_count)} samples")
     body.append(" · ".join(evidence), style="dim")
+    verdict = measurement.extra.get("verdict")
+    usual = measurement.extra.get("baseline_mean_mbps")
+    deviation = measurement.extra.get("deviation_pct")
+    if verdict is not None and isinstance(usual, (int, float)) and isinstance(deviation, (int, float)):
+        label, style = _VERDICT_STYLES.get(verdict, (str(verdict), "dim"))
+        body.append("\n")
+        body.append(f"vs your usual {usual:.1f} Mbps · {deviation:+.1f}% — {label}", style=style)
     return Panel(body, border_style="green", title="Download speed", expand=False)
 
 

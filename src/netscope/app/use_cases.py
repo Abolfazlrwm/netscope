@@ -89,7 +89,7 @@ from datetime import datetime, timedelta
 
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
-from netscope.core.baseline import UserBaseline
+from netscope.core.baseline import UserBaseline, compare_throughput
 from netscope.core.diagnosis import diagnose, evidence_from_latency
 from netscope.core.models import (
     Diagnosis,
@@ -509,10 +509,38 @@ def run_speed_test(
     -- the same flags-override-config convention the `--gateway` flag
     follows. The adapter is fetched through the registry like every
     other probe, so tests can swap in a fake the usual way.
+
+    Since v0.4 a successful test also participates in the throughput
+    baseline (and only there -- never the latency/loss metrics):
+    1. the result is compared against what was learned BEFORE this run
+       (compare-then-observe, the same order the round path uses) and,
+       when the baseline has an opinion, the comparison rides along on
+       the measurement's `extra` as `baseline_mean_mbps` /
+       `baseline_samples` / `deviation_pct` / `verdict`;
+    2. the result is then observed into `UserBaseline.throughput` and
+       the baseline is saved -- so tomorrow's speed tests are judged
+       against today's.
     """
     resolved_url = url if url is not None else config.bandwidth_url
     resolved_seconds = seconds if seconds is not None else config.bandwidth_seconds
-    return container.probe_registry.get(ProbeType.BANDWIDTH).run(resolved_url, duration_s=resolved_seconds)
+    measurement = container.probe_registry.get(ProbeType.BANDWIDTH).run(resolved_url, duration_s=resolved_seconds)
+    mbps = measurement.extra.get("throughput_mbps")
+    if measurement.success and isinstance(mbps, (int, float)) and mbps > 0:
+        baseline = container.load_baseline()
+        comparison = compare_throughput(baseline, resolved_url, float(mbps))
+        if comparison is not None:
+            measurement.extra.update(
+                {
+                    "baseline_mean_mbps": comparison.baseline_mean_mbps,
+                    "baseline_samples": comparison.baseline_samples,
+                    "deviation_pct": comparison.deviation_pct,
+                    "verdict": comparison.verdict,
+                }
+            )
+        baseline.observe_throughput(resolved_url, float(mbps))
+        if container.baseline_repository is not None:
+            container.baseline_repository.save(baseline)
+    return measurement
 
 
 # ---------------------------------------------------------------------------

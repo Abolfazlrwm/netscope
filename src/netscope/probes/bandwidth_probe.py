@@ -32,10 +32,11 @@ WHAT THIS PROBE DOES NOT DO
 It does not score, and it does not feed the experience score's
 latency/packet-loss baselines: latency_ms is left None on purpose, so
 a bandwidth run can never masquerade as a latency reading in
-score_measurements() or observe_measurements(). Folding throughput
-into the personal baseline (Welford over Mbps, like latency) is a
-separately-scoped future change to core/baseline + scoring -- not
-smuggled in here through the back door of a mislabeled field.
+score_measurements() or observe_measurements(). Since v0.4, download
+results have their OWN baseline (UserBaseline.throughput -- Welford
+over Mbps, stored in its own table, compared percentage-wise) that the
+speed use case learns and compares against; that segregation lives in
+core/baseline and app/use_cases, never as a mislabeled field here.
 
 The default download URL is configuration (app.config's
 `bandwidth_url`), not a constant here -- the same rule that keeps
@@ -223,7 +224,7 @@ def summarize(measurement: RawMeasurement) -> dict[str, Any]:
             "error": measurement.error,
             "error_type": measurement.error_type.value if measurement.error_type else None,
         }
-    return {
+    summary = {
         "target": measurement.target,
         "success": True,
         "throughput_mbps": measurement.extra.get("throughput_mbps"),
@@ -232,3 +233,11 @@ def summarize(measurement: RawMeasurement) -> dict[str, Any]:
         "duration_s": measurement.extra.get("duration_s"),
         "sample_count": measurement.extra.get("sample_count"),
     }
+    # Baseline-relative context, present only when the speed use case
+    # attached it (the learned baseline had an opinion this run). Keys
+    # stay absent -- not null -- so a young baseline yields the exact
+    # v0.3 shape.
+    for key in ("baseline_mean_mbps", "baseline_samples", "deviation_pct", "verdict"):
+        if key in measurement.extra:
+            summary[key] = measurement.extra[key]
+    return summary
