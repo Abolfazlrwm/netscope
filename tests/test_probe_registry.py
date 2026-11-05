@@ -229,9 +229,10 @@ def test_build_container_returns_a_container_with_a_probe_registry():
     assert isinstance(container.probe_registry, ProbeRegistry)
 
 
-def test_build_container_registry_has_all_six_default_probes_working():
+def test_build_container_registry_has_every_default_probe_working():
     """Updated by TASK-019 to include TRACEROUTE alongside
-    ICMP/DNS/HTTP/TCP/TLS -- every ProbeType member now works."""
+    ICMP/DNS/HTTP/TCP/TLS, and by v0.3 with BANDWIDTH -- every
+    ProbeType member now works."""
     container = build_container()
     for probe_type in ProbeType:
         probe = container.probe_registry.get(probe_type)
@@ -243,3 +244,15 @@ def test_container_accepts_an_explicit_registry_for_testing():
     custom_registry = ProbeRegistry(probes={})
     container = Container(probe_registry=custom_registry)
     assert container.probe_registry is custom_registry
+
+
+def test_registry_default_includes_bandwidth_adapter():
+    """v0.3: BANDWIDTH joins the default registry like every other
+    ProbeType member -- the lookup path is the same generic one."""
+    probe = ProbeRegistry().get(ProbeType.BANDWIDTH)
+    assert isinstance(probe, Probe)
+    assert probe.probe_type == ProbeType.BANDWIDTH
+
+
+def test_registry_available_types_includes_bandwidth():
+    assert ProbeType.BANDWIDTH in ProbeRegistry().available_types()

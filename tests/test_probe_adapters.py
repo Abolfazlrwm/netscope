@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ssl
 
+from netscope.adapters.probes.bandwidth_adapter import BandwidthProbeAdapter
 from netscope.adapters.probes.dns_adapter import DNSProbeAdapter, _classify_dns_error
 from netscope.adapters.probes.http_adapter import HTTPProbeAdapter
 from netscope.adapters.probes.icmp_adapter import ICMPProbeAdapter, _classify_icmp_error
@@ -26,7 +27,7 @@ from netscope.adapters.probes.tls_adapter import TLSProbeAdapter
 from netscope.adapters.probes.traceroute_adapter import TracerouteProbeAdapter
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, RouteSnapshot
 from netscope.core.ports import Probe
-from netscope.probes import dns_probe, http_probe, icmp_probe, tcp_probe, tls_probe, traceroute_probe
+from netscope.probes import bandwidth_probe, dns_probe, http_probe, icmp_probe, tcp_probe, tls_probe, traceroute_probe
 
 # ---------------------------------------------------------------------------
 # Protocol conformance
@@ -1201,3 +1202,49 @@ def test_traceroute_probe_reports_probe_unavailable_when_icmplib_missing(monkeyp
     assert result.success is False
     assert result.error == "icmplib not installed"
     assert result.error_type == ProbeErrorType.PROBE_UNAVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# Bandwidth adapter (v0.3)
+# ---------------------------------------------------------------------------
+
+
+def test_bandwidth_adapter_satisfies_probe_protocol():
+    assert isinstance(BandwidthProbeAdapter(), Probe)
+
+
+def test_bandwidth_adapter_reports_bandwidth_probe_type():
+    assert BandwidthProbeAdapter().probe_type == ProbeType.BANDWIDTH
+
+
+def test_bandwidth_adapter_returns_raw_measurement_and_forwards_target_and_options(monkeypatch):
+    expected = RawMeasurement(probe_type=ProbeType.BANDWIDTH, target="https://speed.example/down", success=True)
+    captured = {}
+
+    def fake_measure(url, **options):
+        captured.update({"url": url, **options})
+        return expected
+
+    monkeypatch.setattr(bandwidth_probe, "measure", fake_measure)
+
+    result = BandwidthProbeAdapter().run("https://speed.example/down", duration_s=3.0)
+
+    assert result is expected
+    assert captured["url"] == "https://speed.example/down"
+    assert captured["duration_s"] == 3.0
+
+
+def test_bandwidth_adapter_passes_through_failed_measurement_unchanged(monkeypatch):
+    expected = RawMeasurement(
+        probe_type=ProbeType.BANDWIDTH,
+        target="https://speed.example/down",
+        success=False,
+        error="HTTP 404",
+        error_type=ProbeErrorType.HTTP_FAILURE,
+    )
+    monkeypatch.setattr(bandwidth_probe, "measure", lambda url, **options: expected)
+
+    result = BandwidthProbeAdapter().run("https://speed.example/down")
+
+    assert result is expected
+    assert result.success is False

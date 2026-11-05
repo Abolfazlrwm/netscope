@@ -31,9 +31,9 @@ import pytest
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
-from netscope.core.models import ProbeType, RawMeasurement, RouteHop, RouteSnapshot
+from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, RouteHop, RouteSnapshot
 from netscope.persistence.measurement_repository import MeasurementRepository
-from netscope.ui.cli import build_arg_parser, run_diagnose_command, run_route_command
+from netscope.ui.cli import build_arg_parser, run_diagnose_command, run_route_command, run_speed_command
 
 
 @dataclass
@@ -609,3 +609,100 @@ def test_route_command_does_not_import_probe_internals_directly():
     assert "icmplib" not in code_only
     assert "TracerouteProbeAdapter(" not in code_only
     assert "subprocess" not in code_only
+
+
+# ---------------------------------------------------------------------------
+# speed (v0.3)
+# ---------------------------------------------------------------------------
+
+
+def test_parser_speed_subcommand_is_recognized():
+    args = build_arg_parser().parse_args(["speed"])
+    assert args.command == "speed"
+    assert args.url is None
+    assert args.seconds is None
+    assert args.json is False
+
+
+def test_parser_speed_accepts_url_and_seconds_overrides():
+    args = build_arg_parser().parse_args(["speed", "--url", "https://x.example/f", "--seconds", "3.5"])
+    assert args.url == "https://x.example/f"
+    assert args.seconds == 3.5
+
+
+def _speed_container(measurement: RawMeasurement):
+    """A Container whose registry serves one scripted BANDWIDTH probe,
+    recording how it was invoked."""
+    calls = []
+
+    class _ScriptedBandwidthProbe:
+        probe_type = ProbeType.BANDWIDTH
+
+        def run(self, target, **options):
+            calls.append({"target": target, **options})
+            return measurement
+
+    probes = {ProbeType.BANDWIDTH: _ScriptedBandwidthProbe()}
+    container = Container(probe_registry=ProbeRegistry(probes=probes))
+    return container, calls
+
+
+def test_speed_command_runs_through_the_registry_and_reports_json(capsys):
+    measurement = RawMeasurement(
+        probe_type=ProbeType.BANDWIDTH,
+        target="https://speed.example/down",
+        success=True,
+        extra={
+            "throughput_mbps": 42.3,
+            "peak_mbps": 51.0,
+            "bytes_transferred": 31_500_000,
+            "duration_s": 6.0,
+            "sample_count": 11,
+        },
+    )
+    container, calls = _speed_container(measurement)
+
+    exit_code = run_speed_command(container, NetScopeConfig(), json_output=True)
+
+    assert exit_code == 0
+    assert calls == [{"target": NetScopeConfig().bandwidth_url, "duration_s": NetScopeConfig().bandwidth_seconds}]
+    out = capsys.readouterr().out
+    assert '"throughput_mbps"' in out
+    assert "42.3" in out
+
+
+def test_speed_command_forwards_flag_overrides_and_fails_on_failure(capsys):
+    measurement = RawMeasurement(
+        probe_type=ProbeType.BANDWIDTH,
+        target="https://x.example/f",
+        success=False,
+        error="HTTP 404",
+        error_type=ProbeErrorType.HTTP_FAILURE,
+    )
+    container, calls = _speed_container(measurement)
+
+    exit_code = run_speed_command(
+        container,
+        NetScopeConfig(),
+        url="https://x.example/f",
+        seconds=2.0,
+        json_output=True,
+    )
+
+    assert exit_code == 1
+    assert calls == [{"target": "https://x.example/f", "duration_s": 2.0}]
+
+
+def test_speed_command_text_output_mentions_the_number(capsys):
+    measurement = RawMeasurement(
+        probe_type=ProbeType.BANDWIDTH,
+        target="https://speed.example/down",
+        success=True,
+        extra={"throughput_mbps": 88.4, "peak_mbps": 91.2, "bytes_transferred": 66_300_000, "duration_s": 6.0, "sample_count": 12},
+    )
+    container, _ = _speed_container(measurement)
+
+    exit_code = run_speed_command(container, NetScopeConfig())
+
+    assert exit_code == 0
+    assert "88.4" in capsys.readouterr().out

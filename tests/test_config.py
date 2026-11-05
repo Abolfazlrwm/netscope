@@ -104,3 +104,24 @@ def test_mutating_one_loaded_config_does_not_affect_another(tmp_path):
     b = load_config(path)
     a.gateway = "192.168.0.1"
     assert b.gateway == "10.0.0.1"
+
+
+# ---------------------------------------------------------------------------
+# Bandwidth defaults (v0.3)
+# ---------------------------------------------------------------------------
+
+
+def test_default_config_has_bandwidth_defaults():
+    config = NetScopeConfig()
+    assert config.bandwidth_url == "https://speed.cloudflare.com/__down?bytes=104857600"
+    assert config.bandwidth_seconds == 6.0
+
+
+def test_bandwidth_keys_load_from_toml(tmp_path):
+    config_file = tmp_path / "config.toml"
+    config_file.write_text('bandwidth_url = "https://x.example/down"\nbandwidth_seconds = 3.0\n', encoding="utf-8")
+
+    config = load_config(config_file)
+
+    assert config.bandwidth_url == "https://x.example/down"
+    assert config.bandwidth_seconds == 3.0
