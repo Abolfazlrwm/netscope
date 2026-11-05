@@ -119,3 +119,39 @@ def test_metric_baseline_direct_construction_still_works():
     metric.update(6.0)
     assert metric.mean == 5.0
     assert metric.stddev == pytest.approx(1.4142, abs=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# Throughput baselines (v0.4)
+# ---------------------------------------------------------------------------
+
+
+def test_throughput_baseline_round_trips_exactly(tmp_path):
+    """Welford-exact like latency: count/mean/m2 survive save+load with
+    no drift, and the latency rows next to them are untouched."""
+    repository = BaselineRepository.open(tmp_path / "tput.db")
+    baseline = UserBaseline()
+    for v in [88.0, 92.0, 95.0]:
+        baseline.observe_throughput("https://speed.example/down", v)
+    baseline.observe_latency("gw", 5.0)
+
+    repository.save(baseline)
+    loaded = repository.load()
+
+    learned = loaded.throughput["https://speed.example/down"]
+    expected = baseline.throughput["https://speed.example/down"]
+    assert (learned.count, learned.mean, learned._m2) == (expected.count, expected.mean, expected._m2)
+    assert loaded.latency["gw"].count == 1
+
+
+def test_saving_an_empty_throughput_store_clears_old_rows(tmp_path):
+    """save() mirrors the in-memory object exactly -- a cleared store
+    must not leave orphaned rows behind."""
+    repository = BaselineRepository.open(tmp_path / "tput-clear.db")
+    baseline = UserBaseline()
+    baseline.observe_throughput("t", 50.0)
+    repository.save(baseline)
+
+    repository.save(UserBaseline())
+
+    assert repository.load().throughput == {}

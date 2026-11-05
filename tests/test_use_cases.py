@@ -14,6 +14,8 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 
+import pytest
+
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
@@ -22,6 +24,7 @@ from netscope.app.use_cases import (
     diagnose_service_with_connectivity,
     run_measurement_round,
     run_service_checks,
+    run_speed_test,
 )
 from netscope.core.baseline import UserBaseline
 from netscope.core.models import (
@@ -29,11 +32,13 @@ from netscope.core.models import (
     Evidence,
     ExperienceLevel,
     Hypothesis,
+    ProbeErrorType,
     ProbeType,
     RawMeasurement,
     Service,
     Severity,
 )
+from netscope.persistence.baseline_repository import BaselineRepository
 
 
 @dataclass
@@ -748,3 +753,105 @@ def test_round_persists_only_the_baseline_itself():
     # Exactly one .save() call, and it is the baseline repository's.
     assert code_only.count(".save(") == 1
     assert "baseline_repository" in code_only
+
+
+# ---------------------------------------------------------------------------
+# run_speed_test -- throughput baseline learning (v0.4)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ScriptedBandwidthProbe:
+    """Returns scripted throughput readings in order, repeating the
+    last one once the script runs out (or a failure, if scripted)."""
+
+    probe_type: ProbeType = ProbeType.BANDWIDTH
+    mbps_script: list[float] = field(default_factory=lambda: [90.0])
+    success: bool = True
+    calls: list[str] = field(default_factory=list)
+
+    def run(self, target: str, **options) -> RawMeasurement:
+        self.calls.append(target)
+        if not self.success:
+            return RawMeasurement(
+                probe_type=self.probe_type,
+                target=target,
+                success=False,
+                error="HTTP 500",
+                error_type=ProbeErrorType.HTTP_FAILURE,
+            )
+        i = min(len(self.calls) - 1, len(self.mbps_script) - 1)
+        return RawMeasurement(
+            probe_type=self.probe_type,
+            target=target,
+            success=True,
+            extra={
+                "throughput_mbps": self.mbps_script[i],
+                "peak_mbps": self.mbps_script[i] + 5.0,
+                "bytes_transferred": 1_000_000,
+                "duration_s": 1.0,
+                "sample_count": 2,
+            },
+        )
+
+
+def _speed_container(tmp_path, probe: _ScriptedBandwidthProbe) -> Container:
+    repo = BaselineRepository.open(tmp_path / "speed.db")
+    return Container(probe_registry=ProbeRegistry(probes={ProbeType.BANDWIDTH: probe}), baseline_repository=repo)
+
+
+def test_speed_test_compares_then_observes_into_the_throughput_baseline(tmp_path):
+    """Three runs only LEARN (no verdict yet); the fourth is judged
+    against the three BEFORE it -- baseline_samples says so."""
+    probe = _ScriptedBandwidthProbe(mbps_script=[90.0, 90.0, 90.0])
+    container = _speed_container(tmp_path, probe)
+    config = NetScopeConfig()
+
+    for _ in range(3):
+        m = run_speed_test(container, config)
+        assert "verdict" not in m.extra
+
+    fourth = run_speed_test(container, config)
+    assert fourth.extra["baseline_samples"] == 3
+    assert fourth.extra["verdict"] == "as_usual"
+    assert fourth.extra["baseline_mean_mbps"] == pytest.approx(90.0)
+    assert fourth.extra["deviation_pct"] == pytest.approx(0.0)
+
+
+def test_speed_test_reports_slower_than_usual(tmp_path):
+    probe = _ScriptedBandwidthProbe(mbps_script=[90.0, 90.0, 90.0, 50.0])
+    container = _speed_container(tmp_path, probe)
+    config = NetScopeConfig()
+
+    for _ in range(3):
+        run_speed_test(container, config)
+
+    slow = run_speed_test(container, config)
+    assert slow.extra["verdict"] == "slower_than_usual"
+    assert slow.extra["deviation_pct"] < -15.0
+
+
+def test_speed_test_never_touches_the_latency_or_loss_baseline(tmp_path):
+    """The v0.3 doctrine holds under the v0.4 learning: five speed
+    tests fill ONLY the throughput store."""
+    probe = _ScriptedBandwidthProbe()
+    container = _speed_container(tmp_path, probe)
+    config = NetScopeConfig()
+
+    for _ in range(5):
+        run_speed_test(container, config)
+
+    loaded = container.baseline_repository.load()
+    assert loaded.latency == {}
+    assert loaded.packet_loss == {}
+    assert loaded.throughput[config.bandwidth_url].count == 5
+
+
+def test_failed_speed_test_is_never_observed(tmp_path):
+    probe = _ScriptedBandwidthProbe(success=False)
+    container = _speed_container(tmp_path, probe)
+
+    m = run_speed_test(container, NetScopeConfig())
+
+    assert m.success is False
+    assert container.baseline_repository.load().throughput == {}

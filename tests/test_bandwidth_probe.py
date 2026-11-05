@@ -191,3 +191,27 @@ def test_summarize_flat_json_view_for_failure(monkeypatch):
         "error": "nope",
         "error_type": "http_failure",
     }
+
+
+def test_summarize_carries_baseline_context_only_when_attached(monkeypatch):
+    """The four baseline keys appear exactly when the speed use case
+    attached them -- a probe-only measurement keeps the v0.3 shape."""
+    chunks = [b"q" * 50_000 for _ in range(4)]
+    monkeypatch.setattr(bandwidth_probe, "_iter_download_chunks", _fake_stream(chunks))
+    plain = bandwidth_probe.measure("https://speed.example/down", duration_s=0.2)
+    assert "verdict" not in bandwidth_probe.summarize(plain)
+
+    annotated = bandwidth_probe.measure("https://speed.example/down", duration_s=0.2)
+    annotated.extra.update(
+        {
+            "baseline_mean_mbps": 90.0,
+            "baseline_samples": 4,
+            "deviation_pct": -18.2,
+            "verdict": "slower_than_usual",
+        }
+    )
+    view = bandwidth_probe.summarize(annotated)
+    assert view["baseline_mean_mbps"] == 90.0
+    assert view["baseline_samples"] == 4
+    assert view["deviation_pct"] == pytest.approx(-18.2)
+    assert view["verdict"] == "slower_than_usual"

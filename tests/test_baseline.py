@@ -17,7 +17,15 @@ import math
 
 import pytest
 
-from netscope.core.baseline import MetricBaseline, UserBaseline
+from netscope.core.baseline import (
+    THROUGHPUT_VERDICT_BAND_PCT,
+    VERDICT_AS_USUAL,
+    VERDICT_FASTER,
+    VERDICT_SLOWER,
+    MetricBaseline,
+    UserBaseline,
+    compare_throughput,
+)
 
 # ---------------------------------------------------------------------------
 # MetricBaseline
@@ -139,3 +147,77 @@ def test_user_baseline_loss_deviation_sigma_for_unseen_target_is_zero():
     assert ub.loss_deviation_sigma("never-seen.example", 50.0) == 0.0
     # the lookup itself has side effects: it creates the entry
     assert "never-seen.example" in ub.packet_loss
+
+
+# ---------------------------------------------------------------------------
+# Throughput baseline (v0.4)
+# ---------------------------------------------------------------------------
+
+
+def test_user_baseline_keeps_throughput_in_its_own_store():
+    """The v0.3 doctrine, now structural: a download reading lands in
+    UserBaseline.throughput and nowhere near the latency/loss metrics
+    it must never pose as."""
+    ub = UserBaseline()
+    ub.observe_throughput("https://speed.example/down", 90.0)
+    ub.observe_latency("https://speed.example/down", 12.0)
+    assert ub.throughput["https://speed.example/down"].count == 1
+    assert ub.latency["https://speed.example/down"].count == 1
+    assert ub.packet_loss == {}
+    assert ub.throughput_baseline("never-seen") is None
+
+
+def test_compare_throughput_has_no_opinion_on_a_young_baseline():
+    ub = UserBaseline()
+    assert compare_throughput(ub, "t", 80.0) is None  # no history at all
+    ub.observe_throughput("t", 80.0)
+    ub.observe_throughput("t", 82.0)
+    assert compare_throughput(ub, "t", 80.0) is None  # 2 < min_samples(3)
+
+
+def test_compare_throughput_verdicts():
+    ub = UserBaseline()
+    for v in [90.0, 92.0, 88.0, 91.0]:  # mean 90.25
+        ub.observe_throughput("t", v)
+
+    usual = compare_throughput(ub, "t", 91.0)
+    assert usual is not None
+    assert usual.verdict == VERDICT_AS_USUAL
+    assert usual.baseline_samples == 4
+    assert usual.baseline_mean_mbps == pytest.approx(90.25)
+
+    slower = compare_throughput(ub, "t", 60.0)  # ~-33%
+    assert slower is not None
+    assert slower.verdict == VERDICT_SLOWER
+    assert slower.deviation_pct < 0
+
+    faster = compare_throughput(ub, "t", 120.0)  # ~+33%
+    assert faster is not None
+    assert faster.verdict == VERDICT_FASTER
+    assert faster.deviation_pct > 0
+
+
+def test_compare_throughput_band_boundaries():
+    """Clearly beyond the band reads as slower/faster; just inside it
+    reads as usual. (The exact band edge is deliberately not asserted:
+    a 15.000...% deviation is floating-point territory no real reading
+    lands on.)"""
+    ub = UserBaseline()
+    for _ in range(4):
+        ub.observe_throughput("t", 100.0)
+
+    beyond_top = compare_throughput(ub, "t", 100.0 * (1 + (THROUGHPUT_VERDICT_BAND_PCT + 1.0) / 100))
+    assert beyond_top is not None and beyond_top.verdict == VERDICT_FASTER
+
+    just_inside = compare_throughput(ub, "t", 100.0 * (1 + (THROUGHPUT_VERDICT_BAND_PCT - 0.5) / 100))
+    assert just_inside is not None and just_inside.verdict == VERDICT_AS_USUAL
+
+    beyond_bottom = compare_throughput(ub, "t", 100.0 * (1 - (THROUGHPUT_VERDICT_BAND_PCT + 1.0) / 100))
+    assert beyond_bottom is not None and beyond_bottom.verdict == VERDICT_SLOWER
+
+
+def test_compare_throughput_refuses_a_degenerate_zero_mean():
+    ub = UserBaseline()
+    for _ in range(4):
+        ub.observe_throughput("t", 0.0)
+    assert compare_throughput(ub, "t", 50.0) is None
