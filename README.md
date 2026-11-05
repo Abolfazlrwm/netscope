@@ -76,6 +76,8 @@ netscope speed --seconds 10       # longer window, steadier median
 netscope speed --url <any-url>    # measure against a different endpoint
 ```
 
+![NetScope speed](docs/images/cli-speed.svg)
+
 Streams the endpoint for a bounded window, samples Mbps at fixed
 intervals, and reports the **median** sample (robust against the TCP
 slow-start ramp), with the peak and bytes moved as evidence. It is a
