@@ -6,6 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-05
+
+The "how fast does it actually feel" release: NetScope can now measure
+download throughput, not just latency.
+
+### Added
+
+- **Download-bandwidth probe** (`ProbeType.BANDWIDTH`): streams a
+  configurable endpoint for a bounded window, samples Mbps at fixed
+  intervals against a monotonic clock, and reports the **median**
+  sample — robust against the TCP slow-start ramp — with the peak
+  sample and total bytes moved kept as evidence. Error taxonomy
+  matches the HTTP probe (timeout / HTTP failure / unavailable).
+- **`netscope speed [--url URL] [--seconds S] [--json]`**: one
+  throughput measurement as a standalone command, rendered as a
+  headline panel (median Mbps, peak, MB moved, sample count). A
+  speed test never runs inside `diagnose` rounds — it is slow and
+  data-hungry by nature, and its result is throughput evidence, not
+  a latency reading.
+- **`bandwidth_url` / `bandwidth_seconds` config keys**: the download
+  endpoint (default: Cloudflare's speed endpoint) and the measurement
+  window are configuration, like every other target NetScope talks to.
+- The probe registry, the `ProbeType` enum, the measurements table's
+  detail line, and the adapter/CLI/config test suites all speak
+  bandwidth now.
+
+### Notes
+
+- Throughput is reported as evidence only: it does not feed the 0–100
+  experience score and is never observed into the personal baseline
+  (a bandwidth measurement carries `latency_ms=None` by design, so it
+  cannot pose as a latency reading). Baseline-relative throughput
+  scoring is a planned follow-up.
+
 ## [0.2.0] — 2026-11-02
 
 The "make it real" release: every built-but-unwired capability is now

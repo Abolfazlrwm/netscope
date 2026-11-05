@@ -6,13 +6,13 @@
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/Abolfazlrwm/netscope)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-525%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-549%20passing-brightgreen)](#development)
 
 NetScope doesn't just show you a latency number — it tells you whether the problem is **your Wi-Fi/router**, **your ISP**, or **the destination service**, and shows you the evidence chain behind that claim.
 
 ```mermaid
 flowchart LR
-    P[Probes<br/>icmp · dns · tcp · tls · http · traceroute] --> S[Experience Score<br/>0–100, vs. your personal baseline]
+    P[Probes<br/>icmp · dns · tcp · tls · http · traceroute · bandwidth] --> S[Experience Score<br/>0–100, vs. your personal baseline]
     P --> E[Evidence<br/>tested · observed · expected · σ]
     E --> D[Diagnosis<br/>local vs. ISP vs. destination]
     D --> X[Explanation<br/>human-readable]
@@ -53,6 +53,7 @@ cd netscope && pip install -e ".[tui,dev]"
 ```bash
 netscope                # diagnose (gateway auto-detected) — the default command
 netscope tui            # live terminal dashboard
+netscope speed          # download throughput (median Mbps + peak)
 ```
 
 ### The dashboard
@@ -67,6 +68,23 @@ netscope tui            # live terminal dashboard
 
 ![NetScope route](docs/images/cli-route.svg)
 
+### Download speed
+
+```bash
+netscope speed                    # 6-second window, endpoint from config
+netscope speed --seconds 10       # longer window, steadier median
+netscope speed --url <any-url>    # measure against a different endpoint
+```
+
+Streams the endpoint for a bounded window, samples Mbps at fixed
+intervals, and reports the **median** sample (robust against the TCP
+slow-start ramp), with the peak and bytes moved as evidence. It is a
+standalone command on purpose — a speed test is slow and data-hungry,
+so it never runs inside `diagnose` rounds, and its result is evidence
+only: it does not feed the 0–100 score (throughput-vs-baseline scoring
+is a planned follow-up). The endpoint and window are configurable via
+the `bandwidth_url` / `bandwidth_seconds` config keys.
+
 ## Commands
 
 | Command | What it does |
@@ -76,6 +94,7 @@ netscope tui            # live terminal dashboard
 | `netscope route <target> [--no-resolve]` | Traceroute with reverse-DNS hostnames, AS numbers (see below) and route-stability analysis |
 | `netscope history [--limit N]` | Recent measurement rounds from the local log |
 | `netscope monitor [--interval S] [--rounds N]` | Continuous rounds with sustained-problem incident detection |
+| `netscope speed [--url URL] [--seconds S]` | Download throughput: median Mbps, peak sample, bytes moved (v0.3) |
 | `netscope tui` | The live dashboard (requires `[tui]` extra) |
 
 Every read command accepts `--json` for machine-readable output:
@@ -143,7 +162,7 @@ Hexagonal (ports & adapters), enforced by AST-based tests — `core` imports not
 ```
 src/netscope/
 ├── core/          # domain: models, scoring, diagnosis, incidents, routing, baseline (pure, offline-testable)
-├── adapters/      # probes (icmp/dns/tcp/tls/http/traceroute), discovery, ASN lookups
+├── adapters/      # probes (icmp/dns/tcp/tls/http/traceroute/bandwidth), discovery, ASN lookups
 ├── persistence/   # SQLite repositories (measurements, baseline) + versioned schema
 ├── app/           # use cases, config, composition root, reports, monitoring session
 └── ui/            # rich CLI + Textual TUI
