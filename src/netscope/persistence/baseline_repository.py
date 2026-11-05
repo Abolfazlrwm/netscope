@@ -100,22 +100,33 @@ class BaselineRepository:
         for row in cur.fetchall():
             store_name = _METRIC_TYPE_TO_STORE[row["metric_type"]]
             getattr(baseline, store_name)[row["target"]] = _row_to_metric_baseline(row)
+        cur = self._conn.execute("SELECT target, count, mean, m2 FROM throughput_baselines")
+        for row in cur.fetchall():
+            baseline.throughput[row["target"]] = _row_to_metric_baseline(row)
         return baseline
 
     def save(self, baseline: UserBaseline) -> None:
         """Persist the full baseline state in one transaction: replace
-        every (target, metric_type) row so the database mirrors the
-        in-memory object exactly."""
+        every (target, metric_type) row -- and every throughput row --
+        so the database mirrors the in-memory object exactly."""
         rows: list[tuple[str, str, int, float, float]] = []
         for metric_type, store in (("latency", baseline.latency), ("packet_loss", baseline.packet_loss)):
             for target, metric in store.items():
                 rows.append((target, metric_type, metric.count, metric.mean, metric._m2))
+        throughput_rows: list[tuple[str, int, float, float]] = [
+            (target, metric.count, metric.mean, metric._m2) for target, metric in baseline.throughput.items()
+        ]
 
         with self._conn:
             self._conn.execute("DELETE FROM metric_baselines")
             self._conn.executemany(
                 "INSERT OR REPLACE INTO metric_baselines (target, metric_type, count, mean, m2) VALUES (?, ?, ?, ?, ?)",
                 rows,
+            )
+            self._conn.execute("DELETE FROM throughput_baselines")
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO throughput_baselines (target, count, mean, m2) VALUES (?, ?, ?, ?)",
+                throughput_rows,
             )
 
     def close(self) -> None:
