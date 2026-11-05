@@ -482,6 +482,40 @@ def check_target(
 
 
 # ---------------------------------------------------------------------------
+# Bandwidth (v0.3) -- `netscope speed`: a download-throughput measurement
+# as its own use case, deliberately NOT part of the measurement round.
+# ---------------------------------------------------------------------------
+
+
+def run_speed_test(
+    container: Container,
+    config: NetScopeConfig,
+    *,
+    url: str | None = None,
+    seconds: float | None = None,
+) -> RawMeasurement:
+    """Run one bandwidth measurement and return its RawMeasurement.
+
+    Deliberately a standalone use case, not a step of
+    run_measurement_round: a speed test downloads for seconds at a
+    time, which would make every routine `netscope diagnose` round
+    slow and data-hungry, and its result is throughput evidence rather
+    than a latency/loss reading -- feeding it into the round would put
+    it into scoring/baseline paths it explicitly does not belong in
+    (see bandwidth_probe.py's "WHAT THIS PROBE DOES NOT DO").
+
+    `url`/`seconds` come from the CLI flags when given, otherwise fall
+    back to the config defaults (`bandwidth_url`/`bandwidth_seconds`)
+    -- the same flags-override-config convention the `--gateway` flag
+    follows. The adapter is fetched through the registry like every
+    other probe, so tests can swap in a fake the usual way.
+    """
+    resolved_url = url if url is not None else config.bandwidth_url
+    resolved_seconds = seconds if seconds is not None else config.bandwidth_seconds
+    return container.probe_registry.get(ProbeType.BANDWIDTH).run(resolved_url, duration_s=resolved_seconds)
+
+
+# ---------------------------------------------------------------------------
 # History (v0.2) -- `netscope history` and the TUI history tab: recent
 # measurement rounds grouped out of the persisted measurement log.
 # ---------------------------------------------------------------------------

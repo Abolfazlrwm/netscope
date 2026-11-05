@@ -34,6 +34,11 @@ COMMANDS (v0.2)
     incident only OPENS after a diagnosis is sustained for 3+ rounds
     (`core.incidents`), and only CLOSES after a sustained-healthy
     stretch -- single noisy samples never flap.
+- `netscope speed [--url URL] [--seconds S] [--json]` (v0.3)
+    One download-throughput measurement: median Mbps across fixed
+    sampling windows, with the peak sample and bytes moved as evidence.
+    A standalone command on purpose -- it never runs inside `diagnose`
+    rounds (see bandwidth_probe.py's "WHAT THIS PROBE DOES NOT DO").
 - `netscope tui`
     The live terminal dashboard (requires the `tui` extra:
     `pip install netscope[tui]`).
@@ -56,7 +61,7 @@ from netscope.app.reports import (
     serialize_measurement,
     serialize_route_hops,
 )
-from netscope.app.use_cases import check_target, recent_rounds, run_measurement_round, run_route_analysis
+from netscope.app.use_cases import check_target, recent_rounds, run_measurement_round, run_route_analysis, run_speed_test
 from netscope.core.models import ProbeType
 from netscope.explanation.explainer import explain
 from netscope.ui.render import (
@@ -65,6 +70,7 @@ from netscope.ui.render import (
     format_time,
     measurements_table,
     route_table,
+    speed_panel,
     truncate,
 )
 
@@ -150,6 +156,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     monitor.add_argument("--interval", type=float, default=30.0, help="seconds between rounds (default: 30)")
     monitor.add_argument("--rounds", type=int, default=0, help="number of rounds before stopping (0 = until Ctrl+C)")
     monitor.add_argument("--gateway", default=AUTO_SENTINEL, help="gateway to probe: an IP, 'auto', or 'none'")
+
+    speed = subparsers.add_parser(
+        "speed",
+        help="measure download throughput (median Mbps over a sampling window)",
+        parents=[global_options],
+    )
+    speed.add_argument("--url", default=None, help="download URL to measure (default: the bandwidth_url config key)")
+    speed.add_argument(
+        "--seconds",
+        type=float,
+        default=None,
+        help="measurement window in seconds (default: the bandwidth_seconds config key)",
+    )
+    speed.add_argument("--json", action="store_true", help="output machine-readable JSON instead of styled text")
 
     subparsers.add_parser(
         "tui",
@@ -476,6 +496,36 @@ def run_monitor_command(
 
 
 # ---------------------------------------------------------------------------
+# speed (v0.3)
+# ---------------------------------------------------------------------------
+
+
+def run_speed_command(
+    container: Container,
+    config: NetScopeConfig,
+    url: str | None = None,
+    seconds: float | None = None,
+    *,
+    json_output: bool = False,
+) -> int:
+    """Runs the `speed` command: one download-throughput measurement,
+    rendered as a headline panel (or flat JSON). Exit code 0 only for a
+    successful measurement -- a failed speed test is a real failure of
+    the command's one job, not a soft warning."""
+    measurement = run_speed_test(container, config, url=url, seconds=seconds)
+    if json_output:
+        from netscope.probes.bandwidth_probe import summarize
+
+        console().print_json(json.dumps(summarize(measurement)))
+        return 0 if measurement.success else 1
+    console().print(speed_panel(measurement))
+    if not measurement.success:
+        console().print(f"[dim]target: {measurement.target}[/dim]")
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # tui
 # ---------------------------------------------------------------------------
 
@@ -544,6 +594,14 @@ def main() -> None:
             interval=args.interval,
             rounds=args.rounds,
             gateway=args.gateway,
+        )
+    elif command == "speed":
+        exit_code = run_speed_command(
+            container,
+            config,
+            url=getattr(args, "url", None),
+            seconds=getattr(args, "seconds", None),
+            json_output=getattr(args, "json", False),
         )
     else:  # pragma: no cover -- argparse rejects unknown commands itself
         parser.error(f"unrecognized command: {command}")

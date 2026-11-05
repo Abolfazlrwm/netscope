@@ -166,6 +166,9 @@ def _success_detail(m: RawMeasurement) -> str:
         parts.append(f"HTTP {m.extra['status_code']}{version}")
     if "final_url" in m.extra and m.extra["final_url"] != m.target:
         parts.append(f"redirected to {m.extra['final_url']}")
+    if "throughput_mbps" in m.extra:
+        peak = f" · peak {m.extra['peak_mbps']:.1f}" if "peak_mbps" in m.extra else ""
+        parts.append(f"{m.extra['throughput_mbps']:.1f} Mbps median{peak}")
     return " · ".join(parts)
 
 
@@ -186,6 +189,37 @@ def score_panel(experience: ExperienceEvent, *, subtitle: str | None = None) -> 
         ExperienceLevel.DOWN: "red",
     }[experience.level]
     return Panel(body, border_style=border, expand=False)
+
+
+def speed_panel(measurement: RawMeasurement) -> Panel:
+    """The `netscope speed` headline panel: big median Mbps with the
+    peak, bytes and window as dim evidence lines. A failed measurement
+    renders its own error line -- never a fabricated number."""
+    if not measurement.success:
+        body = Text()
+        body.append("✗ speed test failed", style="red")
+        body.append("\n")
+        detail = measurement.error or (measurement.error_type.value if measurement.error_type else "")
+        body.append(truncate(detail), style="dim")
+        return Panel(body, border_style="red", title="Download speed", expand=False)
+
+    throughput = measurement.extra.get("throughput_mbps")
+    peak = measurement.extra.get("peak_mbps")
+    body = Text()
+    body.append(f"{throughput:.1f}", style="bold green" if isinstance(throughput, float) else "bold")
+    body.append(" Mbps", style="green")
+    if isinstance(peak, float):
+        body.append(f"   peak {peak:.1f}", style="dim")
+    body.append("\n")
+    evidence: list[str] = [measurement.target]
+    bytes_transferred = measurement.extra.get("bytes_transferred")
+    if isinstance(bytes_transferred, (int, float)):
+        evidence.append(f"{bytes_transferred / 1e6:.1f} MB in {measurement.extra.get('duration_s', 0):.1f}s")
+    sample_count = measurement.extra.get("sample_count")
+    if isinstance(sample_count, (int, float)) and sample_count:
+        evidence.append(f"{int(sample_count)} samples")
+    body.append(" · ".join(evidence), style="dim")
+    return Panel(body, border_style="green", title="Download speed", expand=False)
 
 
 def diagnosis_panel(diagnosis: Diagnosis | None) -> Panel:
