@@ -6,6 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-05
+
+The "know your normal" release: speed tests now learn your personal
+throughput baseline and judge every new run against it.
+
+### Added
+
+- **Throughput baseline** (`UserBaseline.throughput`): every successful
+  `netscope speed` run is observed, Welford-exact, into its own
+  per-target store -- never into the latency/packet-loss metrics a
+  download reading must not pose as (the v0.3 doctrine, now structural).
+- **Baseline-relative verdicts** (`compare_throughput`): once the
+  baseline has ≥ 3 observations, each new run is compared BEFORE it is
+  folded in, and classified against a ±15% band: `as_usual`,
+  `slower_than_usual`, or `faster_than_usual` -- percentage-based,
+  because "your download is 18% below usual" is the sentence a human
+  acts on.
+- **`netscope speed` shows it**: the headline panel gains a comparison
+  line ("vs your usual 82.1 Mbps · +15.2% — faster than usual"), and
+  `--json` gains `baseline_mean_mbps` / `baseline_samples` /
+  `deviation_pct` / `verdict` -- keys absent entirely while the
+  baseline is still too young to have an opinion (the v0.3 shape).
+- **Schema v2**: a dedicated `throughput_baselines` table, additive by
+  design -- existing databases upgrade in place on next start, with
+  every v1 row untouched.
+
+
 ## [0.3.0] — 2026-11-05
 
 The "how fast does it actually feel" release: NetScope can now measure

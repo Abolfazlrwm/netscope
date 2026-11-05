@@ -90,19 +90,25 @@ def route_screenshot() -> None:
 
 def speed_screenshot() -> None:
     """The `netscope speed` headline panel with a plausible 6-second
-    measurement (12 samples at the 0.5 s cadence, median below peak).
-    Rendered exactly like the command prints it: the panel only."""
+    measurement (12 samples at the 0.5 s cadence, median below peak)
+    and the v0.4 baseline-relative verdict attached, so the README
+    shows the feature, not just the number. Rendered exactly like the
+    command prints it: the panel only."""
     measurement = RawMeasurement(
         probe_type=ProbeType.BANDWIDTH,
         target="https://speed.cloudflare.com/__down?bytes=104857600",
         success=True,
         latency_ms=None,
         extra={
-            "throughput_mbps": 87.4,
-            "peak_mbps": 94.7,
-            "bytes_transferred": 65_552_896,
+            "throughput_mbps": 94.6,
+            "peak_mbps": 102.3,
+            "bytes_transferred": 70_950_000,
             "duration_s": 6.0,
             "sample_count": 12,
+            "baseline_mean_mbps": 82.1,
+            "baseline_samples": 11,
+            "deviation_pct": 15.2,
+            "verdict": "faster_than_usual",
         },
     )
 

@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/Abolfazlrwm/netscope)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-549%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-566%20passing-brightgreen)](#development)
 
 NetScope doesn't just show you a latency number — it tells you whether the problem is **your Wi-Fi/router**, **your ISP**, or **the destination service**, and shows you the evidence chain behind that claim.
 
@@ -53,7 +53,7 @@ cd netscope && pip install -e ".[tui,dev]"
 ```bash
 netscope                # diagnose (gateway auto-detected) — the default command
 netscope tui            # live terminal dashboard
-netscope speed          # download throughput (median Mbps + peak)
+netscope speed          # download throughput, judged against your usual
 ```
 
 ### The dashboard
@@ -83,8 +83,16 @@ intervals, and reports the **median** sample (robust against the TCP
 slow-start ramp), with the peak and bytes moved as evidence. It is a
 standalone command on purpose — a speed test is slow and data-hungry,
 so it never runs inside `diagnose` rounds, and its result is evidence
-only: it does not feed the 0–100 score (throughput-vs-baseline scoring
-is a planned follow-up). The endpoint and window are configurable via
+only: it does not feed the 0–100 score.
+
+Since v0.4, every successful run is also learned into a **personal
+throughput baseline** (its own store, its own table — never the
+latency/loss metrics a download must not pose as). Once the baseline
+has a few runs behind it, each new test is judged against your usual:
+±15% counts as *as usual*, beyond that you get *slower/faster than
+usual* — in the panel and in `--json` (`baseline_mean_mbps`,
+`baseline_samples`, `deviation_pct`, `verdict`). The first runs only
+learn; NetScope stays silent until it has something honest to say. The endpoint and window are configurable via
 the `bandwidth_url` / `bandwidth_seconds` config keys.
 
 ## Commands
