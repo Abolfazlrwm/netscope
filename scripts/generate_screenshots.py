@@ -1,10 +1,12 @@
 """Generate SVG screenshots for the README:
 1. CLI diagnose output (rich Console export_svg) with fake healthy data.
 2. CLI route output with a plausible hop table.
-3. TUI dashboard (Textual export_screenshot) driven with fake data.
+3. CLI speed output (the v0.3 throughput headline panel).
+4. TUI dashboard (Textual export_screenshot) driven with fake data.
 
 Run:  python scripts/generate_screenshots.py
-Outputs: docs/images/cli-diagnose.svg, cli-route.svg, tui-dashboard.svg
+Outputs: docs/images/cli-diagnose.svg, cli-route.svg, cli-speed.svg,
+tui-dashboard.svg
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.app.use_cases import run_measurement_round
 from netscope.core.models import ExperienceLevel, ProbeType, RawMeasurement, RouteHop
-from netscope.ui.render import diagnosis_panel, measurements_table, route_table
+from netscope.ui.render import diagnosis_panel, measurements_table, route_table, speed_panel
 from netscope.ui.tui.app import NetScopeTUI
 
 IMAGES = Path(__file__).parent.parent / "docs" / "images"
@@ -86,6 +88,32 @@ def route_screenshot() -> None:
     print("cli-route.svg written")
 
 
+def speed_screenshot() -> None:
+    """The `netscope speed` headline panel with a plausible 6-second
+    measurement (12 samples at the 0.5 s cadence, median below peak).
+    Rendered exactly like the command prints it: the panel only."""
+    measurement = RawMeasurement(
+        probe_type=ProbeType.BANDWIDTH,
+        target="https://speed.cloudflare.com/__down?bytes=104857600",
+        success=True,
+        latency_ms=None,
+        extra={
+            "throughput_mbps": 87.4,
+            "peak_mbps": 94.7,
+            "bytes_transferred": 65_552_896,
+            "duration_s": 6.0,
+            "sample_count": 12,
+        },
+    )
+
+    console = Console(record=True, width=92, force_terminal=False, color_system="truecolor")
+    console.print()
+    console.print(speed_panel(measurement))
+    svg = console.export_svg(title="netscope speed")
+    (IMAGES / "cli-speed.svg").write_text(svg, encoding="utf-8")
+    print("cli-speed.svg written")
+
+
 async def tui_screenshot() -> None:
     scores = [88.5, 92.0, 84.2, 95.0, 91.0]
 
@@ -112,4 +140,5 @@ if __name__ == "__main__":
     IMAGES.mkdir(parents=True, exist_ok=True)
     cli_screenshot()
     route_screenshot()
+    speed_screenshot()
     asyncio.run(tui_screenshot())
