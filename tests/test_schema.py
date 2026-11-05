@@ -109,6 +109,7 @@ def test_expected_tables_exist_after_initialization():
         "route_snapshots",
         "route_hops",
         "metric_baselines",
+        "throughput_baselines",
         "evidence",
         "diagnoses",
         "diagnosis_evidence",
@@ -310,3 +311,34 @@ def test_schema_module_only_imports_stdlib():
 
     modules = _imports_of(m)
     assert modules <= {"__future__", "sqlite3", "pathlib"}
+
+
+def test_v2_is_the_current_schema_version_with_the_throughput_table():
+    conn = _fresh_connection()
+    initialize_database(conn)
+    assert SCHEMA_VERSION == 2
+    assert get_schema_version(conn) == SCHEMA_VERSION
+    assert "throughput_baselines" in _table_names(conn)
+    conn.close()
+
+
+def test_v1_database_upgrades_additively(tmp_path):
+    """A v1 database (what v0.2/v0.3 users have on disk) upgrades in
+    place: the throughput table appears, user_version moves to 2, and
+    every pre-existing row is untouched."""
+    conn = create_connection(tmp_path / "upgrade.db")
+    conn.execute(
+        "INSERT INTO metric_baselines (target, metric_type, count, mean, m2) VALUES ('gw', 'latency', 5, 10.0, 8.0)"
+    )
+    # Simulate the v1 era: no throughput table, user_version rewound.
+    conn.execute("DROP TABLE throughput_baselines")
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
+
+    initialize_database(conn)  # what a v0.4 binary does on startup
+
+    assert get_schema_version(conn) == SCHEMA_VERSION
+    assert "throughput_baselines" in _table_names(conn)
+    row = conn.execute("SELECT count, mean FROM metric_baselines WHERE target = 'gw'").fetchone()
+    assert row == (5, 10.0)
+    conn.close()

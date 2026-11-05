@@ -68,6 +68,14 @@ speculative:
   *derived* from `m2` and `count` by MetricBaseline.stddev's own
   property, per Welford's algorithm) so a MetricBaseline can be
   reconstructed exactly, not approximated.
+- `throughput_baselines` (v2): UserBaseline's `throughput` dict of
+  MetricBaseline -- the v0.4 download-throughput baseline. It is a
+  separate table rather than a new `metric_type` value in
+  `metric_baselines` on purpose: widening that CHECK constraint would
+  require rebuilding the table (SQLite cannot ALTER a CHECK), and the
+  separation mirrors the domain doctrine bandwidth_probe.py documents
+  -- a throughput reading must never be queryable as a latency row.
+  Columns are the same Welford-exact `count`/`mean`/`m2` triple.
 - `evidence`: Evidence. `source` (`Optional[RawMeasurement |
   RouteSnapshot]`) becomes two nullable foreign keys
   (`source_measurement_id`, `source_route_snapshot_id`) -- at most one
@@ -107,8 +115,14 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
+# v1 -> v2 migration note: version 2 adds `throughput_baselines` and
+# changes nothing else. The migration is purely additive -- every v1
+# statement is unchanged and still `IF NOT EXISTS`, so opening a v1
+# database under v2 simply creates the new table alongside the existing
+# rows and bumps `user_version`. No data is moved, rewritten, or
+# dropped; there is nothing to roll back.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS measurements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,6 +172,16 @@ CREATE TABLE IF NOT EXISTS metric_baselines (
     mean REAL NOT NULL,
     m2 REAL NOT NULL,
     PRIMARY KEY (target, metric_type)
+);
+
+-- v2: the download-throughput baseline (UserBaseline.throughput).
+-- Deliberately NOT a `metric_type` value in metric_baselines -- see
+-- the table rationale above.
+CREATE TABLE IF NOT EXISTS throughput_baselines (
+    target TEXT PRIMARY KEY,
+    count INTEGER NOT NULL,
+    mean REAL NOT NULL,
+    m2 REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS evidence (
