@@ -327,9 +327,7 @@ def test_v1_database_upgrades_additively(tmp_path):
     place: the throughput table appears, user_version moves to 2, and
     every pre-existing row is untouched."""
     conn = create_connection(tmp_path / "upgrade.db")
-    conn.execute(
-        "INSERT INTO metric_baselines (target, metric_type, count, mean, m2) VALUES ('gw', 'latency', 5, 10.0, 8.0)"
-    )
+    conn.execute("INSERT INTO metric_baselines (target, metric_type, count, mean, m2) VALUES ('gw', 'latency', 5, 10.0, 8.0)")
     # Simulate the v1 era: no throughput table, user_version rewound.
     conn.execute("DROP TABLE throughput_baselines")
     conn.execute("PRAGMA user_version = 1")
