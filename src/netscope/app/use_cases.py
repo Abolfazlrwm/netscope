@@ -96,10 +96,12 @@ from netscope.core.models import (
     Evidence,
     ExperienceEvent,
     Hypothesis,
+    ProbeErrorType,
     ProbeType,
     RawMeasurement,
     RouteSnapshot,
     Service,
+    utcnow,
 )
 from netscope.core.routing import RouteChurnResult, analyze_route_churn
 from netscope.core.scoring import score_measurements
@@ -566,6 +568,39 @@ class HistoryRound:
         return bool(self.measurements) and all(m.success for m in self.measurements)
 
 
+def _group_rounds(
+    measurements: list[RawMeasurement],
+    *,
+    max_gap_seconds: int,
+) -> list[HistoryRound]:
+    """Group a flat measurement list into rounds, oldest first: two
+    consecutive measurements belong to the same round while their
+    timestamps are at most `max_gap_seconds` apart. Shared by
+    `recent_rounds` and the evidence report -- one round definition,
+    everywhere."""
+    ascending = sorted(measurements, key=lambda m: m.timestamp)
+    rounds: list[HistoryRound] = []
+    current: HistoryRound | None = None
+    gap = timedelta(seconds=max_gap_seconds)
+    for m in ascending:
+        if current is None or (m.timestamp - current.timestamp) > gap:
+            current = HistoryRound(timestamp=m.timestamp)
+            rounds.append(current)
+        current.measurements.append(m)
+    return rounds
+
+
+def _score_rounds(rounds: list[HistoryRound], baseline: UserBaseline) -> None:
+    """Score every round against `baseline`, in place. The re-computed
+    score describes THAT round, stamped with its own time --
+    score_measurements stamps utcnow() (its convention for live
+    rounds), which would mislabel historical rows."""
+    for round_ in rounds:
+        round_.experience = score_measurements(round_.measurements, baseline)
+        if round_.experience is not None:
+            round_.experience.timestamp = round_.timestamp
+
+
 def recent_rounds(
     container: Container,
     limit: int = 50,
@@ -591,22 +626,196 @@ def recent_rounds(
     if not raw:
         return []
 
-    ascending = sorted(raw, key=lambda m: m.timestamp)
-    rounds: list[HistoryRound] = []
-    current: HistoryRound | None = None
-    gap = timedelta(seconds=max_gap_seconds)
-    for m in ascending:
-        if current is None or (m.timestamp - current.timestamp) > gap:
-            current = HistoryRound(timestamp=m.timestamp)
-            rounds.append(current)
-        current.measurements.append(m)
-
-    baseline = container.load_baseline()
-    for round_ in rounds[-limit:]:
-        round_.experience = score_measurements(round_.measurements, baseline)
-        # The re-computed score describes THAT round, stamped with its own
-        # time -- score_measurements stamps utcnow() (its convention for
-        # live rounds), which would mislabel historical rows.
-        if round_.experience is not None:
-            round_.experience.timestamp = round_.timestamp
+    rounds = _group_rounds(raw, max_gap_seconds=max_gap_seconds)
+    _score_rounds(rounds[-limit:], container.load_baseline())
     return rounds[-limit:]
+
+
+# ---------------------------------------------------------------------------
+# Evidence report (v0.5) -- `netscope report`: the persisted measurement
+# log rebuilt into one honest, self-contained evidence document. The
+# report only ever claims what the log proves: absent metrics render as
+# absent, failures are listed verbatim, and round scores carry the same
+# recomputed-against-the-current-baseline caveat as `netscope history`.
+# ---------------------------------------------------------------------------
+
+# Per-target table cap in the rendered document. The log can hold
+# thousands of rows for a long window; the report shows the newest 40
+# per target and *discloses* the omitted count instead of truncating
+# silently -- an evidence document that hides evidence is not evidence.
+REPORT_ROWS_PER_TARGET = 40
+REPORT_MAX_ROUNDS = 40
+REPORT_MAX_FAILURES = 20
+
+
+@dataclass
+class TargetReportRow:
+    """One measurement as it appears in a target's evidence table.
+    Carries its target name so the report-wide failure list can be
+    rendered without re-deriving context."""
+
+    target: str
+    timestamp: datetime
+    probe_type: ProbeType
+    success: bool
+    latency_ms: float | None
+    packet_loss_pct: float | None
+    error: str | None
+    error_type: ProbeErrorType | None
+    verdict: str | None  # v0.4 baseline-relative throughput verdict, when attached
+
+
+@dataclass
+class TargetReport:
+    """Per-target aggregates plus the (capped) evidence rows."""
+
+    target: str
+    probe_types: list[str]
+    rows: list[TargetReportRow]
+    measurements: int
+    failures: int
+    mean_latency_ms: float | None
+    verdict_counts: dict[str, int]
+    truncated: int = 0
+
+
+@dataclass
+class EvidenceReport:
+    """The full evidence-report payload: window, rounds, per-target
+    evidence and the honest totals. Serialization (JSON/markdown) lives
+    in app.reports; this dataclass is the domain-side contract."""
+
+    since: datetime
+    until: datetime
+    scope: str | None = None  # None = every target; a name = single-target export
+    rounds: list[HistoryRound] = field(default_factory=list)
+    target_reports: list[TargetReport] = field(default_factory=list)
+    failure_rows: list[TargetReportRow] = field(default_factory=list)
+
+    @property
+    def targets(self) -> list[str]:
+        return [t.target for t in self.target_reports]
+
+    @property
+    def measurements(self) -> int:
+        return sum(t.measurements for t in self.target_reports)
+
+    @property
+    def failures(self) -> int:
+        return sum(t.failures for t in self.target_reports)
+
+    @property
+    def mean_score(self) -> float | None:
+        scores = [r.experience.score for r in self.rounds if r.experience is not None]
+        return sum(scores) / len(scores) if scores else None
+
+
+def _window_measurements(
+    container: Container,
+    *,
+    since: datetime,
+    until: datetime,
+    target: str | None,
+) -> list[RawMeasurement]:
+    """Every persisted measurement inside the inclusive [since, until]
+    window, oldest first -- fetched as one range query per target
+    (`history()`), never one unbounded scan of the log. Without a wired
+    measurement repository there is no evidence to report: an empty
+    list, not an error."""
+    repo = container.measurement_repository
+    if repo is None:
+        return []
+    names = [target] if target is not None else repo.targets()
+    pool: list[RawMeasurement] = []
+    for name in names:
+        pool.extend(repo.history(name, start=since, end=until, limit=None))
+    pool.sort(key=lambda m: m.timestamp)
+    return pool
+
+
+def _report_row(m: RawMeasurement) -> TargetReportRow:
+    """RawMeasurement -> evidence-table row. The v0.4 verdict rides
+    along only when `extra["verdict"]` is actually a string -- a
+    bandwidth row's verdict never gets to pose as latency evidence."""
+    raw_verdict = m.extra.get("verdict")
+    return TargetReportRow(
+        target=m.target,
+        timestamp=m.timestamp,
+        probe_type=m.probe_type,
+        success=m.success,
+        latency_ms=m.latency_ms,
+        packet_loss_pct=m.packet_loss_pct,
+        error=m.error,
+        error_type=m.error_type,
+        verdict=raw_verdict if isinstance(raw_verdict, str) else None,
+    )
+
+
+def _target_reports(measurements: list[RawMeasurement]) -> list[TargetReport]:
+    """Group the window's measurements by target and aggregate each
+    group. Latency means only ever include *successful* readings; the
+    table keeps the NEWEST `REPORT_ROWS_PER_TARGET` rows (chronological
+    within the slice) and discloses what it omitted -- verdict counts
+    are always computed over the full window, cap or no cap."""
+    by_target: dict[str, list[RawMeasurement]] = {}
+    for m in measurements:
+        by_target.setdefault(m.target, []).append(m)
+
+    reports: list[TargetReport] = []
+    for name in sorted(by_target):
+        group = by_target[name]
+        rows_all = [_report_row(m) for m in group]
+        shown = rows_all[-REPORT_ROWS_PER_TARGET:]
+        verdict_counts: dict[str, int] = {}
+        for row in rows_all:
+            if row.verdict is not None:
+                verdict_counts[row.verdict] = verdict_counts.get(row.verdict, 0) + 1
+        latencies = [m.latency_ms for m in group if m.success and m.latency_ms is not None]
+        reports.append(
+            TargetReport(
+                target=name,
+                probe_types=sorted({m.probe_type.value for m in group}),
+                rows=shown,
+                measurements=len(rows_all),
+                failures=sum(1 for m in group if not m.success),
+                mean_latency_ms=sum(latencies) / len(latencies) if latencies else None,
+                verdict_counts=verdict_counts,
+                truncated=len(rows_all) - len(shown),
+            )
+        )
+    return reports
+
+
+def build_evidence_report(
+    container: Container,
+    *,
+    days: int = 7,
+    target: str | None = None,
+    until: datetime | None = None,
+    max_gap_seconds: int = 120,
+) -> EvidenceReport:
+    """Build the v0.5 evidence report over the last `days` days of the
+    persisted measurement log (optionally scoped to one `target`).
+
+    The window is inclusive on both ends; `until` defaults to now and
+    is injectable so tests (and reproducible exports) can pin it. Round
+    scores are recomputed against the *current* personal baseline -- the
+    same honest approximation `recent_rounds` makes, since the log alone
+    cannot reconstruct the baseline as it stood at each round's time."""
+    if days <= 0:
+        raise ValueError(f"days must be a positive integer, got {days!r}")
+    end = until if until is not None else utcnow()
+    since = end - timedelta(days=days)
+
+    pool = _window_measurements(container, since=since, until=end, target=target)
+    rounds = _group_rounds(pool, max_gap_seconds=max_gap_seconds)
+    _score_rounds(rounds, container.load_baseline())
+
+    return EvidenceReport(
+        since=since,
+        until=end,
+        scope=target,
+        rounds=rounds,
+        target_reports=_target_reports(pool),
+        failure_rows=sorted((r for r in (_report_row(m) for m in pool) if not r.success), key=lambda r: r.timestamp),
+    )

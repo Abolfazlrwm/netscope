@@ -243,5 +243,14 @@ class MeasurementRepository:
         cur = self._conn.execute(query, params)
         return [_row_to_measurement(row) for row in cur.fetchall()]
 
+    def targets(self) -> list[str]:
+        """Every distinct target in the measurement log, alphabetical.
+
+        v0.5's evidence report walks the window as one range query per
+        target instead of one unbounded scan of the whole log; this is
+        the target list that makes that possible."""
+        cur = self._conn.execute("SELECT DISTINCT target FROM measurements ORDER BY target ASC")
+        return [row[0] for row in cur.fetchall()]
+
     def close(self) -> None:
         self._conn.close()
