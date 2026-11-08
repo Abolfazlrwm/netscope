@@ -56,6 +56,7 @@ from netscope.app.use_cases import run_measurement_round
 from netscope.core.models import Diagnosis, ExperienceEvent, RawMeasurement
 from netscope.ui.tui.screens.dashboard import DashboardScreen
 from netscope.ui.tui.screens.network import NetworkScreen
+from netscope.ui.tui.screens.route import RouteScreen
 
 RoundFn = Callable[[Container, NetScopeConfig, str | None], tuple]
 
@@ -79,6 +80,7 @@ class NetScopeTUI(App):
     BINDINGS = [
         Binding("d", "show('dashboard')", "Dashboard", priority=True),
         Binding("n", "show('network')", "Network", priority=True),
+        Binding("p", "show('route')", "Route", priority=True),
         Binding("q", "quit", "Quit", priority=True),
     ]
 
@@ -154,10 +156,11 @@ class NetScopeTUI(App):
         self._gateway = resolve_gateway(None, self.config)
 
         self._register_screen("network", NetworkScreen())
+        self._register_screen("route", RouteScreen())
 
         self.log_line(
             f"[dim]every {self._interval:g}s · gateway: {self._gateway or 'not detected'}"
-            f" · keys: d dashboard · n network · r round now · q quit[/dim]"
+            f" · keys: d dashboard · n network · p route · r round now · q quit[/dim]"
         )
 
         self.set_interval(self._interval, self.request_round)
