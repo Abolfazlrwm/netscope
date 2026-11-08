@@ -6,6 +6,45 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-08
+
+The "show your work" release: the measurement log becomes a portable,
+self-contained evidence document, and the project gains the user-facing
+documentation the roadmap always promised next to the architecture notes.
+
+### Added
+
+- **`netscope report`** (TASK-039, evidence-report export): rebuilds the
+  persisted measurement log into an honest markdown document -- the
+  window's rounds with recomputed scores, per-target evidence tables,
+  every failure with its error taxonomy, and the notes that keep the
+  numbers honest. `--days N` sets the window, `--target T` scopes the
+  export, `--out FILE` writes a UTF-8 file, `--json` emits the canonical
+  machine-readable payload.
+- **Disclosure over truncation**: per-target tables show the newest 40
+  rows and state exactly how many older rows were omitted; the rounds
+  and failures sections do the same. Aggregates always cover the full
+  window -- an evidence document that hides evidence is not evidence.
+- **`MeasurementRepository.targets()`**: every distinct target in the
+  log, so the report walks the window as one range query per target
+  instead of one unbounded scan.
+- **User-facing usage docs** (`docs/usage/`, TASK-051): installation,
+  quickstart, the command reference, configuration, and the `--json`
+  payload reference -- linked from the README next to the architecture
+  deep-dives.
+
+### Notes
+
+- Round scores in the report (and `history`) are recomputed against the
+  *current* personal baseline -- the log alone cannot reconstruct the
+  baseline as it stood at each round's time, and the document says so
+  rather than pretending otherwise.
+- Latency means only ever average *successful* latency readings; a
+  bandwidth row's v0.4 verdict lives in the verdict column, never as
+  latency evidence.
+
+**Quality gates:** 586 tests passing · ruff clean · mypy clean.
+
 ## [0.4.0] — 2026-11-05
 
 The "know your normal" release: speed tests now learn your personal
