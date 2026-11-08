@@ -4,7 +4,7 @@ version = "0.5.0"
 description = "Internet Experience Intelligence & Network Diagnostics Platform — from raw measurements to 'what's wrong, and where', with evidence."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "NetScope Contributors" }]
 keywords = ["network", "diagnostics", "traceroute", "ping", "isp", "monitoring", "tui"]
 classifiers = [
@@ -52,7 +52,7 @@ Changelog = "https://github.com/Abolfazlrwm/netscope/blob/main/CHANGELOG.md"
 netscope = "netscope.ui.cli:main"
 
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
