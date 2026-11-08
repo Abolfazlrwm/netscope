@@ -92,8 +92,24 @@ has a few runs behind it, each new test is judged against your usual:
 ±15% counts as *as usual*, beyond that you get *slower/faster than
 usual* — in the panel and in `--json` (`baseline_mean_mbps`,
 `baseline_samples`, `deviation_pct`, `verdict`). The first runs only
-learn; NetScope stays silent until it has something honest to say. The endpoint and window are configurable via
-the `bandwidth_url` / `bandwidth_seconds` config keys.
+learn; NetScope stays silent until it has something honest to say. The
+endpoint and window are configurable via the `bandwidth_url` /
+`bandwidth_seconds` config keys.
+
+### Evidence reports
+
+```bash
+netscope report                                   # last 7 days, every target
+netscope report --days 30 --target api.example.com  # one target, one month
+netscope report --days 7 --out week.md            # a file to attach to the ticket
+```
+
+Rebuilds the persisted measurement log into one self-contained
+markdown document: the window's rounds with recomputed scores,
+per-target evidence tables, every failure with its error taxonomy, and
+the notes that keep the numbers honest. Disclosure over truncation:
+tables show the newest 40 rows per target and state exactly how many
+older rows were omitted — the aggregates always cover the full window.
 
 ## Commands
 
@@ -105,6 +121,7 @@ the `bandwidth_url` / `bandwidth_seconds` config keys.
 | `netscope history [--limit N]` | Recent measurement rounds from the local log |
 | `netscope monitor [--interval S] [--rounds N]` | Continuous rounds with sustained-problem incident detection |
 | `netscope speed [--url URL] [--seconds S]` | Download throughput: median Mbps, peak sample, bytes moved (v0.3) |
+| `netscope report [--days N] [--target T] [--out FILE]` | Export the log as a self-contained evidence report (v0.5) |
 | `netscope tui` | The live dashboard (requires `[tui]` extra) |
 
 Every read command accepts `--json` for machine-readable output:
@@ -178,7 +195,7 @@ src/netscope/
 └── ui/            # rich CLI + Textual TUI
 ```
 
-Deep-dive documents live in [`docs/architecture/`](docs/architecture): architecture overview, module boundaries, data flow, and 10+ ADRs — including the evidence/hypothesis diagnosis design and the untested-evidence principle.
+Deep-dive documents live in [`docs/architecture/`](docs/architecture): architecture overview, module boundaries, data flow, and 10+ ADRs — including the evidence/hypothesis diagnosis design and the untested-evidence principle. User-facing docs (install, commands, configuration, JSON output) live in [`docs/usage/`](docs/usage/index.md).
 
 ## Privacy
 
@@ -188,7 +205,7 @@ Deep-dive documents live in [`docs/architecture/`](docs/architecture): architect
 
 ```bash
 make install    # editable install + dev tools
-make test       # 525+ tests, fully offline (fake probes, no network needed)
+make test       # 586 tests, fully offline (fake probes, no network needed)
 make lint       # ruff check + format check
 make typecheck  # mypy on the package
 ```
@@ -197,7 +214,7 @@ The test suite is **fully offline** — every probe is a scripted fake, includin
 
 ## Roadmap
 
-See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently (v0.2): baseline persistence, gateway auto-detection, `--json` everywhere, `check`/`history`/`monitor` commands, ASN enrichment, TUI dashboard, CI + tooling. Next: per-service configs persisted, route history + churn over time, GeoIP distance estimation, packet-loss-triggered extra rounds.
+See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.4) baseline-relative throughput verdicts — speed tests judged against your personal baseline; (v0.5) evidence-report export (`netscope report`) and user-facing usage docs. Next: per-service configs persisted, route history + churn over time, GeoIP distance estimation, packet-loss-triggered extra rounds.
 
 ## License
 
