@@ -1,62 +1,62 @@
 """
 netscope.ui.tui.app
 
-NetScope's live terminal dashboard (Textual) — `netscope tui`.
+NetScope's terminal dashboard shell (Textual) — `netscope tui`.
 
-WHAT IT SHOWS
--------------
-- The current experience score (0-100), a sparkline of recent scores,
-  every probe result of the latest round, the evidence-based
-  diagnosis, incident transitions, and the local network interfaces.
-- `r` forces an immediate round, `q` quits; rounds run automatically
-  every `interval` seconds.
+WHAT THE SHELL OWNS
+-------------------
+Since v0.6 the TUI is six screens under one shell (future-roadmap.md
+Phase I, TASK-041 -- TASK-046). The shell owns exactly the things every
+screen shares, and nothing else:
 
-HOW IT RUNS
------------
-Rounds execute on background workers (via `run_measurement_round`, the
-same use case the CLI uses -- never a second pipeline) and post their
-*results* back to the UI thread as a message. Everything degrades
-honestly: failed probes render as failed; a failed round logs the
-error; the network panel is best-effort decoration.
+- dependency wiring: the `Container`, `NetScopeConfig`, and the
+  resolved gateway -- built once, read by every screen;
+- round execution: rounds run on background workers via
+  `run_measurement_round`, the same use case the CLI uses -- never a
+  second pipeline. Results come back as a `RoundDone` message; the
+  shell keeps the latest round and delivers it to whichever screen is
+  active, and again the moment a screen becomes active, so no screen
+  ever shows stale data;
+- incident state: one `MonitorSession` across the whole session -- an
+  incident only OPENS after a 3-round sustained diagnosis and CLOSES
+  after sustained health, and that state survives screen switches;
+- screen routing: every screen is installed once and kept alive;
+  switching screens never discards a screen's state.
+
+Screens render and decide nothing about what the numbers mean (the
+same three rules ui/cli.py documents); they degrade honestly: failed
+probes render as failed, a failed round is logged, network discovery
+is best-effort decoration.
 
 TESTABILITY
 -----------
 `NetScopeTUI` accepts an injected `container`, `config`, and
 `round_fn`, so tests drive it fully offline with fake probes and zero
 wall-clock timing (set `interval` large and call `request_round()`
-directly).
+directly). Screens are reached with pilot key presses -- the same
+offline pattern tests/test_tui.py has used since v0.2.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
 
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import DataTable, Footer, Header, Label, RichLog, Sparkline, Static
+from textual.screen import Screen
 
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container, build_container
 from netscope.app.gateway import resolve_gateway
-from netscope.app.monitoring import MonitorSession, TransitionType
-from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS
+from netscope.app.monitoring import IncidentTransition, MonitorSession
 from netscope.app.use_cases import run_measurement_round
-from netscope.core.models import Diagnosis, ExperienceEvent, ExperienceLevel, RawMeasurement
+from netscope.core.models import Diagnosis, ExperienceEvent, RawMeasurement
+from netscope.ui.tui.screens.dashboard import DashboardScreen
 
 RoundFn = Callable[[Container, NetScopeConfig, str | None], tuple]
-
-_LEVEL_COLORS: dict[ExperienceLevel, str] = {
-    ExperienceLevel.EXCELLENT: "green",
-    ExperienceLevel.GOOD: "green",
-    ExperienceLevel.DEGRADED: "yellow",
-    ExperienceLevel.POOR: "red",
-    ExperienceLevel.DOWN: "red",
-}
 
 
 @dataclass
@@ -70,52 +70,15 @@ class RoundDone(Message):
 
 
 class NetScopeTUI(App):
-    """The live NetScope dashboard."""
+    """The NetScope shell: six screens, one shared round pipeline."""
 
     TITLE = "NetScope"
     SUB_TITLE = "internet experience intelligence"
 
     BINDINGS = [
+        Binding("d", "show('dashboard')", "Dashboard", priority=True),
         Binding("q", "quit", "Quit", priority=True),
-        Binding("r", "round", "Run round now"),
     ]
-
-    CSS = """
-    #score_card {
-        width: 36;
-        height: 7;
-        border: round $success;
-        padding: 0 1;
-    }
-    #trend_card {
-        width: 1fr;
-        height: 7;
-        border: round $panel;
-        padding: 0 1;
-    }
-    #trend_label {
-        color: $text-muted;
-    }
-    #checks_table {
-        height: 1fr;
-        border: round $panel;
-    }
-    #diagnosis_card {
-        width: 1fr;
-        height: 10;
-        border: round $panel;
-    }
-    #network_card {
-        width: 46;
-        height: 10;
-        border: round $panel;
-        padding: 0 1;
-    }
-    #log {
-        height: 8;
-        border: round $panel;
-    }
-    """
 
     def __init__(
         self,
@@ -134,6 +97,11 @@ class NetScopeTUI(App):
         self._score_history: list[float] = []
         self._round_count = 0
         self._session = MonitorSession()
+        self._dashboard: DashboardScreen | None = None
+        self._latest: tuple[list[RawMeasurement], ExperienceEvent, Diagnosis | None] | None = None
+        self._last_transition: IncidentTransition | None = None
+        self._screens: dict[str, Screen] = {}
+        self._active = "dashboard"
 
     # ------------------------------------------------------------------
     # Wiring properties
@@ -149,35 +117,74 @@ class NetScopeTUI(App):
             self._container = build_container()
         return self._container
 
+    @property
+    def gateway(self) -> str | None:
+        return self._gateway
+
+    @property
+    def interval(self) -> float:
+        return self._interval
+
+    @property
+    def round_count(self) -> int:
+        return self._round_count
+
+    @property
+    def score_history(self) -> list[float]:
+        return self._score_history
+
     # ------------------------------------------------------------------
-    # Composition
+    # Screen routing
     # ------------------------------------------------------------------
 
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        with Horizontal():
-            yield Static("waiting for first round…", id="score_card", markup=True)
-            with Vertical(id="trend_card"):
-                yield Label("score trend — recent rounds", id="trend_label")
-                yield Sparkline([], id="trend_spark", summary_function=max)
-        yield DataTable(id="checks_table")
-        with Horizontal():
-            yield RichLog(id="diagnosis_card", markup=True, wrap=True, highlight=False)
-            yield Static("", id="network_card", markup=True)
-        yield RichLog(id="log", markup=True, wrap=True, highlight=False)
-        yield Footer()
+    def get_default_screen(self) -> Screen:
+        """The dashboard IS the shell's root screen -- the one the app
+        boots on, the one every switch returns to, and the DOM base
+        app-level queries search. Returning it here replaces Textual's
+        blank `_default` screen rather than pushing another screen on
+        top of it."""
+        if self._dashboard is None:
+            self._dashboard = DashboardScreen()
+            self._screens["dashboard"] = self._dashboard
+        return self._dashboard
 
     def on_mount(self) -> None:
-        checks = self.query_one("#checks_table", DataTable)
-        checks.add_columns("Check", "Target", "Status", "Latency", "Loss", "Detail")
-
-        self.query_one("#network_card", Static).update(self._network_text())
-
         self._gateway = resolve_gateway(None, self.config)
-        self._log_line(f"[dim]every {self._interval:g}s · gateway: {self._gateway or 'not detected'} · r: run now · q: quit[/dim]")
+
+        self.log_line(
+            f"[dim]every {self._interval:g}s · gateway: {self._gateway or 'not detected'}"
+            f" · keys: d dashboard · r round now · q quit[/dim]"
+        )
 
         self.set_interval(self._interval, self.request_round)
         self.request_round()
+
+    def _register_screen(self, name: str, screen: Screen) -> None:
+        """Install one more screen (each v0.6 screen registers itself
+        here exactly once, on shell mount)."""
+        self._screens[name] = screen
+        self.install_screen(screen, name=name)
+
+    def action_show(self, screen_name: str) -> None:
+        """Switch screens without discarding state, and re-deliver the
+        latest round to the incoming screen if it consumes rounds -- a
+        screen is never left showing data older than the shell's."""
+        if screen_name == self._active:
+            return
+        target = self._screens[screen_name]
+        if self.screen is not target:
+            if screen_name == "dashboard":
+                while self.screen is not target:
+                    self.pop_screen()
+            elif len(self.screen_stack) > 1:
+                self.switch_screen(screen_name)
+            else:
+                self.push_screen(screen_name)
+        self._active = screen_name
+
+        deliver = getattr(self.screen, "on_new_round", None)
+        if self._latest is not None and self._last_transition is not None and callable(deliver):
+            deliver(*self._latest, self._last_transition)
 
     # ------------------------------------------------------------------
     # Round execution (background worker -> RoundDone message)
@@ -195,7 +202,7 @@ class NetScopeTUI(App):
         try:
             measurements, experience, diagnosis = round_fn(container, config, self._gateway)
         except Exception as exc:  # noqa: BLE001 -- a failed round is reported, never fatal
-            self.call_from_thread(self._log_line, f"[red]round failed: {exc}[/red]")
+            self.call_from_thread(self.log_line, f"[red]round failed: {exc}[/red]")
             return
         self.post_message(RoundDone(measurements=measurements, experience=experience, diagnosis=diagnosis))
 
@@ -204,104 +211,19 @@ class NetScopeTUI(App):
         self._round_count += 1
         self._score_history.append(message.experience.score)
         self._score_history = self._score_history[-60:]
+        self._latest = (message.measurements, message.experience, message.diagnosis)
+        self._last_transition = self._session.process(message.diagnosis, message.experience.timestamp)
 
-        self._update_score_card(message.experience)
-        self._update_checks_table(message.measurements)
-        self._update_diagnosis(message.diagnosis)
-        self._update_trend()
-
-        transition = self._session.process(message.diagnosis, message.experience.timestamp)
-        if transition.kind is TransitionType.OPENED and transition.incident is not None:
-            label = HYPOTHESIS_SUMMARY_LABELS[transition.incident.diagnosis.classification] if transition.incident.diagnosis else "problem sustained"
-            self._log_line(f"[bold red]⚠ incident OPENED — {label}[/bold red]")
-        elif transition.kind is TransitionType.CLOSED and transition.incident is not None:
-            self._log_line("[green]✓ incident CLOSED — sustained healthy again[/green]")
+        deliver = getattr(self.screen, "on_new_round", None)
+        if callable(deliver) and self._last_transition is not None:
+            deliver(*self._latest, self._last_transition)
 
     # ------------------------------------------------------------------
-    # Actions
+    # Shared log plumbing (the incident/event log lives on the dashboard)
     # ------------------------------------------------------------------
 
-    def action_round(self) -> None:
-        self._log_line("[dim]running round now…[/dim]")
-        self.request_round()
-
-    # ------------------------------------------------------------------
-    # Rendering helpers (UI thread only)
-    # ------------------------------------------------------------------
-
-    def _update_score_card(self, experience: ExperienceEvent) -> None:
-        color = _LEVEL_COLORS[experience.level]
-        self.query_one("#score_card", Static).update(
-            f"[bold {color}]  {experience.score:.0f}[/] [dim]/100[/]\n"
-            f"  [bold {color}]{experience.level.value.upper()}[/]\n"
-            f"  [dim]round #{self._round_count} · {experience.timestamp.strftime('%H:%M:%S')}[/]"
-        )
-
-    def _update_trend(self) -> None:
-        spark = self.query_one("#trend_spark", Sparkline)
-        spark.data = self._score_history if len(self._score_history) >= 2 else []
-
-    def _update_checks_table(self, measurements: list[RawMeasurement]) -> None:
-        table = self.query_one("#checks_table", DataTable)
-        table.clear()
-        for m in measurements:
-            if m.success:
-                status = "[green]✓ ok[/]"
-                if "status_code" in m.extra:
-                    detail = f"HTTP {m.extra['status_code']}"
-                elif "answers" in m.extra and isinstance(m.extra["answers"], list) and m.extra["answers"]:
-                    detail = f"answers: {', '.join(str(a) for a in m.extra['answers'][:2])}"
-                else:
-                    detail = ""
-            else:
-                error_type = m.error_type.value if m.error_type is not None else "failed"
-                status = f"[red]✗ {error_type}[/]"
-                detail = " ".join((m.error or "").split())[:48]
-            table.add_row(
-                m.probe_type.value,
-                m.target,
-                status,
-                f"{m.latency_ms:.1f} ms" if m.latency_ms is not None else "—",
-                f"{m.packet_loss_pct:.0f}%" if m.packet_loss_pct is not None else "—",
-                detail,
-            )
-
-    def _update_diagnosis(self, diagnosis: Diagnosis | None) -> None:
-        log = self.query_one("#diagnosis_card", RichLog)
-        log.clear()
-        if diagnosis is None:
-            log.write("[bold green]No issues detected.[/]")
-            log.write("[dim]all checked paths healthy[/]")
-            return
-        label = HYPOTHESIS_SUMMARY_LABELS[diagnosis.classification]
-        if diagnosis.classification.value == "insufficient_evidence":
-            log.write(f"[yellow]{label}[/]")
-        else:
-            log.write(f"[bold red]{label}[/]  [dim](confidence: {diagnosis.confidence * 100:.0f}%)[/]")
-        problems = [e for e in diagnosis.evidence if e.tested and e.severity.value != "info"]
-        for e in problems[:6]:
-            line = f"  • {e.metric}"
-            if e.observed_value is not None:
-                line += f": observed {e.observed_value:.1f}"
-            if e.expected_value is not None:
-                line += f" (expected ~{e.expected_value:.1f})"
-            color = "red" if e.severity.value == "critical" else "yellow"
-            log.write(f"[{color}]{line}[/]")
-
-    def _network_text(self) -> str:
-        try:
-            snapshot = self.container.discovery_provider.discover()
-        except Exception:  # noqa: BLE001 -- discovery is best-effort decoration
-            return "[bold]Network interfaces[/]\n[dim]unavailable[/]"
-        lines = ["[bold]Network interfaces[/]"]
-        for iface in snapshot.interfaces:
-            if iface.is_loopback:
-                continue
-            addrs = ", ".join(iface.addresses[:2]) or "—"
-            lines.append(f"  {'●' if iface.is_up else '○'} {iface.name} [dim]({iface.network_type.value})[/] {addrs}")
-        body = "\n".join(lines[:8])
-        return body if len(lines) > 1 else "[bold]Network interfaces[/]\n[dim]no non-loopback interfaces[/]"
-
-    def _log_line(self, text: str) -> None:
-        stamp = datetime.now().strftime("%H:%M:%S")
-        self.query_one("#log", RichLog).write(f"[dim]{stamp}[/] {text}")
+    def log_line(self, text: str) -> None:
+        """Write one timestamped line to the session log -- the shell's
+        way to report worker failures regardless of the active screen."""
+        if self._dashboard is not None:
+            self._dashboard._log_line(text)
