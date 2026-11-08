@@ -57,11 +57,20 @@ from netscope.app.gateway import AUTO_SENTINEL, resolve_gateway
 from netscope.app.monitoring import MonitorSession, TransitionType
 from netscope.app.reports import (
     build_diagnose_report,
+    evidence_report_markdown,
+    serialize_evidence_report,
     serialize_experience,
     serialize_measurement,
     serialize_route_hops,
 )
-from netscope.app.use_cases import check_target, recent_rounds, run_measurement_round, run_route_analysis, run_speed_test
+from netscope.app.use_cases import (
+    build_evidence_report,
+    check_target,
+    recent_rounds,
+    run_measurement_round,
+    run_route_analysis,
+    run_speed_test,
+)
 from netscope.core.models import ProbeType
 from netscope.explanation.explainer import explain
 from netscope.ui.render import (
@@ -170,6 +179,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="measurement window in seconds (default: the bandwidth_seconds config key)",
     )
     speed.add_argument("--json", action="store_true", help="output machine-readable JSON instead of styled text")
+
+    report = subparsers.add_parser(
+        "report",
+        help="export a self-contained evidence report from the local measurement log (markdown, or --json)",
+        parents=[global_options],
+    )
+    report.add_argument("--days", type=int, default=7, help="window length in days, ending now (default: 7)")
+    report.add_argument("--target", default=None, help="restrict the report to one target (default: every target in the window)")
+    report.add_argument("--out", default=None, help="write the markdown report to a file (UTF-8) instead of stdout")
+    report.add_argument("--json", action="store_true", help="output machine-readable JSON instead of markdown")
 
     subparsers.add_parser(
         "tui",
@@ -404,6 +423,50 @@ def run_history_command(container: Container, *, limit: int = 20, json_output: b
 
 
 # ---------------------------------------------------------------------------
+# report
+# ---------------------------------------------------------------------------
+
+
+def run_report_command(
+    container: Container,
+    *,
+    days: int = 7,
+    target: str | None = None,
+    out: str | None = None,
+    json_output: bool = False,
+) -> int:
+    """Runs the `report` command: rebuilds the persisted measurement
+    log into one self-contained evidence document (`build_evidence_report`)
+    and emits it as markdown (stdout, or a UTF-8 file via `--out`) or
+    machine-readable JSON (`--json`).
+
+    The markdown goes to stdout through plain `print` on purpose: it is
+    an export artifact someone pipes, redirects or attaches -- it must
+    reach the terminal byte-for-byte, not re-wrapped by the styled
+    console."""
+    try:
+        report = build_evidence_report(container, days=days, target=target)
+    except ValueError as exc:
+        console().print(f"[red]{exc}[/red]")
+        return 2
+
+    if json_output:
+        console().print_json(json.dumps(serialize_evidence_report(report)))
+        return 0
+
+    markdown = evidence_report_markdown(report)
+    if out is not None:
+        # Explicit UTF-8: the report carries arrows, middle dots and
+        # ellipses, and Windows consoles default to legacy code pages.
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write(markdown)
+        console().print(f"Evidence report ({report.measurements} measurement(s), {report.failures} failed) written to [bold]{out}[/bold]")
+    else:
+        print(markdown)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # monitor
 # ---------------------------------------------------------------------------
 
@@ -587,6 +650,8 @@ def main() -> None:
         )
     elif command == "history":
         exit_code = run_history_command(container, limit=args.limit, json_output=args.json)
+    elif command == "report":
+        exit_code = run_report_command(container, days=args.days, target=args.target, out=args.out, json_output=args.json)
     elif command == "monitor":
         exit_code = run_monitor_command(
             container,
