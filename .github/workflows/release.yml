@@ -33,6 +33,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # The release page is authored by hand, usually within seconds of
+          # the tag push -- so "release not found" and "release already
+          # exists" are both normal outcomes here, never hard failures:
+          # view -> (missing) create -> (lost race) view again.
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes \
+            || gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          # Upload with retries for the same race window; --clobber makes
+          # a re-run of this job idempotent.
+          for attempt in 1 2 3 4 5; do
+            gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber && break
+            echo "upload attempt $attempt failed; retrying in 5s"
+            sleep 5
+          done
