@@ -51,6 +51,8 @@ import json
 import time
 from collections.abc import Callable
 
+from rich.table import Table
+
 from netscope.app.config import NetScopeConfig, load_config
 from netscope.app.container import Container, build_container, configure_logging
 from netscope.app.gateway import AUTO_SENTINEL, resolve_gateway
@@ -65,13 +67,17 @@ from netscope.app.reports import (
 )
 from netscope.app.use_cases import (
     build_evidence_report,
+    check_service,
     check_target,
+    list_services,
     recent_rounds,
+    remove_service,
     run_measurement_round,
     run_route_analysis,
     run_speed_test,
+    save_service,
 )
-from netscope.core.models import ProbeType
+from netscope.core.models import Diagnosis, ExperienceEvent, ProbeType, RawMeasurement
 from netscope.explanation.explainer import explain
 from netscope.ui.render import (
     console,
@@ -190,6 +196,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
     report.add_argument("--out", default=None, help="write the markdown report to a file (UTF-8) instead of stdout")
     report.add_argument("--json", action="store_true", help="output machine-readable JSON instead of markdown")
 
+    service = subparsers.add_parser(
+        "service",
+        help="manage the saved service list (persisted locally; shared by the CLI and the TUI services board)",
+        parents=[global_options],
+    )
+    service_sub = service.add_subparsers(dest="service_command", required=True)
+
+    svc_add = service_sub.add_parser("add", help="save (or update) a service in the curated list")
+    svc_add.add_argument("name", help="label for the service, e.g. 'My VPN' -- the saved list's identity")
+    svc_add.add_argument("host", help="hostname or IP the service's checks target")
+    svc_add.add_argument(
+        "--checks",
+        default=",".join(_CHECK_CHOICES),
+        help="comma-separated subset of checks to enable (default: all five)",
+    )
+
+    svc_list = service_sub.add_parser("list", help="list the saved services")
+    svc_list.add_argument("--json", action="store_true", help="output machine-readable JSON instead of styled text")
+
+    svc_remove = service_sub.add_parser("remove", help="remove a service from the saved list")
+    svc_remove.add_argument("name", help="exact saved name to remove")
+
+    svc_check = service_sub.add_parser("check", help="run a saved service's checks now and report the result")
+    svc_check.add_argument("name", help="exact saved name to check")
+    svc_check.add_argument("--json", action="store_true", help="output machine-readable JSON instead of styled text")
+
     subparsers.add_parser(
         "tui",
         help="launch the live terminal dashboard (requires: pip install netscope[tui])",
@@ -295,13 +327,154 @@ def run_check_command(
         console().print_json(json.dumps(report))
         return 0
 
+    _print_check_result(measurements, experience, diagnosis, title=f"Checks against {target}")
+    return 0
+
+
+def _print_check_result(measurements: list[RawMeasurement], experience: ExperienceEvent, diagnosis: Diagnosis | None, *, title: str) -> None:
+    """The one presentation path for `check`-shaped results -- the
+    `netscope check` command and `netscope service check` render through
+    here, so the two never drift (same score line, same measurements
+    table, same diagnosis panel)."""
     c = console()
     c.print()
     c.print(f"Experience score: {experience.score:.0f}/100 ({experience.level.value})")
-    c.print(measurements_table(measurements, title=f"Checks against {target}"))
+    c.print(measurements_table(measurements, title=title))
     c.print()
     c.print(diagnosis_panel(diagnosis))
     c.print()
+
+
+def _ordered_service_checks(enabled: set[ProbeType]) -> list[ProbeType]:
+    """The CLI's fixed display order for service checks (the same order
+    `--checks` documents), never storage order -- storage sorts
+    alphabetically for byte-stable rows (service_repository.py), display
+    keeps the documented icmp,dns,tcp,tls,http order."""
+    return [check for check in (ProbeType(choice) for choice in _CHECK_CHOICES) if check in enabled]
+
+
+# ---------------------------------------------------------------------------
+# service (v0.7) -- TASK-032's storage half reaches the CLI
+# ---------------------------------------------------------------------------
+
+
+def run_service_add_command(container: Container, name: str, host: str, checks: set[ProbeType]) -> int:
+    """Runs `service add`: validate + upsert via `save_service`, then
+    one honest line -- "saved" for a new entry, "updated" for an
+    upserted one, with the effective check set spelled out so a typo in
+    `--checks` never saves silently."""
+    try:
+        service, created = save_service(name, host, checks, container)
+    except (ValueError, RuntimeError) as exc:
+        console().print(f"[red]{exc}[/red]")
+        return 1
+
+    checks_text = ", ".join(check.value for check in _ordered_service_checks(service.enabled_checks)) or "none yet"
+    if created:
+        console().print(f"Saved service [bold]{service.name}[/] — {service.host} (checks: {checks_text})")
+        console().print(f"[dim]run it anytime:[/] netscope service check {service.name}")
+    else:
+        console().print(f"Updated service [bold]{service.name}[/] — host {service.host} (checks: {checks_text})")
+    return 0
+
+
+def run_service_list_command(container: Container, *, json_output: bool = False) -> int:
+    """Runs `service list`: the curated list exactly as persisted,
+    alphabetical by name -- never merged with log-derived targets here
+    (the TUI board does that join, visibly; the CLI shows the truth of
+    the saved list alone)."""
+    services = list_services(container)
+
+    if json_output:
+        payload = {
+            "tool": "netscope",
+            "report": "services",
+            "services": [
+                {
+                    "name": svc.name,
+                    "host": svc.host,
+                    "checks": [check.value for check in _ordered_service_checks(svc.enabled_checks)],
+                }
+                for svc in services
+            ],
+        }
+        console().print_json(json.dumps(payload))
+        return 0
+
+    c = console()
+    if not services:
+        c.print("No saved services yet.")
+        c.print("[dim]save one:[/] netscope service add NAME HOST [--checks icmp,dns,tcp,tls,http]")
+        c.print("[dim]the netscope tui services board also shows every target the log already holds[/]")
+        return 0
+
+    table = Table(title="Saved services")
+    table.add_column("Name", style="bold")
+    table.add_column("Host")
+    table.add_column("Checks")
+    for svc in services:
+        checks_text = ", ".join(check.value for check in _ordered_service_checks(svc.enabled_checks)) or "[dim]none yet[/]"
+        table.add_row(svc.name, svc.host, checks_text)
+    c.print()
+    c.print(table)
+    c.print(f"\n[dim]{len(services)} service{'s' if len(services) != 1 else ''} · run one:[/] netscope service check NAME")
+    return 0
+
+
+def run_service_remove_command(container: Container, name: str) -> int:
+    """Runs `service remove`: one honest line -- "removed" when the row
+    existed, "no such service" (plus what IS saved) when it didn't, so
+    a typo'd name is never a silent success."""
+    try:
+        removed = remove_service(name, container)
+    except RuntimeError as exc:
+        console().print(f"[red]{exc}[/red]")
+        return 1
+
+    if removed:
+        console().print(f"Removed service [bold]{name}[/]")
+        return 0
+
+    saved = [svc.name for svc in list_services(container)]
+    c = console()
+    if saved:
+        c.print(f"[red]no saved service named '{name}'[/] [dim](saved: {', '.join(saved)})[/]")
+    else:
+        c.print(f"[red]no saved service named '{name}'[/] [dim](the saved list is empty)[/]")
+    return 1
+
+
+def run_service_check_command(container: Container, name: str, *, json_output: bool = False) -> int:
+    """Runs `service check`: the saved Service's own curated checks
+    (name, host and check set come from the persisted entry, never
+    re-typed), through the same `check_service` pipeline and the same
+    presentation as `netscope check` -- one pipeline, two entry points.
+    Results persist exactly like `netscope check` does."""
+    saved = {svc.name: svc for svc in list_services(container)}
+    service = saved.get(name)
+    if service is None:
+        c = console()
+        if saved:
+            c.print(f"[red]no saved service named '{name}'[/] [dim](saved: {', '.join(sorted(saved))})[/]")
+        else:
+            c.print(f"[red]no saved service named '{name}'[/] [dim](the saved list is empty -- add one with netscope service add)[/]")
+        return 1
+
+    measurements, experience, diagnosis = check_service(service, container)
+
+    if container.measurement_repository is not None:
+        for measurement in measurements:
+            container.measurement_repository.save(measurement)
+
+    if json_output:
+        report = build_diagnose_report(measurements, experience, diagnosis, gateway=None)
+        report["report"] = "service-check"
+        report["service"] = service.name
+        report["target"] = service.host
+        console().print_json(json.dumps(report))
+        return 0
+
+    _print_check_result(measurements, experience, diagnosis, title=f"{service.name} — checks against {service.host}")
     return 0
 
 
@@ -668,6 +841,24 @@ def main() -> None:
             seconds=getattr(args, "seconds", None),
             json_output=getattr(args, "json", False),
         )
+    elif command == "service":
+        sub = args.service_command
+        if sub == "add":
+            try:
+                checks = parse_checks(args.checks)
+            except ValueError as exc:
+                parser.error(str(exc))
+                return  # pragma: no cover -- parser.error() already exits
+            exit_code = run_service_add_command(container, args.name, args.host, checks)
+        elif sub == "list":
+            exit_code = run_service_list_command(container, json_output=args.json)
+        elif sub == "remove":
+            exit_code = run_service_remove_command(container, args.name)
+        elif sub == "check":
+            exit_code = run_service_check_command(container, args.name, json_output=args.json)
+        else:  # pragma: no cover -- argparse rejects unknown subcommands itself
+            parser.error(f"unrecognized service command: {sub}")
+            return
     else:  # pragma: no cover -- argparse rejects unknown commands itself
         parser.error(f"unrecognized command: {command}")
         return

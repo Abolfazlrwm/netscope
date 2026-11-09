@@ -33,7 +33,17 @@ from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, RouteHop, RouteSnapshot
 from netscope.persistence.measurement_repository import MeasurementRepository
-from netscope.ui.cli import build_arg_parser, run_diagnose_command, run_route_command, run_speed_command
+from netscope.ui.cli import (
+    build_arg_parser,
+    run_check_command,
+    run_diagnose_command,
+    run_route_command,
+    run_service_add_command,
+    run_service_check_command,
+    run_service_list_command,
+    run_service_remove_command,
+    run_speed_command,
+)
 
 
 @dataclass
@@ -706,3 +716,179 @@ def test_speed_command_text_output_mentions_the_number(capsys):
 
     assert exit_code == 0
     assert "88.4" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# service (v0.7) -- argument parsing + command wiring
+# ---------------------------------------------------------------------------
+
+
+def test_parser_service_add_takes_name_host_and_checks():
+    args = build_arg_parser().parse_args(["service", "add", "My VPN", "vpn.example.net", "--checks", "icmp,http"])
+    assert args.command == "service"
+    assert args.service_command == "add"
+    assert args.name == "My VPN"
+    assert args.host == "vpn.example.net"
+    assert args.checks == "icmp,http"
+
+
+def test_parser_service_add_defaults_checks_to_all_five():
+    args = build_arg_parser().parse_args(["service", "add", "My VPN", "vpn.example.net"])
+    assert args.checks == "icmp,dns,tcp,tls,http"
+
+
+def test_parser_service_list_remove_check_shapes():
+    listed = build_arg_parser().parse_args(["service", "list", "--json"])
+    assert (listed.service_command, listed.json) == ("list", True)
+    removed = build_arg_parser().parse_args(["service", "remove", "My VPN"])
+    assert (removed.service_command, removed.name) == ("remove", "My VPN")
+    checked = build_arg_parser().parse_args(["service", "check", "My VPN"])
+    assert (checked.service_command, checked.name, checked.json) == ("check", "My VPN", False)
+
+
+def test_parser_service_requires_a_subcommand():
+    with pytest.raises(SystemExit):
+        build_arg_parser().parse_args(["service"])
+
+
+def _service_container(tmp_path):
+    """A container wired to a real (temp-file) ServiceRepository and
+    fake probes -- the service commands persist for real, exactly as
+    run_check_command's tests persist measurements for real."""
+    from netscope.persistence.measurement_repository import MeasurementRepository
+    from netscope.persistence.service_repository import ServiceRepository
+
+    container, probes = _fake_container(measurement_repository=MeasurementRepository.open(":memory:"))
+    container.service_repository = ServiceRepository.open(tmp_path / "services.db")
+    return container, probes
+
+
+def test_service_add_saves_and_reports_created(tmp_path, capsys):
+    container, _probes = _service_container(tmp_path)
+    code = run_service_add_command(container, "My VPN", "vpn.example.net", {ProbeType.ICMP, ProbeType.HTTP})
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Saved service" in out and "My VPN" in out and "vpn.example.net" in out
+    assert "icmp, http" in out  # CLI display order, not alphabetical storage order
+
+
+def test_service_add_twice_reports_updated(tmp_path, capsys):
+    container, _probes = _service_container(tmp_path)
+    run_service_add_command(container, "My VPN", "old.example.net", {ProbeType.ICMP})
+    code = run_service_add_command(container, "My VPN", "new.example.net", {ProbeType.TLS})
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Updated service" in out and "new.example.net" in out
+    assert container.service_repository.load_all()[0].host == "new.example.net"
+
+
+def test_service_add_rejects_an_empty_host(tmp_path, capsys):
+    container, _probes = _service_container(tmp_path)
+    code = run_service_add_command(container, "My VPN", "  ", {ProbeType.ICMP})
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "host" in out
+    assert container.service_repository.load_all() == []
+
+
+def test_service_list_empty_then_populated(tmp_path, capsys):
+    container, _probes = _service_container(tmp_path)
+    assert run_service_list_command(container) == 0
+    out = capsys.readouterr().out
+    assert "No saved services yet" in out
+
+    run_service_add_command(container, "alpha cdn", "a.example.net", {ProbeType.HTTP})
+    run_service_add_command(container, "My VPN", "vpn.example.net", {ProbeType.ICMP})
+    assert run_service_list_command(container) == 0
+    out = capsys.readouterr().out
+    assert "alpha cdn" in out and "My VPN" in out
+    # alphabetical, not insertion order
+    assert out.index("alpha cdn") < out.index("My VPN")
+
+
+def test_service_list_json_payload(tmp_path, capsys):
+    import json as jsonlib
+
+    container, _probes = _service_container(tmp_path)
+    run_service_add_command(container, "My VPN", "vpn.example.net", {ProbeType.HTTP, ProbeType.ICMP})
+    capsys.readouterr()  # drain the add confirmation; only the JSON should follow
+    assert run_service_list_command(container, json_output=True) == 0
+    payload = jsonlib.loads(capsys.readouterr().out)
+    assert payload["report"] == "services"
+    assert payload["services"] == [{"name": "My VPN", "host": "vpn.example.net", "checks": ["icmp", "http"]}]
+
+
+def test_service_remove_reports_removed_and_no_such_service(tmp_path, capsys):
+    container, _probes = _service_container(tmp_path)
+    assert run_service_remove_command(container, "My VPN") == 1  # nothing saved yet
+    out = capsys.readouterr().out
+    assert "no saved service named 'My VPN'" in out
+
+    run_service_add_command(container, "My VPN", "vpn.example.net", {ProbeType.ICMP})
+    assert run_service_remove_command(container, "My VPN") == 0
+    out = capsys.readouterr().out
+    assert "Removed service" in out
+
+
+def test_service_remove_typo_names_what_is_saved(tmp_path, capsys):
+    container, _probes = _service_container(tmp_path)
+    run_service_add_command(container, "My VPN", "vpn.example.net", {ProbeType.ICMP})
+    assert run_service_remove_command(container, "My VPM") == 1
+    out = capsys.readouterr().out
+    assert "no saved service named 'My VPM'" in out and "My VPN" in out
+
+
+def test_service_check_runs_the_curated_checks_and_persists(tmp_path, capsys):
+    container, probes = _service_container(tmp_path)
+    run_service_add_command(container, "My VPN", "vpn.example.net", {ProbeType.ICMP})
+
+    code = run_service_check_command(container, "My VPN")
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "My VPN — checks against vpn.example.net" in out
+    assert probes[ProbeType.ICMP].calls == ["vpn.example.net"]
+    # persisted exactly like netscope check does
+    assert container.measurement_repository.recent("vpn.example.net", limit=5)
+
+
+def test_service_check_unknown_name_lists_what_is_saved(tmp_path, capsys):
+    container, _probes = _service_container(tmp_path)
+    run_service_add_command(container, "My VPN", "vpn.example.net", {ProbeType.ICMP})
+    code = run_service_check_command(container, "typo")
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "no saved service named 'typo'" in out and "My VPN" in out
+
+
+def test_service_check_on_an_empty_list_says_so(tmp_path, capsys):
+    container, _probes = _service_container(tmp_path)
+    code = run_service_check_command(container, "My VPN")
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "the saved list is empty" in out
+
+
+def test_service_check_json_payload(tmp_path, capsys):
+    import json as jsonlib
+
+    container, _probes = _service_container(tmp_path)
+    run_service_add_command(container, "My VPN", "vpn.example.net", {ProbeType.ICMP})
+    capsys.readouterr()  # drain the add confirmation; only the JSON should follow
+    code = run_service_check_command(container, "My VPN", json_output=True)
+    payload = jsonlib.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["report"] == "service-check"
+    assert payload["service"] == "My VPN"
+    assert payload["target"] == "vpn.example.net"
+
+
+def test_netscope_check_still_renders_through_the_shared_presentation(tmp_path, capsys):
+    """The v0.7 refactor routes run_check_command through the same
+    _print_check_result helper as service check -- the legacy output
+    shape is preserved exactly (same title, same score line)."""
+    container, _probes = _fake_container()
+    code = run_check_command(container, "1.1.1.1", {ProbeType.ICMP})
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Checks against 1.1.1.1" in out
+    assert "Experience score:" in out
