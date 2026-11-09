@@ -393,3 +393,33 @@ def test_v2_database_upgrades_additively(tmp_path):
     baseline = conn.execute("SELECT count, mean FROM metric_baselines WHERE target = 'gw'").fetchone()
     assert baseline == (5, 10.0)
     conn.close()
+
+
+def test_connections_allow_cross_thread_use_for_tui_workers():
+    """The TUI's shell builds its container inside one worker thread and
+    its screens use the same repositories from others -- the connection
+    must tolerate sequential cross-thread use (see create_connection's
+    docstring), not raise ProgrammingError the moment a second worker
+    touches it."""
+    import threading
+
+    # Via create_connection -- the one canonical path (the fix lives
+    # there, not in raw sqlite3.connect calls tests happen to make).
+    conn = create_connection(":memory:")
+    error: list[Exception] = []
+
+    def _write_from_another_thread():
+        try:
+            with conn:
+                conn.execute("INSERT INTO services (name, host, checks) VALUES ('thread test', 't.example.net', 'icmp')")
+        except Exception as exc:  # noqa: BLE001 -- the assertion below reports it
+            error.append(exc)
+
+    writer = threading.Thread(target=_write_from_another_thread)
+    writer.start()
+    writer.join()
+
+    assert error == [], f"cross-thread use raised: {error}"
+    row = conn.execute("SELECT name, host FROM services").fetchone()
+    assert row == ("thread test", "t.example.net")
+    conn.close()

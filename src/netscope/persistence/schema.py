@@ -302,10 +302,26 @@ def create_connection(db_path: Path | str) -> sqlite3.Connection:
     `SqliteStore.__init__` already used for the `measurements`-only
     schema, now delegating to this module's full schema instead of its
     own separate copy.
+
+    The connection is opened with `check_same_thread=False` (v0.7): the
+    TUI's shell builds its container lazily inside one worker thread
+    and its screens then read/write the very same repositories from
+    other Textual worker threads (the services board's load worker, the
+    on-demand check worker, the save worker -- app/tui). Python's
+    sqlite3 default (`check_same_thread=True`) forbids exactly that
+    cross-thread use, raising ProgrammingError the moment a second
+    worker touches a connection. Every access through one connection is
+    a short, self-contained transaction (each repository method wraps
+    its work in `with conn:`), SQLite itself is compiled in serialized
+    threading mode (the Python module's own `sqlite3.threadsafety` is 3
+    on the builds NetScope ships for), so sequential cross-thread use
+    through one connection is safe -- what the default guarded against
+    (concurrent unserialized access to a shared connection) is not a
+    pattern this codebase has: workers run one operation at a time.
     """
     path = Path(db_path)
     if str(path) != ":memory:":
         path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=False)
     initialize_database(conn)
     return conn
