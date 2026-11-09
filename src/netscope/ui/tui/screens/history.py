@@ -132,9 +132,7 @@ class HistoryScreen(Screen):
         log.clear()
 
         if not self._rounds:
-            status.update(
-                "[yellow]no rounds recorded yet[/] [dim]— run netscope diagnose (or wait for a round) with persistence wired; r reloads[/]"
-            )
+            status.update("[yellow]no rounds recorded yet[/] [dim]— run netscope diagnose (or wait for a round) with persistence wired; r reloads[/]")
             return
 
         for index, round_ in enumerate(self._rounds):
@@ -154,8 +152,7 @@ class HistoryScreen(Screen):
                 key=str(index),
             )
         status.update(
-            f"{len(self._rounds)} round(s), oldest first · scores recomputed against the current baseline"
-            f" · [dim]enter: round detail · r: reload[/]"
+            f"{len(self._rounds)} round(s), oldest first · scores recomputed against the current baseline · [dim]enter: round detail · r: reload[/]"
         )
 
     def _write_round_detail(self, log: RichLog, round_: HistoryRound) -> None:

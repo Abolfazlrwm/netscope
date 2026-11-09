@@ -127,8 +127,7 @@ class DashboardScreen(Screen):
 
         shell = cast("NetScopeTUI", self.app)
         self._log_line(
-            f"[dim]every {shell.interval:g}s · gateway: {shell.gateway or 'not detected'}"
-            f" · keys: d dashboard · r round now · q quit[/dim]"
+            f"[dim]every {shell.interval:g}s · gateway: {shell.gateway or 'not detected'} · keys: d dashboard · r round now · q quit[/dim]"
         )
 
         for early in self._early_lines:

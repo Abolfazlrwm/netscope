@@ -153,8 +153,7 @@ class ServicesScreen(Screen):
     def on_check_done(self, message: CheckDone) -> None:
         log = self.query_one("#check_log", RichLog)
         log.write(
-            f"[bold]{message.target}[/]: score [bold]{message.score:.0f}[/]/100 ({message.level_value})"
-            f" · [dim]persisted where a log is wired[/]"
+            f"[bold]{message.target}[/]: score [bold]{message.score:.0f}[/]/100 ({message.level_value}) · [dim]persisted where a log is wired[/]"
         )
         for m in message.measurements:
             if m.success:

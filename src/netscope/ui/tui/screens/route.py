@@ -166,7 +166,4 @@ class RouteScreen(Screen):
                 churn_line = " · stable"
             else:
                 churn_line = f" · {churn.change_count} change(s) across {churn.snapshot_count} snapshot(s)"
-        status.update(
-            f"[green]✓[/] route to [bold]{target}[/] · {table.row_count} hops{churn_line}"
-            f" · [dim]enter: trace a target · r: re-trace[/]"
-        )
+        status.update(f"[green]✓[/] route to [bold]{target}[/] · {table.row_count} hops{churn_line} · [dim]enter: trace a target · r: re-trace[/]")

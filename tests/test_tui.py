@@ -415,7 +415,9 @@ async def test_services_screen_builds_the_status_board_from_the_log():
     rows = [
         RawMeasurement(probe_type=ProbeType.ICMP, target="192.168.1.1", timestamp=now - timedelta(minutes=2), success=True, latency_ms=2.1),
         RawMeasurement(probe_type=ProbeType.DNS, target="example.com", timestamp=now - timedelta(minutes=1), success=False, error="timeout"),
-        RawMeasurement(probe_type=ProbeType.HTTP, target="https://www.cloudflare.com/", timestamp=now - timedelta(minutes=1), success=True, latency_ms=30.5),
+        RawMeasurement(
+            probe_type=ProbeType.HTTP, target="https://www.cloudflare.com/", timestamp=now - timedelta(minutes=1), success=True, latency_ms=30.5
+        ),
         # A bandwidth row is throughput evidence, never a service-check cell.
         RawMeasurement(probe_type=ProbeType.BANDWIDTH, target="https://speed.cloudflare.com/", timestamp=now - timedelta(minutes=3), success=True),
     ]

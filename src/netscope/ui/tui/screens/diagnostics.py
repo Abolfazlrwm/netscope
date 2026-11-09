@@ -145,8 +145,8 @@ class DiagnosticsScreen(Screen):
         for e in diagnosis.evidence:
             tested = "[green]yes[/]" if e.tested else "[dim]no[/]"
             severity = e.severity.value
-            severity_cell = f"[red]{severity}[/]" if severity == "critical" else (
-                f"[yellow]{severity}[/]" if severity == "warning" else f"[dim]{severity}[/]"
+            severity_cell = (
+                f"[red]{severity}[/]" if severity == "critical" else (f"[yellow]{severity}[/]" if severity == "warning" else f"[dim]{severity}[/]")
             )
             table.add_row(
                 e.metric,

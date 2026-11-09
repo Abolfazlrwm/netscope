@@ -401,6 +401,7 @@ tree.** Reasoning:
 ```python
 # core/ports.py (conceptual — not implemented)
 
+
 class Probe(Protocol):
     def run(self, target: str, **kwargs) -> Measurement: ...
 ```

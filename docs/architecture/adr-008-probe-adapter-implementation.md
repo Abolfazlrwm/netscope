@@ -35,6 +35,7 @@ changed. Each adapter is a thin, few-line pass-through:
 ```python
 class ICMPProbeAdapter:
     probe_type = ProbeType.ICMP
+
     def run(self, target: str, **options: Any) -> RawMeasurement:
         return icmp_probe.ping(target, **options)
 ```
