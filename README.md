@@ -128,6 +128,7 @@ older rows were omitted — the aggregates always cover the full window.
 |---|---|
 | `netscope diagnose` | One measurement round (gateway / public DNS / DNS lookup / CDN), experience score, evidence-based diagnosis |
 | `netscope check <host> [--checks icmp,dns,tcp,tls,http]` | Probe any target with any subset of checks and score it |
+| `netscope service add/list/remove/check` | Your curated service list, persisted locally: save, list, remove, and run a saved service's own checks (v0.7) |
 | `netscope route <target> [--no-resolve]` | Traceroute with reverse-DNS hostnames, AS numbers (see below) and route-stability analysis |
 | `netscope history [--limit N]` | Recent measurement rounds from the local log |
 | `netscope monitor [--interval S] [--rounds N]` | Continuous rounds with sustained-problem incident detection |
@@ -225,7 +226,7 @@ The test suite is **fully offline** — every probe is a scripted fake, includin
 
 ## Roadmap
 
-See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell. Next: per-service configs persisted, route history + churn over time, GeoIP distance estimation, packet-loss-triggered extra rounds.
+See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell; (v0.7) the saved service list — `netscope service add/list/remove/check`, persisted locally (schema v3), pinned on the TUI services board. Next: route history + churn over time, GeoIP distance estimation, packet-loss-triggered extra rounds.
 
 ## License
 

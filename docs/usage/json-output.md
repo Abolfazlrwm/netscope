@@ -41,7 +41,24 @@ evidence, or a confirmed classification.
 "country", "avg_rtt_ms", "packet_loss_pct" }`, with unresolved hops as honest
 `null`s (the `*` glyph is a presentation concern, never in the payload).
 
-## `history --json` — `report: "history"`
+## `service list --json` — `report: "services"`
+
+```json
+{ "tool": "netscope", "report": "services",
+  "services": [ { "name": "My VPN", "host": "vpn.example.net",
+                  "checks": ["icmp", "http"] } ] }
+```
+
+The saved list exactly as persisted, alphabetical by name; `checks` follows
+the CLI's fixed `icmp,dns,tcp,tls,http` order, not storage order.
+
+## `service check --json` — `report: "service-check"`
+
+The `check` payload plus one field: `service` (the curated name). `target`
+is the saved service's host, and the check set comes from the persisted
+entry — a saved service is checked exactly as it was defined.
+
+## `history --json` — `report: "history"` — `report: "history"`
 
 ```json
 { "tool": "netscope", "report": "history",

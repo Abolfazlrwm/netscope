@@ -27,6 +27,46 @@ Probe one target with any subset of the checks and report the result.
 | `--checks LIST` | comma-separated subset of `icmp,dns,tcp,tls,http` (default: all five) |
 | `--json` | machine-readable output |
 
+## `netscope service`
+
+Manage the **saved service list** — the curated set of targets you keep an
+eye on, persisted locally (schema v3) and shared by the CLI and the TUI
+services board. A saved service appears on the board *before* its first
+check; removal is CLI-only (the TUI board has no destructive keys).
+
+### `netscope service add <name> <host>`
+
+Save (or update) a service. The `name` is the list's identity — re-saving
+under the same name updates the entry in place, it never duplicates.
+
+| Flag | Meaning |
+|---|---|
+| `--checks LIST` | comma-separated subset of `icmp,dns,tcp,tls,http` to enable (default: all five) |
+
+### `netscope service list`
+
+The saved list exactly as persisted, alphabetical by name — never merged
+with log-derived targets (the TUI board does that join, visibly).
+
+| Flag | Meaning |
+|---|---|
+| `--json` | machine-readable output (`report: "services"`) |
+
+### `netscope service remove <name>`
+
+Remove a saved service by exact name. Removing a name that isn't saved says
+so — and lists what *is* saved — so a typo'd name is never a silent success.
+
+### `netscope service check <name>`
+
+Run a saved service's own curated checks now: the name, host and check set
+come from the persisted entry, never re-typed. Same pipeline, score and
+presentation as `netscope check`, and results persist to the same log.
+
+| Flag | Meaning |
+|---|---|
+| `--json` | machine-readable output (`report: "service-check"`) |
+
 ## `netscope route <target>`
 
 Traceroute to a target with hop RTT/loss and route-stability analysis.
@@ -112,7 +152,7 @@ showing a round older than the shell's latest.
 | `p` | Route | Traceroute to any host: per-hop hostnames, AS numbers, loss, RTT, churn verdict |
 | `e` | Evidence | The full evidence table (observed vs expected vs deviation), ruled-out list, plain-language explanation |
 | `h` | History | Recent rounds from the local log with recomputed scores; `enter` opens a round's measurement detail |
-| `s` | Services | Status board: each measured target's latest result per check; type a host to check it on demand |
+| `s` | Services | Status board: your saved services pinned (★) plus every measured target's latest result per check; type a host to check it, 'name host' to save |
 
 Screen-local keys: `r` means "refresh" wherever you are — run a round on
 the dashboard/evidence screen, re-trace on the route screen, reload from
@@ -124,7 +164,11 @@ Notes:
   *current* personal baseline — the log cannot reconstruct the baseline
   as it stood at each round's time, and the screen says so rather than
   pretending otherwise (the same disclosure `history` and `report` make).
-- The services board lists every target the log holds — an unchecked
-  cell renders as a dash, never as a fabricated "unknown" state.
+- The services board shows your saved services pinned at the top — a
+  saved entry appears *before* its first check, with dashes for
+  never-measured cells and "never" for last-seen — followed by every
+  target the log holds. Saving from the board enables all five checks
+  (the host is the last word you type); `netscope service add
+  --checks` curates subsets.
 - The route screen traces the configured DNS target on open; type
   another host and press enter to trace it.
