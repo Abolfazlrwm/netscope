@@ -15,6 +15,7 @@ import logging
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.container import _NETSCOPE_PACKAGES, Container, configure_logging
 from netscope.persistence.measurement_repository import MeasurementRepository
+from netscope.persistence.service_repository import ServiceRepository
 
 # ---------------------------------------------------------------------------
 # measurement_repository defaults to None -- no side effects from bare
@@ -40,6 +41,24 @@ def test_container_accepts_an_explicit_measurement_repository():
     repo = MeasurementRepository.open(":memory:")
     container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
     assert container.measurement_repository is repo
+    repo.close()
+
+
+# ---------------------------------------------------------------------------
+# service_repository (v0.7) -- same None-default / explicit-wiring pattern
+# as measurement_repository above
+# ---------------------------------------------------------------------------
+
+
+def test_container_service_repository_defaults_to_none():
+    container = Container(probe_registry=ProbeRegistry(probes={}))
+    assert container.service_repository is None
+
+
+def test_container_accepts_an_explicit_service_repository():
+    repo = ServiceRepository.open(":memory:")
+    container = Container(probe_registry=ProbeRegistry(probes={}), service_repository=repo)
+    assert container.service_repository is repo
     repo.close()
 
 

@@ -2,12 +2,12 @@
 netscope.app.container
 
 Minimal composition root. Constructs concrete dependencies (ProbeRegistry,
-DiscoveryProvider, MeasurementRepository, BaselineRepository, and the
-optional route-enrichment lookups) and exposes them to the rest of the
-application layer, so that ui/ and app use cases never need to construct
-ICMPProbeAdapter/DNSProbeAdapter/HTTPProbeAdapter/PsutilNetworkDiscovery/
-MeasurementRepository (or any other concrete adapter/persistence class)
-themselves.
+DiscoveryProvider, MeasurementRepository, BaselineRepository,
+ServiceRepository, and the optional route-enrichment lookups) and exposes
+them to the rest of the application layer, so that ui/ and app use cases
+never need to construct ICMPProbeAdapter/DNSProbeAdapter/HTTPProbeAdapter/
+PsutilNetworkDiscovery/MeasurementRepository (or any other concrete
+adapter/persistence class) themselves.
 
 This is a plain, explicit factory -- there is no dependency-injection
 framework here, no auto-wiring, no configuration-driven container.
@@ -47,6 +47,7 @@ from netscope.core.baseline import UserBaseline
 from netscope.core.discovery import DiscoveryProvider
 from netscope.persistence.baseline_repository import BaselineRepository
 from netscope.persistence.measurement_repository import MeasurementRepository
+from netscope.persistence.service_repository import ServiceRepository
 
 # One logger per top-level package, per architecture-decisions.md's
 # Logging decision -- configure_logging sets each of these, not just
@@ -89,6 +90,7 @@ class Container:
     discovery_provider: DiscoveryProvider = field(default_factory=PsutilNetworkDiscovery)
     measurement_repository: MeasurementRepository | None = None
     baseline_repository: BaselineRepository | None = None
+    service_repository: ServiceRepository | None = None
     asn_lookup: AsnLookupAdapter | None = None
     hostname_resolver: HostnameResolver | None = None
 
@@ -118,6 +120,7 @@ def build_container(
         discovery_provider=PsutilNetworkDiscovery(),
         measurement_repository=MeasurementRepository.open(),
         baseline_repository=BaselineRepository.open() if with_baseline_persistence else None,
+        service_repository=ServiceRepository.open(),
         asn_lookup=_open_asn_lookup() if with_route_enrichment else None,
         hostname_resolver=HostnameResolver() if with_route_enrichment else None,
     )

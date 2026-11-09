@@ -20,11 +20,16 @@ from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.app.use_cases import (
+    check_service,
+    check_target,
     diagnose_service,
     diagnose_service_with_connectivity,
+    list_services,
+    remove_service,
     run_measurement_round,
     run_service_checks,
     run_speed_test,
+    save_service,
 )
 from netscope.core.baseline import UserBaseline
 from netscope.core.models import (
@@ -855,3 +860,152 @@ def test_failed_speed_test_is_never_observed(tmp_path):
 
     assert m.success is False
     assert container.baseline_repository.load().throughput == {}
+
+
+# ---------------------------------------------------------------------------
+# Service persistence (v0.7) -- TASK-032's storage half
+# ---------------------------------------------------------------------------
+
+
+class _FakeServiceRepository:
+    """In-memory stand-in for the ServiceRepository port: upsert by
+    name, alphabetical load_all, remove reports existence, get for the
+    created/updated distinction -- the documented contract, nothing
+    more."""
+
+    def __init__(self) -> None:
+        self._services: dict[str, Service] = {}
+
+    def save(self, service: Service) -> None:
+        self._services[service.name] = service
+
+    def load_all(self) -> list[Service]:
+        return [self._services[name] for name in sorted(self._services)]
+
+    def get(self, name: str) -> Service | None:
+        return self._services.get(name)
+
+    def remove(self, name: str) -> bool:
+        return self._services.pop(name, None) is not None
+
+
+def test_save_service_persists_and_reports_created():
+    repo = _FakeServiceRepository()
+    container = Container(probe_registry=ProbeRegistry(), service_repository=repo)
+
+    svc, created = save_service("My VPN", "vpn.example.net", {ProbeType.ICMP, ProbeType.HTTP}, container)
+
+    assert created is True
+    assert isinstance(svc, Service)
+    assert repo.load_all() == [svc]
+    assert repo.load_all()[0].enabled_checks == {ProbeType.ICMP, ProbeType.HTTP}
+
+
+def test_save_service_upsert_reports_updated_not_created():
+    repo = _FakeServiceRepository()
+    container = Container(probe_registry=ProbeRegistry(), service_repository=repo)
+    save_service("My VPN", "old.example.net", {ProbeType.ICMP}, container)
+
+    svc, created = save_service("My VPN", "new.example.net", {ProbeType.TLS}, container)
+
+    assert created is False
+    assert svc.host == "new.example.net"
+    loaded = repo.load_all()
+    assert len(loaded) == 1
+    assert loaded[0].host == "new.example.net"
+
+
+def test_save_service_rejects_an_empty_name():
+    container = Container(probe_registry=ProbeRegistry(), service_repository=_FakeServiceRepository())
+    with pytest.raises(ValueError, match="name"):
+        save_service("   ", "vpn.example.net", {ProbeType.ICMP}, container)
+
+
+def test_save_service_rejects_an_empty_host():
+    container = Container(probe_registry=ProbeRegistry(), service_repository=_FakeServiceRepository())
+    with pytest.raises(ValueError, match="host"):
+        save_service("My VPN", "", {ProbeType.ICMP}, container)
+
+
+def test_save_service_rejects_invalid_checks_with_the_domain_message():
+    container = Container(probe_registry=ProbeRegistry(), service_repository=_FakeServiceRepository())
+    with pytest.raises(ValueError, match="enabled_checks"):
+        save_service("My VPN", "vpn.example.net", {ProbeType.TRACEROUTE}, container)
+
+
+def test_save_service_without_a_repository_raises_instead_of_silently_dropping():
+    container = Container(probe_registry=ProbeRegistry(), service_repository=None)
+    with pytest.raises(RuntimeError, match="ServiceRepository"):
+        save_service("My VPN", "vpn.example.net", {ProbeType.ICMP}, container)
+
+
+def test_remove_service_reports_whether_it_existed():
+    repo = _FakeServiceRepository()
+    container = Container(probe_registry=ProbeRegistry(), service_repository=repo)
+    save_service("My VPN", "vpn.example.net", {ProbeType.ICMP}, container)
+
+    assert remove_service("My VPN", container) is True
+    assert remove_service("My VPN", container) is False
+    assert remove_service("never saved", container) is False
+
+
+def test_remove_service_without_a_repository_raises():
+    container = Container(probe_registry=ProbeRegistry(), service_repository=None)
+    with pytest.raises(RuntimeError, match="ServiceRepository"):
+        remove_service("My VPN", container)
+
+
+def test_list_services_returns_the_curated_list_alphabetically():
+    repo = _FakeServiceRepository()
+    container = Container(probe_registry=ProbeRegistry(), service_repository=repo)
+    save_service("zebra panel", "z.example.net", {ProbeType.ICMP}, container)
+    save_service("alpha cdn", "a.example.net", {ProbeType.HTTP}, container)
+
+    names = [svc.name for svc in list_services(container)]
+    assert names == ["alpha cdn", "zebra panel"]
+
+
+def test_list_services_without_a_repository_is_an_empty_list():
+    container = Container(probe_registry=ProbeRegistry(), service_repository=None)
+    assert list_services(container) == []
+
+
+def test_check_service_runs_exactly_the_service_s_own_checks():
+    icmp = _FakeProbe(ProbeType.ICMP)
+    http = _FakeProbe(ProbeType.HTTP)
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.ICMP: icmp, ProbeType.HTTP: http}))
+    service = Service(name="My VPN", host="vpn.example.net", enabled_checks={ProbeType.ICMP})
+
+    measurements, experience, diagnosis = check_service(service, container)
+
+    assert icmp.calls == ["vpn.example.net"]
+    assert http.calls == []  # a check the service didn't enable never runs
+    assert all(isinstance(m, RawMeasurement) for m in measurements)
+    assert experience is not None
+    # A fully healthy check set is diagnose()'s own "confirmed healthy"
+    # convention: None, never a fabricated all-clear Diagnosis object.
+    assert diagnosis is None
+
+
+def test_check_target_and_check_service_agree_on_the_same_pipeline():
+    """The unsaved and saved forms share one pipeline by construction:
+    identical inputs produce identical measurements, score and
+    diagnosis."""
+    icmp = _FakeProbe(ProbeType.ICMP)
+    container_a = Container(probe_registry=ProbeRegistry(probes={ProbeType.ICMP: icmp}))
+    container_b = Container(probe_registry=ProbeRegistry(probes={ProbeType.ICMP: _FakeProbe(ProbeType.ICMP)}))
+    baseline = _mature_baseline("vpn.example.net", [10.0, 11.0, 12.0])
+
+    target_results = check_target("vpn.example.net", container_a, {ProbeType.ICMP}, baseline)
+    service_results = check_service(
+        Service(name="vpn.example.net", host="vpn.example.net", enabled_checks={ProbeType.ICMP}),
+        container_b,
+        baseline,
+    )
+
+    # RawMeasurement carries its own utcnow() stamp, so compare the
+    # measured substance, not the wall clock.
+    assert [(m.probe_type, m.target, m.success, m.latency_ms) for m in target_results[0]] == [
+        (m.probe_type, m.target, m.success, m.latency_ms) for m in service_results[0]
+    ]
+    assert target_results[1].score == service_results[1].score

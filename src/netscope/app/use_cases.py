@@ -457,6 +457,32 @@ def _enrich_snapshot(snapshot: RouteSnapshot, container: Container, *, resolve_h
 # ---------------------------------------------------------------------------
 
 
+def check_service(
+    service: Service,
+    container: Container,
+    baseline: UserBaseline | None = None,
+) -> tuple[list[RawMeasurement], ExperienceEvent, Diagnosis | None]:
+    """Run `service`'s own enabled checks against `service.host`, and
+    score + diagnose the results -- the saved-service form of
+    `check_target` (v0.7): the name, host and check set all come from
+    the Service itself, so a curated entry is checked exactly as it was
+    defined, not re-transcribed at the call site.
+
+    Same pipeline and same honesty rules as `check_target`, by
+    construction -- one is defined in terms of the other, never
+    duplicated: reuses `run_service_checks` and the `service_*` metric
+    vocabulary unchanged (so diagnosis categorizes failures as
+    SERVICE_ISSUE), and additionally returns an ExperienceEvent so the
+    CLI can show the 0-100 score for the service. A failed check is
+    CRITICAL evidence on its own; an empty `enabled_checks` set yields
+    INSUFFICIENT_EVIDENCE, never a fabricated healthy result."""
+    baseline = baseline if baseline is not None else UserBaseline()
+    measurements = run_service_checks(service, container)
+    experience = score_measurements(measurements, baseline)
+    evidence = [evidence_from_latency(f"service_{m.probe_type.value}_latency", m, baseline) for m in measurements]
+    return measurements, experience, diagnose(evidence)
+
+
 def check_target(
     target: str,
     container: Container,
@@ -467,6 +493,12 @@ def check_target(
     an arbitrary user-supplied target, and score + diagnose the results
     -- `netscope check <host>`'s use case.
 
+    A thin wrapper over `check_service` that names the ad-hoc Service
+    after the target itself: per the domain model, an unsaved check IS
+    a one-off Service -- "data someone supplied" -- just one that was
+    never curated into the persisted list (v0.7's storage half is what
+    makes the distinction between the two real).
+
     Reuses `run_service_checks` and the `service_*` metric vocabulary
     unchanged (so diagnosis categorizes failures as SERVICE_ISSUE --
     from the general pipeline's perspective, "this one target is
@@ -475,12 +507,74 @@ def check_target(
     A failed check is CRITICAL evidence on its own; an empty `checks`
     set yields INSUFFICIENT_EVIDENCE, never a fabricated healthy
     result."""
-    baseline = baseline if baseline is not None else UserBaseline()
-    service = Service(name=target, host=target, enabled_checks=set(checks))
-    measurements = run_service_checks(service, container)
-    experience = score_measurements(measurements, baseline)
-    evidence = [evidence_from_latency(f"service_{m.probe_type.value}_latency", m, baseline) for m in measurements]
-    return measurements, experience, diagnose(evidence)
+    return check_service(Service(name=target, host=target, enabled_checks=set(checks)), container, baseline)
+
+
+# ---------------------------------------------------------------------------
+# Service persistence (v0.7) -- TASK-032's storage half: the curated
+# service list finally has a home, and these are the only ways in.
+# ---------------------------------------------------------------------------
+
+
+def save_service(
+    name: str,
+    host: str,
+    checks: set[ProbeType] | frozenset[ProbeType],
+    container: Container,
+) -> tuple[Service, bool]:
+    """Validate and persist one curated Service, and return
+    `(service, created)` -- `created` False meaning an entry with the
+    same name already existed and was updated in place (the
+    ServiceRepository port's documented upsert semantics), so the CLI
+    can say "saved" versus "updated" honestly without a second query.
+
+    Validation happens through the domain model itself: constructing
+    the `Service` raises the domain's own ValueError on a check set
+    outside `SERVICE_CHECK_TYPES`, and this function additionally
+    rejects an empty/blank name or host -- a service with no name can't
+    be addressed by remove/check, and one with no host can't be probed;
+    neither is a service, just a half-typed line.
+
+    Raises RuntimeError when no ServiceRepository is wired: unlike the
+    measurement log (where "measured but not persisted" is an honest,
+    documented degradation), a management operation whose entire
+    purpose is persistence must not silently drop its write.
+    """
+    if container.service_repository is None:
+        raise RuntimeError("no ServiceRepository wired -- services cannot be saved without persistence")
+    if not name.strip():
+        raise ValueError("service name must not be empty")
+    if not host.strip():
+        raise ValueError("service host must not be empty")
+    service = Service(name=name, host=host, enabled_checks=set(checks))
+    created = container.service_repository.get(service.name) is None
+    container.service_repository.save(service)
+    return service, created
+
+
+def remove_service(name: str, container: Container) -> bool:
+    """Remove one curated Service by exact name; True iff it existed --
+    the caller can say "removed" versus "no such service" honestly.
+
+    RuntimeError when no ServiceRepository is wired (same reasoning as
+    `save_service`)."""
+    if container.service_repository is None:
+        raise RuntimeError("no ServiceRepository wired -- services cannot be removed without persistence")
+    return container.service_repository.remove(name)
+
+
+def list_services(container: Container) -> list[Service]:
+    """The curated service list, alphabetical by name.
+
+    An empty list when nothing has been curated yet -- and also when no
+    ServiceRepository is wired, the same tolerant read convention
+    `Container.load_baseline` established for a missing persistence
+    layer: reading a list that doesn't exist yields an empty list,
+    while writing without storage would silently lose data (which is
+    why save/remove are strict, not tolerant)."""
+    if container.service_repository is None:
+        return []
+    return container.service_repository.load_all()
 
 
 # ---------------------------------------------------------------------------
