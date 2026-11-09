@@ -5,11 +5,16 @@ The TUI is tested fully offline: a fake round_fn returns scripted
 measurements/experience/diagnosis, so no real probe ever runs and no
 wall-clock interval matters (interval is set to an hour; the test
 calls request_round() directly and waits for the RoundDone message to
-land). Requires textual (installed with the dev extra) -- skipped
-cleanly otherwise.
+land). Since v0.6 the same offline pattern drives every SCREEN:
+navigation keys, the network/route/history/services views (with fake
+discovery, fake traceroute, and an in-memory log), and the shell's
+replay-the-latest-round delivery. Requires textual (installed with the
+dev extra) -- skipped cleanly otherwise.
 """
 
 from __future__ import annotations
+
+from datetime import timedelta
 
 import pytest
 
@@ -23,8 +28,12 @@ from netscope.core.models import (
     ExperienceEvent,
     ExperienceLevel,
     Hypothesis,
+    NetworkInterface,
+    NetworkSnapshot,
     ProbeType,
     RawMeasurement,
+    RouteHop,
+    RouteSnapshot,
     Severity,
     utcnow,
 )
@@ -42,14 +51,73 @@ class _FakeProbe:
         return RawMeasurement(probe_type=self.probe_type, target=target, success=True, latency_ms=1.0)
 
 
-def _fake_container() -> Container:
+def _fake_container(discovery: _FakeDiscovery | None = None, repository: _FakeRepo | None = None) -> Container:
     probes = {p: _FakeProbe(p) for p in (ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP, ProbeType.TCP, ProbeType.TLS, ProbeType.TRACEROUTE)}
-    return Container(probe_registry=ProbeRegistry(probes=probes))
+    kwargs: dict = {}
+    if discovery is not None:
+        kwargs["discovery_provider"] = discovery
+    if repository is not None:
+        kwargs["measurement_repository"] = repository
+    return Container(probe_registry=ProbeRegistry(probes=probes), **kwargs)
+
+
+class _ScriptedTraceroute:
+    """Traceroute adapter double: returns a canned RouteSnapshot (or a
+    canned failure) without touching the network."""
+
+    probe_type = ProbeType.TRACEROUTE
+
+    def __init__(self, hops: list[RouteHop] | None = None, error: str | None = None):
+        self.hops = hops
+        self.error = error
+
+    def run(self, target: str, **options) -> RawMeasurement:
+        if self.error is not None:
+            return RawMeasurement(probe_type=ProbeType.TRACEROUTE, target=target, success=False, error=self.error)
+        assert self.hops is not None
+        return RawMeasurement(
+            probe_type=ProbeType.TRACEROUTE,
+            target=target,
+            success=True,
+            latency_ms=None,
+            extra={"route": RouteSnapshot(target=target, hops=list(self.hops))},
+        )
+
+
+class _FakeDiscovery:
+    """Discovery adapter double: returns one canned NetworkSnapshot."""
+
+    def __init__(self, snapshot: NetworkSnapshot):
+        self.snapshot = snapshot
+
+    def discover(self) -> NetworkSnapshot:
+        return self.snapshot
+
+
+class _FakeRepo:
+    """In-memory stand-in for MeasurementRepository: latest() returns
+    rows newest-first, save() records them -- enough for the history
+    and services screens, fully offline."""
+
+    def __init__(self, rows: list[RawMeasurement] | None = None):
+        self.rows: list[RawMeasurement] = list(rows or [])
+
+    def latest(self, limit: int = 200) -> list[RawMeasurement]:
+        return self.rows[:limit]
+
+    def save(self, measurement: RawMeasurement) -> None:
+        self.rows.insert(0, measurement)
 
 
 textual = pytest.importorskip("textual")
 
 from netscope.ui.tui.app import NetScopeTUI  # noqa: E402 -- after importorskip
+from netscope.ui.tui.screens.dashboard import DashboardScreen  # noqa: E402
+from netscope.ui.tui.screens.diagnostics import DiagnosticsScreen  # noqa: E402
+from netscope.ui.tui.screens.history import HistoryScreen  # noqa: E402
+from netscope.ui.tui.screens.network import NetworkScreen  # noqa: E402
+from netscope.ui.tui.screens.route import RouteScreen  # noqa: E402
+from netscope.ui.tui.screens.services import ServicesScreen  # noqa: E402
 
 
 def _ok_measurement(probe: ProbeType, target: str, latency: float) -> RawMeasurement:
@@ -173,3 +241,225 @@ def test_resolve_gateway_none_sentinel_disables_detection():
     assert resolve_gateway("none", config) is None
     assert resolve_gateway("192.168.0.254", config) == "192.168.0.254"
     assert resolve_gateway(None, config) == "10.9.9.9"
+
+
+# ---------------------------------------------------------------------------
+# v0.6: the six screens
+# ---------------------------------------------------------------------------
+
+
+async def _wait_active(pilot, app: NetScopeTUI, screen_type: type) -> None:
+    """Wait until `screen_type` is the active screen (screen pushes
+    resolve across message-loop cycles)."""
+    waited = 0.0
+    while not isinstance(app.screen, screen_type) and waited < 5.0:
+        await pilot.pause(0.05)
+        waited += 0.05
+    await pilot.pause()
+    assert isinstance(app.screen, screen_type), f"expected {screen_type.__name__}, got {type(app.screen).__name__}"
+
+
+async def _wait_for(predicate, pilot, timeout: float = 5.0) -> None:
+    """Pump the message loop until `predicate()` holds (screen workers
+    post their results across cycles; never sleep for real)."""
+    waited = 0.0
+    while not predicate() and waited < timeout:
+        await pilot.pause(0.05)
+        waited += 0.05
+    await pilot.pause()
+    assert predicate(), "condition never became true"
+
+
+async def test_screen_keys_visit_all_six_screens():
+    app = _make_app([_healthy_round()])
+    async with app.run_test(size=(120, 40)) as pilot:
+        assert await _wait_for_rounds(pilot, app, 1)
+        for key, screen_type in [
+            ("n", NetworkScreen),
+            ("p", RouteScreen),
+            ("e", DiagnosticsScreen),
+            ("h", HistoryScreen),
+            ("s", ServicesScreen),
+            ("d", DashboardScreen),
+        ]:
+            await pilot.press(key)
+            await _wait_active(pilot, app, screen_type)
+
+
+async def test_network_screen_lists_interfaces_and_gateway():
+    snapshot = NetworkSnapshot(
+        timestamp=utcnow(),
+        interfaces=[
+            NetworkInterface(name="lo", is_up=True, addresses=["127.0.0.1"], is_loopback=True),
+            NetworkInterface(name="eth0", is_up=True, addresses=["192.168.1.10", "fd00::5"]),
+        ],
+    )
+    app = NetScopeTUI(
+        container=_fake_container(discovery=_FakeDiscovery(snapshot)),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("n")
+        await _wait_active(pilot, app, NetworkScreen)
+        screen = app.screen
+        table = screen.query_one("#ifaces_table")
+        await _wait_for(lambda: table.row_count == 2, pilot)
+        card = str(screen.query_one("#context_card").render())
+        assert "gateway:" in card
+        assert "eth0" in card
+
+
+def _route_app(hops: list[RouteHop] | None, error: str | None) -> NetScopeTUI:
+    probes = {p: _FakeProbe(p) for p in (ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP, ProbeType.TCP, ProbeType.TLS)}
+    probes[ProbeType.TRACEROUTE] = _ScriptedTraceroute(hops=hops, error=error)
+    return NetScopeTUI(
+        container=Container(probe_registry=ProbeRegistry(probes=probes)),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+
+
+async def test_route_screen_traces_and_renders_hops():
+    hops = [
+        RouteHop(ttl=1, address="192.168.1.1", hostname="fritz.box", avg_rtt_ms=2.1, packet_loss_pct=0.0),
+        RouteHop(ttl=2, address="81.19.104.1", hostname=None, avg_rtt_ms=9.8, packet_loss_pct=0.0, asn="AS6830"),
+    ]
+    app = _route_app(hops=hops, error=None)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("p")
+        await _wait_active(pilot, app, RouteScreen)
+        screen = app.screen
+        await _wait_for(lambda: screen.query_one("#hops_table").row_count == 2, pilot)
+        status = str(screen.query_one("#route_status").render())
+        assert "1.1.1.1" in status  # the default target (config.public_dns_target)
+        assert "stable" in status
+
+
+async def test_route_screen_reports_a_failed_traceroute_honestly():
+    app = _route_app(hops=None, error="probe timed out")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("p")
+        await _wait_active(pilot, app, RouteScreen)
+        screen = app.screen
+        await _wait_for(lambda: "failed" in str(screen.query_one("#route_status").render()), pilot)
+        assert screen.query_one("#hops_table").row_count == 0  # never an empty fabricated route
+
+
+async def test_diagnostics_screen_replays_the_latest_round_in_full():
+    app = _make_app([_failing_round()])
+    async with app.run_test(size=(130, 40)) as pilot:
+        assert await _wait_for_rounds(pilot, app, 1)
+        await pilot.press("e")
+        await _wait_active(pilot, app, DiagnosticsScreen)
+        screen = app.screen
+        headline = str(screen.query_one("#diag_headline").render())
+        assert "20" in headline and "POOR" in headline
+        assert screen.query_one("#evidence_table").row_count >= 1
+        from textual.widgets import RichLog
+
+        explanation = "\n".join(strip.text for strip in screen.query_one("#explanation_log", RichLog).lines)
+        assert "Likely cause" in explanation
+
+
+async def test_history_screen_without_a_log_says_so():
+    app = _make_app([_healthy_round()])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("h")
+        await _wait_active(pilot, app, HistoryScreen)
+        screen = app.screen
+        await _wait_for(lambda: "no rounds recorded yet" in str(screen.query_one("#history_status").render()), pilot)
+
+
+async def test_history_screen_lists_rounds_and_shows_detail():
+    now = utcnow()
+    rows: list[RawMeasurement] = []
+    for offset in range(2):
+        start = now - timedelta(minutes=6 - offset * 3)
+        rows.append(RawMeasurement(probe_type=ProbeType.ICMP, target="1.1.1.1", timestamp=start, success=True, latency_ms=9.0))
+        rows.append(
+            RawMeasurement(
+                probe_type=ProbeType.DNS,
+                target="example.com",
+                timestamp=start + timedelta(seconds=1),
+                success=True,
+                latency_ms=12.0,
+            )
+        )
+    app = NetScopeTUI(
+        container=_fake_container(repository=_FakeRepo(rows)),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("h")
+        await _wait_active(pilot, app, HistoryScreen)
+        screen = app.screen
+        table = screen.query_one("#rounds_table")
+        await _wait_for(lambda: table.row_count == 2, pilot)
+        table.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        from textual.widgets import RichLog
+
+        detail = "\n".join(strip.text for strip in screen.query_one("#round_detail", RichLog).lines)
+        assert "1.1.1.1" in detail
+
+
+async def test_services_screen_builds_the_status_board_from_the_log():
+    now = utcnow()
+    rows = [
+        RawMeasurement(probe_type=ProbeType.ICMP, target="192.168.1.1", timestamp=now - timedelta(minutes=2), success=True, latency_ms=2.1),
+        RawMeasurement(probe_type=ProbeType.DNS, target="example.com", timestamp=now - timedelta(minutes=1), success=False, error="timeout"),
+        RawMeasurement(probe_type=ProbeType.HTTP, target="https://www.cloudflare.com/", timestamp=now - timedelta(minutes=1), success=True, latency_ms=30.5),
+        # A bandwidth row is throughput evidence, never a service-check cell.
+        RawMeasurement(probe_type=ProbeType.BANDWIDTH, target="https://speed.cloudflare.com/", timestamp=now - timedelta(minutes=3), success=True),
+    ]
+    app = NetScopeTUI(
+        container=_fake_container(repository=_FakeRepo(rows)),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.press("s")
+        await _wait_active(pilot, app, ServicesScreen)
+        screen = app.screen
+        table = screen.query_one("#services_table")
+        await _wait_for(lambda: table.row_count == 4, pilot)  # 4 targets, incl. the bandwidth-only one
+        rows_by_target = {str(table.get_row_at(i)[0]): table.get_row_at(i) for i in range(table.row_count)}
+        assert "✓" in str(rows_by_target["https://www.cloudflare.com/"][5])  # HTTP cell healthy
+        assert "✗" in str(rows_by_target["example.com"][2])  # DNS cell failed
+        bandwidth_cells = rows_by_target["https://speed.cloudflare.com/"]
+        assert all(str(cell) == "[dim]—[/]" for cell in bandwidth_cells[1:6])  # no fabricated check cells
+
+
+async def test_services_screen_checks_a_host_on_demand_and_persists():
+    repo = _FakeRepo()
+    app = NetScopeTUI(
+        container=_fake_container(repository=repo),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.press("s")
+        await _wait_active(pilot, app, ServicesScreen)
+        screen = app.screen
+        box = screen.query_one("#service_input")
+        box.focus()
+        await pilot.pause()
+        for char in "example.com":
+            await pilot.press(char)
+        await pilot.press("enter")
+        await _wait_for(lambda: len(repo.rows) == 5, pilot)  # the five checks, persisted like the CLI
+        from textual.widgets import RichLog
+
+        log_text = "\n".join(strip.text for strip in screen.query_one("#check_log", RichLog).lines)
+        assert "example.com" in log_text and "score" in log_text
+        table = screen.query_one("#services_table")
+        await _wait_for(lambda: table.row_count == 1, pilot)  # the board grew to include the new target
