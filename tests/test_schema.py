@@ -99,9 +99,10 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
 
 
 def test_expected_tables_exist_after_initialization():
-    """Only tables that map to an actual existing core domain model --
-    no speculative tables (e.g. no 'services' table; see schema.py's
-    module docstring for why)."""
+    """Exactly the schema's tables -- every one maps to an actual
+    existing core domain model, nothing speculative (the v3 additions
+    are the curated services list; see schema.py's module docstring
+    for the table's own deferral history)."""
     conn = _fresh_connection()
     initialize_database(conn)
     assert _table_names(conn) == {
@@ -110,6 +111,7 @@ def test_expected_tables_exist_after_initialization():
         "route_hops",
         "metric_baselines",
         "throughput_baselines",
+        "services",
         "evidence",
         "diagnoses",
         "diagnosis_evidence",
@@ -313,11 +315,11 @@ def test_schema_module_only_imports_stdlib():
     assert modules <= {"__future__", "sqlite3", "pathlib"}
 
 
-def test_v2_is_the_current_schema_version_with_the_throughput_table():
+def test_throughput_baselines_table_exists_after_initialization():
+    """The v2-era throughput baseline table (current-version claims
+    live in the vX_is_the_current_schema_version tests, one per era)."""
     conn = _fresh_connection()
     initialize_database(conn)
-    assert SCHEMA_VERSION == 2
-    assert get_schema_version(conn) == SCHEMA_VERSION
     assert "throughput_baselines" in _table_names(conn)
     conn.close()
 
@@ -339,4 +341,55 @@ def test_v1_database_upgrades_additively(tmp_path):
     assert "throughput_baselines" in _table_names(conn)
     row = conn.execute("SELECT count, mean FROM metric_baselines WHERE target = 'gw'").fetchone()
     assert row == (5, 10.0)
+    conn.close()
+
+
+def test_v3_is_the_current_schema_version_with_the_services_table():
+    conn = _fresh_connection()
+    initialize_database(conn)
+    assert SCHEMA_VERSION == 3
+    assert get_schema_version(conn) == SCHEMA_VERSION
+    assert "services" in _table_names(conn)
+    conn.close()
+
+
+def test_services_table_has_the_documented_shape():
+    """name is the primary key (the curated list is edited by re-saving
+    under the same name), host is required, and checks defaults to ''
+    -- no checks enabled yet, "each optional" per the Service model."""
+    conn = _fresh_connection()
+    initialize_database(conn)
+    info = conn.execute("PRAGMA table_info(services)").fetchall()
+    by_name = {row[1]: row for row in info}
+    assert by_name["name"][5] == 1  # pk column flag
+    assert by_name["host"][3] == 1  # notnull
+    assert by_name["checks"][3] == 1  # notnull
+    assert by_name["checks"][4] == "''"  # dflt_value: SQLite stores the literal default text: SQLite stores the literal default text
+
+    conn.execute("INSERT INTO services (name, host) VALUES ('My VPN', 'vpn.example.net')")
+    row = conn.execute("SELECT name, host, checks FROM services").fetchone()
+    assert row == ("My VPN", "vpn.example.net", "")
+    conn.close()
+
+
+def test_v2_database_upgrades_additively(tmp_path):
+    """A v2 database (what v0.4-v0.6 users have on disk) upgrades in
+    place: the services table appears, user_version moves to 3, and
+    every pre-existing row is untouched."""
+    conn = create_connection(tmp_path / "upgrade.db")
+    conn.execute("INSERT INTO measurements (probe_type, target, timestamp, success) VALUES ('icmp', 'gw', '2026-11-09T08:00:00+00:00', 1)")
+    conn.execute("INSERT INTO metric_baselines (target, metric_type, count, mean, m2) VALUES ('gw', 'latency', 5, 10.0, 8.0)")
+    # Simulate the v2 era: no services table, user_version rewound.
+    conn.execute("DROP TABLE services")
+    conn.execute("PRAGMA user_version = 2")
+    conn.commit()
+
+    initialize_database(conn)  # what a v0.7 binary does on startup
+
+    assert get_schema_version(conn) == SCHEMA_VERSION
+    assert "services" in _table_names(conn)
+    measurement = conn.execute("SELECT target, success FROM measurements").fetchone()
+    assert measurement == ("gw", 1)
+    baseline = conn.execute("SELECT count, mean FROM metric_baselines WHERE target = 'gw'").fetchone()
+    assert baseline == (5, 10.0)
     conn.close()

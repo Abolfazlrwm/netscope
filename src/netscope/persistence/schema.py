@@ -14,9 +14,8 @@ This module owns exactly two responsibilities:
     1. The schema DDL itself (what tables/columns/indices/foreign keys
        exist), for the five aggregates ADR-005 names:
        MeasurementRepository, RouteRepository, BaselineRepository,
-       IncidentRepository (incidents together with the diagnoses/
-       evidence attached to them, per ADR-005) -- and NOT
-       ServiceRepository, see "WHAT'S DELIBERATELY NOT HERE" below.
+       ServiceRepository, and IncidentRepository (incidents together
+       with the diagnoses/evidence attached to them, per ADR-005).
     2. Schema lifecycle: initializing a fresh database, and reporting
        the current schema version -- deterministically, idempotently,
        and without ever discarding existing data.
@@ -76,6 +75,17 @@ speculative:
   separation mirrors the domain doctrine bandwidth_probe.py documents
   -- a throughput reading must never be queryable as a latency row.
   Columns are the same Welford-exact `count`/`mean`/`m2` triple.
+- `services` (v3): core.models.Service -- the curated service list
+  (TASK-032's storage half). One row per user-saved Service, keyed by
+  the user-supplied `name`: that is the domain's own identity, and a
+  curated list is edited by re-saving under the same name, never
+  duplicated. `checks` carries the enabled service checks as a
+  comma-separated, alphabetically-sorted list of ProbeType values --
+  '' when none are enabled yet ("each optional" per the Service model).
+  Validity of the individual values is enforced by
+  `Service.__post_init__` on the Python side; SQLite cannot express a
+  CHECK over comma-separated contents, so pretending otherwise in DDL
+  would be a constraint that never fires.
 - `evidence`: Evidence. `source` (`Optional[RawMeasurement |
   RouteSnapshot]`) becomes two nullable foreign keys
   (`source_measurement_id`, `source_route_snapshot_id`) -- at most one
@@ -97,17 +107,21 @@ speculative:
   any single Diagnosis's own evidence list, so conflating the two join
   tables would lose that distinction.
 
-WHAT'S DELIBERATELY NOT HERE
---------------------------------
-No `services` table. ADR-005 names `ServiceRepository` as one of the
-five expected ports, but the `Service` domain model itself does not
-exist yet in `core.models` -- it's TASK-032's own, separately-scoped
-future task (future-roadmap.md Phase G). Designing a schema for a type
-that doesn't exist yet would be exactly the kind of speculative,
-guessed-at column set this task's own scope explicitly warns against;
-this is deferred for the same reason TASK-023 (GeoIP) was deferred
-earlier in this project's history -- a genuine, documented prerequisite
-gap, not an oversight.
+THE `services` TABLE'S OWN HISTORY
+--------------------------------------
+This table was deliberately absent when the schema was first designed:
+ADR-005 named `ServiceRepository` as one of the five expected ports,
+but the `Service` domain model itself did not exist yet in
+`core.models` -- it was TASK-032's own, separately-scoped future task
+(future-roadmap.md Phase G). Designing a schema for a type that doesn't
+exist yet would have been exactly the kind of speculative, guessed-at
+column set that task's scope explicitly warns against, so the table was
+deferred -- the same documented-deferral reasoning TASK-023 (GeoIP) got
+earlier in this project's history. The prerequisite has since landed
+(`core.models.Service`, no hardcoded providers), and v0.7 closes
+TASK-032's storage half additively: one new table, keyed by the
+user-supplied name, with nothing pre-existing moved, rewritten, or
+dropped.
 """
 
 from __future__ import annotations
@@ -115,7 +129,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # v1 -> v2 migration note: version 2 adds `throughput_baselines` and
 # changes nothing else. The migration is purely additive -- every v1
@@ -123,6 +137,14 @@ SCHEMA_VERSION = 2
 # database under v2 simply creates the new table alongside the existing
 # rows and bumps `user_version`. No data is moved, rewritten, or
 # dropped; there is nothing to roll back.
+#
+# v2 -> v3 migration note: version 3 adds `services` (the curated
+# service list, TASK-032's storage half) and changes nothing else --
+# the same purely-additive pattern: every v2 statement is unchanged
+# and still `IF NOT EXISTS`, so opening a v2 database under v3 creates
+# the new table alongside the existing rows and bumps `user_version`.
+# No data is moved, rewritten, or dropped; there is nothing to roll
+# back.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS measurements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,6 +204,16 @@ CREATE TABLE IF NOT EXISTS throughput_baselines (
     count INTEGER NOT NULL,
     mean REAL NOT NULL,
     m2 REAL NOT NULL
+);
+
+-- v3: the curated service list. Keyed by the user-supplied name (the
+-- Service domain model's own identity -- see the table rationale
+-- above); `checks` is a comma-separated, alphabetically-sorted list of
+-- ProbeType values, '' when none are enabled yet.
+CREATE TABLE IF NOT EXISTS services (
+    name TEXT PRIMARY KEY,
+    host TEXT NOT NULL,
+    checks TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS evidence (
