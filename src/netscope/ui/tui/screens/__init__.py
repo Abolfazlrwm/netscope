@@ -15,3 +15,17 @@ nothing about what the numbers mean (the same rule ui/cli.py follows):
 scoring, diagnosis and incident semantics live in `app`/`core`, and
 screens only decide how results LOOK.
 """
+
+from __future__ import annotations
+
+from netscope.core.models import ExperienceLevel
+
+# Experience level -> Textual color name, shared by every screen that
+# renders a score (dashboard, diagnostics, history).
+LEVEL_COLORS: dict[ExperienceLevel, str] = {
+    ExperienceLevel.EXCELLENT: "green",
+    ExperienceLevel.GOOD: "green",
+    ExperienceLevel.DEGRADED: "yellow",
+    ExperienceLevel.POOR: "red",
+    ExperienceLevel.DOWN: "red",
+}

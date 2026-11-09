@@ -56,6 +56,7 @@ from netscope.app.use_cases import run_measurement_round
 from netscope.core.models import Diagnosis, ExperienceEvent, RawMeasurement
 from netscope.ui.tui.screens.dashboard import DashboardScreen
 from netscope.ui.tui.screens.diagnostics import DiagnosticsScreen
+from netscope.ui.tui.screens.history import HistoryScreen
 from netscope.ui.tui.screens.network import NetworkScreen
 from netscope.ui.tui.screens.route import RouteScreen
 
@@ -83,6 +84,7 @@ class NetScopeTUI(App):
         Binding("n", "show('network')", "Network", priority=True),
         Binding("p", "show('route')", "Route", priority=True),
         Binding("e", "show('diagnostics')", "Evidence", priority=True),
+        Binding("h", "show('history')", "History", priority=True),
         Binding("q", "quit", "Quit", priority=True),
     ]
 
@@ -160,10 +162,11 @@ class NetScopeTUI(App):
         self._register_screen("network", NetworkScreen())
         self._register_screen("route", RouteScreen())
         self._register_screen("diagnostics", DiagnosticsScreen())
+        self._register_screen("history", HistoryScreen())
 
         self.log_line(
             f"[dim]every {self._interval:g}s · gateway: {self._gateway or 'not detected'}"
-            f" · keys: d dashboard · n network · p route · e evidence · r round now · q quit[/dim]"
+            f" · keys: d dashboard · n network · p route · e evidence · h history · r round now · q quit[/dim]"
         )
 
         self.set_interval(self._interval, self.request_round)

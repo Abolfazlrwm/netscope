@@ -26,25 +26,18 @@ from typing import TYPE_CHECKING, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, RichLog, Static
 
 from netscope.app.monitoring import IncidentTransition
 from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS
-from netscope.core.models import Diagnosis, ExperienceEvent, ExperienceLevel, RawMeasurement
+from netscope.core.models import Diagnosis, ExperienceEvent, RawMeasurement
 from netscope.explanation.explainer import explain
+from netscope.ui.tui.screens import LEVEL_COLORS
 
 if TYPE_CHECKING:
     from netscope.ui.tui.app import NetScopeTUI
-
-_LEVEL_COLORS: dict[ExperienceLevel, str] = {
-    ExperienceLevel.EXCELLENT: "green",
-    ExperienceLevel.GOOD: "green",
-    ExperienceLevel.DEGRADED: "yellow",
-    ExperienceLevel.POOR: "red",
-    ExperienceLevel.DOWN: "red",
-}
 
 
 class DiagnosticsScreen(Screen):
@@ -133,7 +126,7 @@ class DiagnosticsScreen(Screen):
     # ------------------------------------------------------------------
 
     def _update_headline(self, experience: ExperienceEvent, diagnosis: Diagnosis | None) -> None:
-        color = _LEVEL_COLORS[experience.level]
+        color = LEVEL_COLORS[experience.level]
         if diagnosis is None:
             verdict = "[bold green]all checked paths healthy[/]"
         else:

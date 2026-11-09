@@ -37,18 +37,11 @@ from textual.widgets import DataTable, Footer, Header, Label, RichLog, Sparkline
 
 from netscope.app.monitoring import IncidentTransition, TransitionType
 from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS
-from netscope.core.models import Diagnosis, ExperienceEvent, ExperienceLevel, RawMeasurement
+from netscope.core.models import Diagnosis, ExperienceEvent, RawMeasurement
+from netscope.ui.tui.screens import LEVEL_COLORS
 
 if TYPE_CHECKING:
     from netscope.ui.tui.app import NetScopeTUI
-
-_LEVEL_COLORS: dict[ExperienceLevel, str] = {
-    ExperienceLevel.EXCELLENT: "green",
-    ExperienceLevel.GOOD: "green",
-    ExperienceLevel.DEGRADED: "yellow",
-    ExperienceLevel.POOR: "red",
-    ExperienceLevel.DOWN: "red",
-}
 
 
 class DashboardScreen(Screen):
@@ -191,7 +184,7 @@ class DashboardScreen(Screen):
 
     def _update_score_card(self, experience: ExperienceEvent) -> None:
         shell = cast("NetScopeTUI", self.app)
-        color = _LEVEL_COLORS[experience.level]
+        color = LEVEL_COLORS[experience.level]
         self.query_one("#score_card", Static).update(
             f"[bold {color}]  {experience.score:.0f}[/] [dim]/100[/]\n"
             f"  [bold {color}]{experience.level.value.upper()}[/]\n"
