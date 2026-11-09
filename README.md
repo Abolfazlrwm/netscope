@@ -1,11 +1,15 @@
 # NetScope
 
+<p align="center"><img src="assets/banner.png" alt="netscope banner" width="100%"></p>
+
 **Internet Experience Intelligence & Network Diagnostics — from raw measurements to "what's wrong, and where", with evidence.**
 
 [![CI](https://github.com/Abolfazlrwm/netscope/actions/workflows/ci.yml/badge.svg)](https://github.com/Abolfazlrwm/netscope/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/Abolfazlrwm/netscope)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
+
+<p align="center"><img src="assets/tui-demo.png" alt="netscope TUI dashboard" width="88%"></p>
 [![Tests](https://img.shields.io/badge/tests-595%20passing-brightgreen)](#development)
 
 NetScope doesn't just show you a latency number — it tells you whether the problem is **your Wi-Fi/router**, **your ISP**, or **the destination service**, and shows you the evidence chain behind that claim.
