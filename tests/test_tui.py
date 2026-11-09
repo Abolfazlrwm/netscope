@@ -23,6 +23,7 @@ from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.app.gateway import resolve_gateway
 from netscope.core.models import (
+    SERVICE_CHECK_TYPES,
     Diagnosis,
     Evidence,
     ExperienceEvent,
@@ -34,6 +35,7 @@ from netscope.core.models import (
     RawMeasurement,
     RouteHop,
     RouteSnapshot,
+    Service,
     Severity,
     utcnow,
 )
@@ -51,13 +53,19 @@ class _FakeProbe:
         return RawMeasurement(probe_type=self.probe_type, target=target, success=True, latency_ms=1.0)
 
 
-def _fake_container(discovery: _FakeDiscovery | None = None, repository: _FakeRepo | None = None) -> Container:
+def _fake_container(
+    discovery: _FakeDiscovery | None = None,
+    repository: _FakeRepo | None = None,
+    service_repository: ServiceRepository | None = None,
+) -> Container:
     probes = {p: _FakeProbe(p) for p in (ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP, ProbeType.TCP, ProbeType.TLS, ProbeType.TRACEROUTE)}
     kwargs: dict = {}
     if discovery is not None:
         kwargs["discovery_provider"] = discovery
     if repository is not None:
         kwargs["measurement_repository"] = repository
+    if service_repository is not None:
+        kwargs["service_repository"] = service_repository
     return Container(probe_registry=ProbeRegistry(probes=probes), **kwargs)
 
 
@@ -111,6 +119,7 @@ class _FakeRepo:
 
 textual = pytest.importorskip("textual")
 
+from netscope.persistence.service_repository import ServiceRepository  # noqa: E402
 from netscope.ui.tui.app import NetScopeTUI  # noqa: E402 -- after importorskip
 from netscope.ui.tui.screens.dashboard import DashboardScreen  # noqa: E402
 from netscope.ui.tui.screens.diagnostics import DiagnosticsScreen  # noqa: E402
@@ -465,3 +474,143 @@ async def test_services_screen_checks_a_host_on_demand_and_persists():
         assert "example.com" in log_text and "score" in log_text
         table = screen.query_one("#services_table")
         await _wait_for(lambda: table.row_count == 1, pilot)  # the board grew to include the new target
+
+
+# ---------------------------------------------------------------------------
+# v0.7 -- saved services on the board (TASK-032's storage half)
+# ---------------------------------------------------------------------------
+
+
+async def test_services_screen_pins_a_saved_service_before_its_first_check(tmp_path):
+    """The whole point of the curated list: a saved entry is on the
+    board immediately -- dashes for never-measured cells, 'never' for
+    last seen -- even with an empty log."""
+    service_repo = ServiceRepository.open(tmp_path / "services.db")
+    service_repo.save(Service(name="My VPN", host="vpn.example.net", enabled_checks={ProbeType.ICMP}))
+    app = NetScopeTUI(
+        container=_fake_container(service_repository=service_repo),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.press("s")
+        await _wait_active(pilot, app, ServicesScreen)
+        screen = app.screen
+        table = screen.query_one("#services_table")
+        await _wait_for(lambda: table.row_count == 1, pilot)
+        row = table.get_row_at(0)
+        assert "My VPN" in str(row[0]) and "vpn.example.net" in str(row[0])
+        # DataTable cells keep the raw markup string (same convention
+        # the v0.6 board tests assert against).
+        assert all(str(cell) == "[dim]—[/]" for cell in row[1:6])  # absent evidence shown as absent
+        assert str(row[6]) == "[dim]never[/]"
+
+
+async def test_services_screen_joins_saved_and_logged_targets_without_duplicating(tmp_path):
+    """A host that is both saved and logged shows exactly once -- the
+    pinned row, with the host's real evidence -- never twice."""
+    service_repo = ServiceRepository.open(tmp_path / "services.db")
+    service_repo.save(Service(name="My VPN", host="vpn.example.net", enabled_checks={ProbeType.ICMP}))
+    now = utcnow()
+    rows = [
+        RawMeasurement(probe_type=ProbeType.ICMP, target="vpn.example.net", timestamp=now, success=True, latency_ms=3.0),
+        RawMeasurement(probe_type=ProbeType.ICMP, target="other.example.net", timestamp=now, success=True, latency_ms=4.0),
+    ]
+    app = NetScopeTUI(
+        container=_fake_container(repository=_FakeRepo(rows), service_repository=service_repo),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.press("s")
+        await _wait_active(pilot, app, ServicesScreen)
+        screen = app.screen
+        table = screen.query_one("#services_table")
+        await _wait_for(lambda: table.row_count == 2, pilot)
+        first = str(table.get_row_at(0)[0])
+        assert "My VPN" in first  # saved services render first
+        targets = [str(table.get_row_at(i)[0]) for i in range(table.row_count)]
+        assert sum("vpn.example.net" in target for target in targets) == 1
+        assert "✓" in str(table.get_row_at(0)[1])  # the pinned row carries the host's evidence
+
+
+async def test_services_screen_saves_a_service_from_the_input(tmp_path):
+    """'name host' in the input saves through the same use case as
+    `netscope service add` (all five checks) and pins the row."""
+    service_repo = ServiceRepository.open(tmp_path / "services.db")
+    app = NetScopeTUI(
+        container=_fake_container(service_repository=service_repo),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.press("s")
+        await _wait_active(pilot, app, ServicesScreen)
+        screen = app.screen
+        box = screen.query_one("#service_input")
+        box.focus()
+        await pilot.pause()
+        box.value = "My VPN vpn.example.net"
+        await pilot.press("enter")
+        await _wait_for(lambda: len(service_repo.load_all()) == 1, pilot)
+        saved = service_repo.load_all()[0]
+        assert saved.name == "My VPN" and saved.host == "vpn.example.net"
+        assert saved.enabled_checks == SERVICE_CHECK_TYPES  # all five, as the placeholder promises
+
+        table = screen.query_one("#services_table")
+        await _wait_for(lambda: table.row_count == 1, pilot)
+        assert "My VPN" in str(table.get_row_at(0)[0])
+
+
+async def test_services_screen_saves_a_multi_word_name_last_word_is_host(tmp_path):
+    """Hosts never contain spaces, so the board's grammar is: the last
+    word is the host, everything before it is the curated name -- 'My
+    VPN vpn.example.net' saves as name 'My VPN'."""
+    service_repo = ServiceRepository.open(tmp_path / "services.db")
+    app = NetScopeTUI(
+        container=_fake_container(service_repository=service_repo),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.press("s")
+        await _wait_active(pilot, app, ServicesScreen)
+        screen = app.screen
+        box = screen.query_one("#service_input")
+        box.focus()
+        await pilot.pause()
+        box.value = "Home Router 192.168.1.1"
+        await pilot.press("enter")
+        await _wait_for(lambda: len(service_repo.load_all()) == 1, pilot)
+        saved = service_repo.load_all()[0]
+        assert saved.name == "Home Router"
+        assert saved.host == "192.168.1.1"
+
+
+async def test_services_screen_save_failure_is_honest_when_no_repository_is_wired():
+    """Saving without a ServiceRepository fails loudly on the board --
+    never a silent drop (the use case's own RuntimeError, relayed)."""
+    app = NetScopeTUI(
+        container=_fake_container(),
+        config=NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.press("s")
+        await _wait_active(pilot, app, ServicesScreen)
+        screen = app.screen
+        box = screen.query_one("#service_input")
+        box.focus()
+        await pilot.pause()
+        box.value = "My VPN vpn.example.net"
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        from textual.widgets import RichLog
+
+        log_text = "\n".join(strip.text for strip in screen.query_one("#check_log", RichLog).lines)
+        assert "ServiceRepository" in log_text
