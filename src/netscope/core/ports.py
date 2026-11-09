@@ -65,7 +65,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from netscope.core.baseline import UserBaseline
-from netscope.core.models import ProbeType, RawMeasurement
+from netscope.core.models import ProbeType, RawMeasurement, Service
 
 
 @runtime_checkable
@@ -140,3 +140,57 @@ class BaselineRepository(Protocol):
     def save(self, baseline: UserBaseline) -> None: ...
 
     def load(self) -> UserBaseline: ...
+
+
+@runtime_checkable
+class ServiceRepository(Protocol):
+    """Contract for persisting the user's curated service list.
+
+    WHY THIS CONTRACT EXISTS
+    -------------------------
+    ADR-005 names `ServiceRepository` as one of the five aggregate
+    repository ports, and `core.models.Service` (TASK-032) documents
+    itself as "data someone supplied (config or, eventually,
+    persistence)" -- this port is the "eventually": the storage half of
+    TASK-032, the piece v0.6's services screen explicitly declined to
+    fake (it derived its board from the measurement log rather than
+    invent hidden persistence). Without it, `app` would need to depend
+    on a concrete storage implementation (e.g. sqlite3) directly to
+    remember a user's services across runs, which would violate the same
+    core-must-not-depend-on-infrastructure rule the `Probe` and
+    `BaselineRepository` contracts above uphold (adr-001-architecture-
+    style.md, ADR-005).
+
+    CONTRACT SEMANTICS
+    --------------------
+    - `save(service)` is an **upsert keyed by `service.name`**: saving a
+      Service whose name already exists replaces that entry's host and
+      checks in place -- a curated list is edited by re-saving, never
+      duplicated under two names.
+    - `load_all()` returns every saved Service, **alphabetical by
+      name** -- a curated list is short and read often, and a
+      deterministic order lets the CLI's `service list` and the TUI's
+      services board render the same list the same way. An empty list
+      (nothing saved yet) is a normal result, not an error.
+    - `remove(name)` deletes the named Service and returns **whether a
+      row actually existed** -- the caller can say "removed" versus
+      "no such service" honestly, without a separate existence probe
+      first.
+
+    Like `BaselineRepository`, this is a single-user, local-first
+    contract (ADR-005, architecture-overview.md SS14): exactly one
+    curated list per local installation, so no per-user key and no
+    sync/remote semantics are part of it.
+
+    Per ADR-005 this is the second of the five expected repository
+    ports to land in `core.ports` (after TASK-024's
+    `BaselineRepository`); concrete SQLite persistence is explicitly
+    out of scope here and belongs to `persistence/` -- this module
+    continues to define contracts only, per its existing design.
+    """
+
+    def save(self, service: Service) -> None: ...
+
+    def load_all(self) -> list[Service]: ...
+
+    def remove(self, name: str) -> bool: ...

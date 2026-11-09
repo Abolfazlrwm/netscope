@@ -16,8 +16,8 @@ from __future__ import annotations
 import pytest
 
 from netscope.core.baseline import UserBaseline
-from netscope.core.models import ProbeType, RawMeasurement
-from netscope.core.ports import BaselineRepository, Probe
+from netscope.core.models import ProbeType, RawMeasurement, Service
+from netscope.core.ports import BaselineRepository, Probe, ServiceRepository
 
 
 class _FakeICMPProbe:
@@ -195,6 +195,146 @@ def test_baseline_repository_load_with_nothing_saved_yet_returns_a_fresh_user_ba
     assert isinstance(loaded, UserBaseline)
     assert loaded.latency == {}
     assert loaded.packet_loss == {}
+
+
+# ---------------------------------------------------------------------------
+# ServiceRepository (TASK-032's storage half, v0.7)
+# ---------------------------------------------------------------------------
+
+
+class _FakeServiceRepository:
+    """A minimal, in-memory stand-in for the SQLite-backed
+    ServiceRepository: upsert by name, alphabetical load_all, and a
+    remove() that reports whether a row existed -- the documented port
+    semantics, nothing more. Deliberately does NOT inherit from
+    ServiceRepository (structural Protocol, like every fake above), and
+    fully offline/deterministic."""
+
+    def __init__(self) -> None:
+        self._services: dict[str, Service] = {}
+
+    def save(self, service: Service) -> None:
+        self._services[service.name] = service
+
+    def load_all(self) -> list[Service]:
+        return [self._services[name] for name in sorted(self._services)]
+
+    def remove(self, name: str) -> bool:
+        return self._services.pop(name, None) is not None
+
+
+class _MissingRemoveMethod:
+    """Has save()/load_all() but no remove() -- must NOT satisfy
+    ServiceRepository."""
+
+    def save(self, service: Service) -> None:
+        pass
+
+    def load_all(self) -> list[Service]:
+        return []
+
+
+class _MissingSaveMethodService:
+    """Has load_all()/remove() but no save() -- must NOT satisfy
+    ServiceRepository."""
+
+    def load_all(self) -> list[Service]:
+        return []
+
+    def remove(self, name: str) -> bool:
+        return False
+
+
+class _MissingLoadAllMethod:
+    """Has save()/remove() but no load_all() -- must NOT satisfy
+    ServiceRepository."""
+
+    def save(self, service: Service) -> None:
+        pass
+
+    def remove(self, name: str) -> bool:
+        return False
+
+
+def test_conforming_fake_satisfies_service_repository_protocol_structurally():
+    """No inheritance from ServiceRepository -- same structural-typing
+    point as the Probe and BaselineRepository tests above."""
+    fake = _FakeServiceRepository()
+    assert isinstance(fake, ServiceRepository)
+
+
+def test_object_missing_remove_method_does_not_satisfy_service_repository():
+    assert isinstance(_MissingRemoveMethod(), ServiceRepository) is False
+
+
+def test_object_missing_save_method_does_not_satisfy_service_repository():
+    assert isinstance(_MissingSaveMethodService(), ServiceRepository) is False
+
+
+def test_object_missing_load_all_method_does_not_satisfy_service_repository():
+    assert isinstance(_MissingLoadAllMethod(), ServiceRepository) is False
+
+
+def test_unrelated_object_does_not_satisfy_service_repository():
+    assert isinstance(_NotAProbeAtAll(), ServiceRepository) is False
+
+
+def test_service_repository_round_trips_the_existing_service_model_not_a_new_type():
+    """Confirms the contract reuses core.models.Service rather than
+    introducing a duplicate persistence-facing model, mirroring the
+    equivalent RawMeasurement/UserBaseline guarantees above."""
+    fake = _FakeServiceRepository()
+    svc = Service(name="My VPN", host="vpn.example.net", enabled_checks={ProbeType.ICMP, ProbeType.HTTP})
+
+    fake.save(svc)
+    loaded = fake.load_all()
+
+    assert len(loaded) == 1
+    assert isinstance(loaded[0], Service)
+    assert loaded[0].name == "My VPN"
+    assert loaded[0].host == "vpn.example.net"
+    assert loaded[0].enabled_checks == {ProbeType.ICMP, ProbeType.HTTP}
+
+
+def test_service_repository_upsert_by_name_replaces_rather_than_duplicates():
+    """Saving a Service whose name already exists updates that entry in
+    place -- the contract's documented upsert semantics, so a curated
+    list can be edited by re-saving without ever duplicating a name."""
+    fake = _FakeServiceRepository()
+    fake.save(Service(name="My VPN", host="old.example.net", enabled_checks={ProbeType.ICMP}))
+    fake.save(Service(name="My VPN", host="new.example.net", enabled_checks={ProbeType.ICMP, ProbeType.TLS}))
+
+    loaded = fake.load_all()
+    assert len(loaded) == 1
+    assert loaded[0].host == "new.example.net"
+    assert loaded[0].enabled_checks == {ProbeType.ICMP, ProbeType.TLS}
+
+
+def test_service_repository_load_all_orders_alphabetically_by_name():
+    fake = _FakeServiceRepository()
+    fake.save(Service(name="zebra panel", host="z.example.net", enabled_checks={ProbeType.ICMP}))
+    fake.save(Service(name="alpha cdn", host="a.example.net", enabled_checks={ProbeType.HTTP}))
+    fake.save(Service(name="middle mail", host="m.example.net", enabled_checks={ProbeType.TCP}))
+
+    assert [svc.name for svc in fake.load_all()] == ["alpha cdn", "middle mail", "zebra panel"]
+
+
+def test_service_repository_remove_reports_whether_a_row_existed():
+    fake = _FakeServiceRepository()
+    fake.save(Service(name="My VPN", host="vpn.example.net", enabled_checks={ProbeType.ICMP}))
+
+    assert fake.remove("My VPN") is True
+    assert fake.load_all() == []
+    # Removing a name that is not (or no longer) there reports honestly.
+    assert fake.remove("My VPN") is False
+    assert fake.remove("never saved") is False
+
+
+def test_service_repository_load_all_with_nothing_saved_returns_an_empty_list():
+    """An empty curated list is a normal result, not an error -- the
+    contract's documented empty-state semantics."""
+    fake = _FakeServiceRepository()
+    assert fake.load_all() == []
 
 
 def test_ports_module_only_imports_stdlib_typing_and_core_models():
