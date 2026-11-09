@@ -98,5 +98,33 @@ by nature, and its result is throughput evidence, not a latency reading.
 
 ## `netscope tui`
 
-Launch the live Textual dashboard. Requires the extra:
+Launch the live six-screen dashboard (v0.6). Requires the extra:
 `pip install "netscope[tui]"`.
+
+All screens share one round pipeline, one incident session and one local
+log — switching screens never discards state, and a screen is never left
+showing a round older than the shell's latest.
+
+| Key | Screen | What it shows |
+|---|---|---|
+| `d` | Dashboard | Live 0–100 score, trend sparkline, per-probe results, diagnosis, incident transitions |
+| `n` | Network | Every interface (name, type, state, addresses) and the detected gateway |
+| `p` | Route | Traceroute to any host: per-hop hostnames, AS numbers, loss, RTT, churn verdict |
+| `e` | Evidence | The full evidence table (observed vs expected vs deviation), ruled-out list, plain-language explanation |
+| `h` | History | Recent rounds from the local log with recomputed scores; `enter` opens a round's measurement detail |
+| `s` | Services | Status board: each measured target's latest result per check; type a host to check it on demand |
+
+Screen-local keys: `r` means "refresh" wherever you are — run a round on
+the dashboard/evidence screen, re-trace on the route screen, reload from
+the log on history/services, re-discover on network. `q` quits.
+
+Notes:
+
+- Round scores in the history screen are recomputed against the
+  *current* personal baseline — the log cannot reconstruct the baseline
+  as it stood at each round's time, and the screen says so rather than
+  pretending otherwise (the same disclosure `history` and `report` make).
+- The services board lists every target the log holds — an unchecked
+  cell renders as a dash, never as a fabricated "unknown" state.
+- The route screen traces the configured DNS target on open; type
+  another host and press enter to trace it.

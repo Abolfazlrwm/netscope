@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/Abolfazlrwm/netscope)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-586%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-595%20passing-brightgreen)](#development)
 
 NetScope doesn't just show you a latency number — it tells you whether the problem is **your Wi-Fi/router**, **your ISP**, or **the destination service**, and shows you the evidence chain behind that claim.
 
@@ -59,6 +59,17 @@ netscope speed          # download throughput, judged against your usual
 ### The dashboard
 
 ![NetScope TUI dashboard](docs/images/tui-dashboard.svg)
+
+The TUI is six screens under one shell (v0.6) — all sharing one round pipeline, one incident session, one log:
+
+| Key | Screen | What it shows |
+|---|---|---|
+| `d` | Dashboard | Live score, trend, per-probe results, diagnosis, incidents |
+| `n` | Network | Interfaces, their types/addresses, the detected gateway |
+| `p` | Route | Traceroute with hostname/ASN enrichment and churn verdict |
+| `e` | Evidence | The full evidence table, ruled-out list, plain-language explanation |
+| `h` | History | Recent rounds from the local log, with per-round detail |
+| `s` | Services | Status board of every measured target + on-demand host checks |
 
 ### The CLI
 
@@ -122,7 +133,7 @@ older rows were omitted — the aggregates always cover the full window.
 | `netscope monitor [--interval S] [--rounds N]` | Continuous rounds with sustained-problem incident detection |
 | `netscope speed [--url URL] [--seconds S]` | Download throughput: median Mbps, peak sample, bytes moved (v0.3) |
 | `netscope report [--days N] [--target T] [--out FILE]` | Export the log as a self-contained evidence report (v0.5) |
-| `netscope tui` | The live dashboard (requires `[tui]` extra) |
+| `netscope tui` | The six-screen live dashboard (requires `[tui]` extra) |
 
 Every read command accepts `--json` for machine-readable output:
 
@@ -205,7 +216,7 @@ Deep-dive documents live in [`docs/architecture/`](docs/architecture): architect
 
 ```bash
 make install    # editable install + dev tools
-make test       # 586 tests, fully offline (fake probes, no network needed)
+make test       # 595 tests, fully offline (fake probes, no network needed)
 make lint       # ruff check + format check
 make typecheck  # mypy on the package
 ```
@@ -214,7 +225,7 @@ The test suite is **fully offline** — every probe is a scripted fake, includin
 
 ## Roadmap
 
-See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.4) baseline-relative throughput verdicts — speed tests judged against your personal baseline; (v0.5) evidence-report export (`netscope report`) and user-facing usage docs. Next: per-service configs persisted, route history + churn over time, GeoIP distance estimation, packet-loss-triggered extra rounds.
+See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell. Next: per-service configs persisted, route history + churn over time, GeoIP distance estimation, packet-loss-triggered extra rounds.
 
 ## License
 
