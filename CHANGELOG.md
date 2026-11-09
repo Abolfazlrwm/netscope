@@ -6,6 +6,65 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-09
+
+The "services that stick" release: the curated service list finally has a
+home. v0.6's services board could only show what the log already held;
+v0.7 closes TASK-032's storage half -- a service you care about is on the
+board before it has any evidence.
+
+### Added
+
+- **Saved services, persisted** (TASK-032's storage half): schema v3 adds
+  the `services` table -- keyed by the user-supplied name, one row per
+  curated service -- and `ServiceRepository` implements the port ADR-005
+  has promised since the schema was first drawn (the second of the five
+  expected repository ports to land, after the baseline's). The v2 -> v3
+  migration is purely additive: a v2 database opens under v3 with every
+  pre-existing row untouched.
+- **`netscope service add/list/remove/check`**: save (or update) a
+  service by name; list the saved list exactly as persisted, alphabetical
+  by name; remove by exact name -- removing a typo'd name says so and
+  lists what *is* saved, never a silent success; and run a saved
+  service's own curated checks through the same pipeline and
+  presentation as `netscope check`, persisting to the same log.
+- **Saved services pinned on the TUI board** (`netscope tui`, `s`): a
+  curated entry appears on the services screen *before* its first check
+  -- dashes for never-measured cells, "never" for last seen -- and a
+  host that is both saved and logged shows once, not twice. The board's
+  input gains a second grammar: `name host` saves through the same use
+  case as `netscope service add` (the host is the last word; hosts never
+  contain spaces).
+- **`check_service`** use case: the saved-service form of `check_target`
+  (which is now a thin wrapper over it) -- an unsaved check IS a one-off
+  Service per the domain model; v0.7 is what makes the distinction real.
+
+### Notes
+
+- Upsert, not replace: saving over an existing name uses
+  `ON CONFLICT DO UPDATE`, touching exactly the two columns a Service
+  actually carries -- never the delete-then-insert of `INSERT OR
+  REPLACE`, which would reset anything a future migration adds.
+- The check set is stored alphabetically sorted and comma-separated --
+  byte-stable rows regardless of Python set iteration order; the CLI and
+  the TUI keep their own documented display order.
+- Writes refuse to lose data: saving or removing without a
+  ServiceRepository wired raises instead of silently dropping the write,
+  while listing without one returns an empty list -- reads tolerate
+  absence, writes do not.
+- The v0.6 TUI ran every SQLite read/write on whichever Textual worker
+  thread the pool handed it, against connections created on another
+  thread -- legal only because its tests used in-memory fakes. v0.7
+  fixes it at the root: `create_connection` opens with
+  `check_same_thread=False` (every repository access is a short,
+  self-contained transaction, and SQLite ships serialized), so the
+  shell's lazily-built container can be used from any worker.
+- Removing a service from the board is deliberately absent: removal is
+  `netscope service remove`, so the board has no destructive keys.
+
+**Quality gates:** 661 tests passing · ruff clean · mypy clean.
+
+
 ## [0.6.0] — 2026-11-09
 
 The "full picture" release: the TUI outgrows its single screen -- six
