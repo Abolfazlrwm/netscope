@@ -6,6 +6,62 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-09
+
+The "full picture" release: the TUI outgrows its single screen -- six
+screens under one shell, completing Phase I of the roadmap
+(TASK-041 -- TASK-046).
+
+### Added
+
+- **Six-screen TUI** (`netscope tui`, requires `pip install
+  netscope[tui]`): one shell owns dependency wiring, round execution
+  (the same `run_measurement_round` use case the CLI runs), incident
+  state, and screen routing. Every screen is installed once and kept
+  alive for the session -- switching never discards state, and the
+  shell re-delivers its latest round whenever a screen becomes active,
+  so no screen ever shows data older than the shell's.
+- **Network screen** (`n`, TASK-042): every interface with its type,
+  state and addresses, plus the resolved gateway -- the dashboard's
+  best-effort card promoted to a full view. Discovery runs on a
+  background worker; `r` re-discovers.
+- **Route screen** (`p`, TASK-043): traceroute through the same
+  `run_route_analysis` use case behind `netscope route` -- reverse-DNS
+  hostnames, AS numbers, per-hop loss and RTT, and the churn verdict.
+  `enter` traces any host; a failed traceroute renders as failed,
+  never as an empty route.
+- **Evidence screen** (`e`, TASK-044): the reasoning behind the
+  dashboard's one-line summary -- every evidence row (observed /
+  expected / deviation / severity), the ruled-out list, and the
+  plain-language explanation generated from the same diagnosis object.
+- **History screen** (`h`, TASK-045): recent rounds reconstructed from
+  the local log with scores recomputed against the current baseline
+  (disclosed as such); `enter` opens a round's per-measurement detail.
+  Without a measurement repository it says so instead of pretending to
+  poll.
+- **Services screen** (`s`, TASK-046): a status board of every target
+  the log holds -- each target's latest persisted result per service
+  check, dashes for never-checked cells, bandwidth rows kept out of
+  the check matrix (throughput evidence is not a service-check
+  reading). Type a host and its five checks run through `check_target`,
+  persist exactly like `netscope check`, and join the board.
+- **TUI screenshot regenerated** (`docs/images/tui-dashboard.svg`, via
+  `scripts/generate_screenshots.py`) showing the shell's new screen
+  keys.
+
+### Notes
+
+- The dashboard keeps its v0.2 content and behavior -- only the
+  plumbing moved up into the shell. A round can still land between the
+  shell's mount and a screen's own; it is replayed on mount instead of
+  dropped (the same buffering keeps early worker-failure lines).
+- A curated service list still has nowhere to persist (TASK-032's
+  storage half stays open on the roadmap), so the services board
+  derives its rows from the measurement log itself rather than
+  inventing hidden persistence.
+
+**Quality gates:** 595 tests passing · ruff clean · mypy clean.
+
 ## [0.5.0] — 2026-11-08
 
 The "show your work" release: the measurement log becomes a portable,
