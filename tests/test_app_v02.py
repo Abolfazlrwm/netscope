@@ -18,6 +18,7 @@ from netscope.app.gateway import resolve_gateway
 from netscope.app.monitoring import MonitorSession, TransitionType
 from netscope.app.reports import build_diagnose_report, serialize_diagnosis, serialize_measurement
 from netscope.app.use_cases import (
+    ROUTE_HISTORY_LIMIT,
     HistoryRound,
     check_target,
     observe_measurements,
@@ -289,6 +290,176 @@ def test_run_route_analysis_without_enrichment_tools():
     assert result.success
     assert result.snapshot.hops[0].hostname is None
     assert result.snapshot.hops[0].asn is None
+
+
+# ---------------------------------------------------------------------------
+# Route memory (v0.8) -- churn across the STORED route history
+# ---------------------------------------------------------------------------
+
+
+class _FakeRouteRepository:
+    """In-memory RouteRepository double: append-only save, load_recent
+    oldest-first. Records its call order so tests can pin the
+    compare-then-observe ordering the use case promises."""
+
+    def __init__(self) -> None:
+        self.snapshots: list[RouteSnapshot] = []
+        self.calls: list[tuple[str, tuple, dict]] = []
+
+    def save(self, snapshot: RouteSnapshot) -> None:
+        self.calls.append(("save", (snapshot,), {}))
+        self.snapshots.append(snapshot)
+
+    def load_recent(self, target: str, limit: int = 20) -> list[RouteSnapshot]:
+        self.calls.append(("load_recent", (target,), {"limit": limit}))
+        if limit <= 0:
+            raise ValueError(f"limit must be a positive integer, got {limit!r}")
+        matching = [snap for snap in self.snapshots if snap.target == target]
+        return list(reversed(matching[-limit:]))
+
+
+def _route_container_with_repo(repo: _FakeRouteRepository, addresses: list[str | None]) -> tuple[Container, _FakeRouteRepository]:
+    """A container whose traceroute always returns the given path and
+    whose route memory is the given fake."""
+    probes: dict[ProbeType, _FakeProbe] = {}
+
+    class _ScriptedTraceroute:
+        probe_type = ProbeType.TRACEROUTE
+
+        def run(self, target: str, **options: object) -> RawMeasurement:
+            snapshot = RouteSnapshot(
+                target=target,
+                hops=[RouteHop(ttl=i + 1, address=addr, hostname=None, avg_rtt_ms=10.0, packet_loss_pct=0.0) for i, addr in enumerate(addresses)],
+            )
+            return RawMeasurement(probe_type=ProbeType.TRACEROUTE, target=target, success=True, extra={"route": snapshot})
+
+    probes[ProbeType.TRACEROUTE] = _ScriptedTraceroute()  # type: ignore[assignment]
+    container = Container(probe_registry=ProbeRegistry(probes=probes), route_repository=repo)
+    return container, repo
+
+
+def test_route_memory_first_observation_prior_runs_zero_and_snapshot_stored():
+    repo = _FakeRouteRepository()
+    container, repo = _route_container_with_repo(repo, ["10.0.0.1", "203.0.113.7"])
+
+    result = run_route_analysis("example.com", container)
+
+    assert result.success
+    assert result.prior_runs == 0  # honest first-observation verdict, never "stable across 0 runs"
+    assert result.churn is not None and result.churn.is_stable
+    assert result.churn.snapshot_count == 1
+    assert len(repo.snapshots) == 1  # the run itself got stored for the NEXT run
+
+
+def test_route_memory_second_run_compares_against_the_stored_history():
+    repo = _FakeRouteRepository()
+    repo.save(
+        RouteSnapshot(
+            target="example.com",
+            timestamp=datetime(2026, 11, 10, 8, 0, tzinfo=UTC),
+            hops=[RouteHop(ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=9.0, packet_loss_pct=0.0), RouteHop(ttl=2, address="203.0.113.7", hostname=None, avg_rtt_ms=14.0, packet_loss_pct=0.0)],
+        )
+    )
+    container, repo = _route_container_with_repo(repo, ["10.0.0.1", "203.0.113.7"])
+
+    result = run_route_analysis("example.com", container)
+
+    assert result.prior_runs == 1
+    assert result.churn is not None
+    assert result.churn.snapshot_count == 2
+    assert result.churn.is_stable  # same path across runs -- now actually MEANING something
+    assert result.churn.last_change is None
+    assert result.churn.window_start is not None
+
+
+def test_route_memory_change_across_runs_carries_the_hop_diff():
+    repo = _FakeRouteRepository()
+    repo.save(
+        RouteSnapshot(
+            target="example.com",
+            timestamp=datetime(2026, 11, 10, 8, 0, tzinfo=UTC),
+            hops=[RouteHop(ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=9.0, packet_loss_pct=0.0), RouteHop(ttl=2, address="203.0.113.7", hostname=None, avg_rtt_ms=14.0, packet_loss_pct=0.0)],
+        )
+    )
+    container, repo = _route_container_with_repo(repo, ["10.0.0.1", "198.51.100.9"])
+
+    result = run_route_analysis("example.com", container)
+
+    assert result.prior_runs == 1
+    assert result.churn is not None and not result.churn.is_stable
+    change = result.churn.last_change
+    assert change is not None
+    assert [(h.ttl, h.previous_address, h.new_address) for h in change.changed_hops] == [(2, "203.0.113.7", "198.51.100.9")]
+
+
+def test_route_memory_compare_then_observe_load_precedes_save():
+    """The run's own snapshot must never appear in the window it is
+    compared against -- load the stored history FIRST, analyze, THEN
+    append (the same ordering doctrine v0.4 set for throughput
+    baselines)."""
+    repo = _FakeRouteRepository()
+    container, repo = _route_container_with_repo(repo, ["10.0.0.1"])
+
+    result = run_route_analysis("example.com", container)
+    first_run_calls = [name for name, _, _ in repo.calls]
+
+    assert first_run_calls == ["load_recent", "save"]  # load BEFORE save, exactly once each
+    assert result.prior_runs == 0
+
+    run_route_analysis("example.com", container)
+    second_run_calls = [name for name, _, _ in repo.calls[2:]]
+
+    assert second_run_calls == ["load_recent", "save"]
+    assert len(repo.snapshots) == 2
+
+
+def test_route_memory_respects_the_history_window_limit():
+    repo = _FakeRouteRepository()
+    container, repo = _route_container_with_repo(repo, ["10.0.0.1"])
+
+    run_route_analysis("example.com", container)
+
+    load_calls = [params for name, params, _ in repo.calls if name == "load_recent"]
+    assert load_calls and load_calls[0] == ("example.com",)
+    load_kwargs = [kwargs for name, _, kwargs in repo.calls if name == "load_recent"]
+    assert load_kwargs and load_kwargs[0] == {"limit": ROUTE_HISTORY_LIMIT}
+
+
+def test_route_memory_scoped_per_target():
+    repo = _FakeRouteRepository()
+    repo.save(
+        RouteSnapshot(
+            target="other.example.com",
+            timestamp=datetime(2026, 11, 10, 7, 0, tzinfo=UTC),
+            hops=[RouteHop(ttl=1, address="192.0.2.1", hostname=None, avg_rtt_ms=8.0, packet_loss_pct=0.0)],
+        )
+    )
+    container, repo = _route_container_with_repo(repo, ["10.0.0.1"])
+
+    result = run_route_analysis("example.com", container)
+
+    # Another target's stored path is not this target's history.
+    assert result.prior_runs == 0
+    assert len(repo.snapshots) == 2  # the pre-seeded one plus this run's
+
+
+def test_route_memory_without_repository_stays_v07_single_snapshot():
+    """No RouteRepository wired: v0.7's behavior, byte for byte -- the
+    analysis runs over the one in-memory snapshot, nothing is stored
+    (an automatic observation is not a user-issued save)."""
+    container, probes = _fake_container(traceroute={})
+    snapshot = _snapshot_with_hops()
+
+    def run_with_snapshot(target, **options):
+        return RawMeasurement(probe_type=ProbeType.TRACEROUTE, target=target, success=True, extra={"route": snapshot})
+
+    probes[ProbeType.TRACEROUTE].run = run_with_snapshot
+    result = run_route_analysis("example.com", container)
+
+    assert result.success
+    assert result.prior_runs == 0
+    assert result.churn is not None and result.churn.is_stable
+    assert result.churn.snapshot_count == 1
 
 
 # ---------------------------------------------------------------------------

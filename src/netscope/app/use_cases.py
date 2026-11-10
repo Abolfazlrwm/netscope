@@ -379,7 +379,16 @@ def observe_measurements(baseline: UserBaseline, measurements: list[RawMeasureme
 # Route analysis (v0.2) -- previously inline in ui/cli.py's route command,
 # promoted to an app use case so the TUI and CLI share one implementation
 # and so ASN/hostname enrichment (adapter territory) stays out of ui.
+# v0.8 added route memory: the churn verdict spans the target's stored
+# history, not just the run that produced it.
 # ---------------------------------------------------------------------------
+
+# How many stored route observations one run compares against (its own
+# snapshot appended as the window's newest member). A ceiling, not a
+# target: targets traced less often simply compare against everything
+# they have. 20 traceroutes is a generous evidence window without
+# letting one target's history grow the comparison unboundedly.
+ROUTE_HISTORY_LIMIT = 20
 
 
 @dataclass
@@ -387,11 +396,17 @@ class RouteAnalysisResult:
     """Everything one `netscope route` / TUI route view needs: the raw
     traceroute measurement, the enriched snapshot, and the churn
     analysis over it. `snapshot`/`churn` are None exactly when the
-    traceroute itself failed (never a fabricated empty route)."""
+    traceroute itself failed (never a fabricated empty route).
+
+    `prior_runs` (v0.8) is how many stored observations preceded this
+    run's snapshot in the churn comparison -- 0 for a first observation
+    or when no RouteRepository is wired; the UI's "stable" and "changed"
+    verdicts are only meaningful when it is positive."""
 
     measurement: RawMeasurement
     snapshot: RouteSnapshot | None = None
     churn: RouteChurnResult | None = None
+    prior_runs: int = 0
 
     @property
     def success(self) -> bool:
@@ -409,10 +424,28 @@ def run_route_analysis(
     (when `resolve_hostnames` and a resolver is wired), then route-stability
     analysis via the existing `core.routing.analyze_route_churn`.
 
+    ROUTE MEMORY (v0.8)
+    ---------------------
+    When a RouteRepository is wired, the churn verdict finally spans
+    runs: the target's stored history (the most recent
+    ROUTE_HISTORY_LIMIT observations, oldest first) is loaded BEFORE
+    this run's snapshot is stored, the analysis compares
+    `[*history, this run]`, and only then is the new snapshot appended
+    to the store -- compare-then-observe, the same ordering doctrine
+    v0.4 established for throughput baselines (a run must never
+    contaminate its own comparison). `RouteAnalysisResult.prior_runs`
+    tells the UI how many stored observations preceded this one: 0
+    means a first observation ("nothing to compare against yet" is then
+    the honest verdict), not an absence of memory.
+
     Every capability degrades gracefully: no ASN database -> hops keep
     asn=None; resolution failure -> hostname=None; failed traceroute ->
     RouteAnalysisResult with snapshot/churn None (the CLI reports the
-    error, never an empty route)."""
+    error, never an empty route); no RouteRepository wired -> v0.7's
+    single-snapshot behavior, unchanged (an automatic observation is
+    not a user-issued save: there is nothing to refuse to lose, unlike
+    the curated service list's explicit writes).
+    """
     measurement = container.probe_registry.get(ProbeType.TRACEROUTE).run(target)
     if not measurement.success:
         return RouteAnalysisResult(measurement=measurement)
@@ -422,8 +455,16 @@ def run_route_analysis(
         return RouteAnalysisResult(measurement=measurement)
 
     _enrich_snapshot(snapshot, container, resolve_hostnames=resolve_hostnames)
-    churn = analyze_route_churn([snapshot])
-    return RouteAnalysisResult(measurement=measurement, snapshot=snapshot, churn=churn)
+
+    route_repository = container.route_repository
+    history: list[RouteSnapshot] = (
+        route_repository.load_recent(target, limit=ROUTE_HISTORY_LIMIT) if route_repository is not None else []
+    )
+    churn = analyze_route_churn([*history, snapshot])
+    if route_repository is not None:
+        route_repository.save(snapshot)
+
+    return RouteAnalysisResult(measurement=measurement, snapshot=snapshot, churn=churn, prior_runs=len(history))
 
 
 def _enrich_snapshot(snapshot: RouteSnapshot, container: Container, *, resolve_hostnames: bool) -> None:
