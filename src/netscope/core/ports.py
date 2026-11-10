@@ -65,7 +65,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from netscope.core.baseline import UserBaseline
-from netscope.core.models import ProbeType, RawMeasurement, Service
+from netscope.core.models import ProbeType, RawMeasurement, RouteSnapshot, Service
 
 
 @runtime_checkable
@@ -194,3 +194,56 @@ class ServiceRepository(Protocol):
     def load_all(self) -> list[Service]: ...
 
     def remove(self, name: str) -> bool: ...
+
+
+@runtime_checkable
+class RouteRepository(Protocol):
+    """Contract for persisting route snapshots and loading a target's
+    route history.
+
+    WHY THIS CONTRACT EXISTS
+    -------------------------
+    ADR-005 names `RouteRepository` as one of the five aggregate
+    repository ports, and the `route_snapshots`/`route_hops` tables it
+    specified have existed in the schema since it was first drawn
+    (schema v1) -- but until v0.8, nothing wrote to them: every
+    `netscope route` run computed its churn verdict over the single
+    in-memory snapshot it had just produced, then threw the path away.
+    This port is what gives the route its memory -- `core.routing`'s
+    `analyze_route_churn` was always built to compare a SEQUENCE of
+    snapshots; storage is what makes such a sequence exist across runs.
+    Without it, `app` would need to depend on sqlite3 directly to
+    remember a path across runs, violating the same
+    core-must-not-depend-on-infrastructure rule the Probe,
+    BaselineRepository, and ServiceRepository contracts above uphold
+    (adr-001-architecture-style.md, ADR-005).
+
+    CONTRACT SEMANTICS
+    --------------------
+    - `save(snapshot)` **appends** one observation: routes are a log,
+      not a curated list -- every traceroute run is a new data point,
+      never an edit of a previous one. The snapshot's hops are stored
+      exactly as enriched by the caller; `RouteSnapshot.signature()` is
+      address-derived, so lookup enrichment (ASN/hostname) can never
+      alter what the history compares.
+    - `load_recent(target, limit)` returns the target's most recent
+      `limit` snapshots **oldest first** -- chronological order, the
+      exact sequence `analyze_route_churn` requires (it compares
+      consecutive pairs and explicitly does not sort). Fewer than
+      `limit` snapshots (or none at all -- a target never traced before)
+      is a normal result, not an error.
+
+    Like the other repository ports, this is a single-user, local-first
+    contract (ADR-005, architecture-overview.md SS14): the history a
+    local installation observed is what it compares against.
+
+    Per ADR-005 this is the third of the five expected repository ports
+    to land in `core.ports` (after TASK-024's `BaselineRepository` and
+    v0.7's `ServiceRepository`); concrete SQLite persistence is
+    explicitly out of scope here and belongs to `persistence/` -- this
+    module continues to define contracts only, per its existing design.
+    """
+
+    def save(self, snapshot: RouteSnapshot) -> None: ...
+
+    def load_recent(self, target: str, limit: int = 20) -> list[RouteSnapshot]: ...
