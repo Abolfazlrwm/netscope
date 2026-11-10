@@ -586,9 +586,7 @@ def test_route_command_json_carries_the_full_stability_shape(capsys):
     assert stability["is_stable"] is False
     assert stability["prior_runs"] == 1
     assert stability["window_start"] == "2026-11-09T10:00:00+00:00"
-    assert stability["last_change"]["changed_hops"] == [
-        {"ttl": 2, "previous_address": "203.0.113.7", "new_address": "198.51.100.9"}
-    ]
+    assert stability["last_change"]["changed_hops"] == [{"ttl": 2, "previous_address": "203.0.113.7", "new_address": "198.51.100.9"}]
     # pre-existing keys keep their shape
     assert stability["change_count"] == 1
     assert stability["snapshot_count"] == 2

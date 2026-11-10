@@ -457,9 +457,7 @@ def run_route_analysis(
     _enrich_snapshot(snapshot, container, resolve_hostnames=resolve_hostnames)
 
     route_repository = container.route_repository
-    history: list[RouteSnapshot] = (
-        route_repository.load_recent(target, limit=ROUTE_HISTORY_LIMIT) if route_repository is not None else []
-    )
+    history: list[RouteSnapshot] = route_repository.load_recent(target, limit=ROUTE_HISTORY_LIMIT) if route_repository is not None else []
     churn = analyze_route_churn([*history, snapshot])
     if route_repository is not None:
         route_repository.save(snapshot)

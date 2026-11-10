@@ -357,7 +357,10 @@ def test_route_memory_second_run_compares_against_the_stored_history():
         RouteSnapshot(
             target="example.com",
             timestamp=datetime(2026, 11, 10, 8, 0, tzinfo=UTC),
-            hops=[RouteHop(ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=9.0, packet_loss_pct=0.0), RouteHop(ttl=2, address="203.0.113.7", hostname=None, avg_rtt_ms=14.0, packet_loss_pct=0.0)],
+            hops=[
+                RouteHop(ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=9.0, packet_loss_pct=0.0),
+                RouteHop(ttl=2, address="203.0.113.7", hostname=None, avg_rtt_ms=14.0, packet_loss_pct=0.0),
+            ],
         )
     )
     container, repo = _route_container_with_repo(repo, ["10.0.0.1", "203.0.113.7"])
@@ -378,7 +381,10 @@ def test_route_memory_change_across_runs_carries_the_hop_diff():
         RouteSnapshot(
             target="example.com",
             timestamp=datetime(2026, 11, 10, 8, 0, tzinfo=UTC),
-            hops=[RouteHop(ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=9.0, packet_loss_pct=0.0), RouteHop(ttl=2, address="203.0.113.7", hostname=None, avg_rtt_ms=14.0, packet_loss_pct=0.0)],
+            hops=[
+                RouteHop(ttl=1, address="10.0.0.1", hostname=None, avg_rtt_ms=9.0, packet_loss_pct=0.0),
+                RouteHop(ttl=2, address="203.0.113.7", hostname=None, avg_rtt_ms=14.0, packet_loss_pct=0.0),
+            ],
         )
     )
     container, repo = _route_container_with_repo(repo, ["10.0.0.1", "198.51.100.9"])

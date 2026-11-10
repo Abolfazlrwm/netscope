@@ -27,7 +27,18 @@ def repo(tmp_path):
     repository.close()
 
 
-def _hop(address: str | None, *, ttl: int = 1, hostname: str | None = None, avg_rtt_ms: float | None = 12.5, packet_loss_pct: float = 0.0, asn: str | None = None, organization: str | None = None, country: str | None = None, is_unstable: bool = False) -> RouteHop:
+def _hop(
+    address: str | None,
+    *,
+    ttl: int = 1,
+    hostname: str | None = None,
+    avg_rtt_ms: float | None = 12.5,
+    packet_loss_pct: float = 0.0,
+    asn: str | None = None,
+    organization: str | None = None,
+    country: str | None = None,
+    is_unstable: bool = False,
+) -> RouteHop:
     return RouteHop(
         ttl=ttl,
         address=address,
