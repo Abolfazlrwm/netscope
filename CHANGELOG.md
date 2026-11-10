@@ -6,6 +6,68 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-10
+
+The "route memory" release: `netscope route` finally remembers. The
+`route_snapshots`/`route_hops` tables ADR-005 drew into the very first
+schema existed since day one -- and sat there dead: no writer, no reader,
+every run's churn verdict computed over the single snapshot it had just
+produced and then thrown away. v0.8 feeds those tables and reads them back,
+so the stability verdict now spans runs: "unchanged across the last 7 runs,
+same path since Thursday" is evidence; "stable (single snapshot)" was a
+non-verdict.
+
+### Added
+
+- **Route history, persisted** (`RouteRepository`, the third of ADR-005's
+  five repository ports to land, after the baseline's and the service
+  list's): every `netscope route` run -- and every TUI trace -- appends its
+  enriched snapshot to the store. No migration was needed: the tables date
+  from schema v1, `SCHEMA_VERSION` stays 3, and a v2-era database opens
+  as-is; the first run simply starts filling tables that have been waiting
+  since the schema was drawn.
+- **Churn across the stored window**: the use case loads the target's most
+  recent 20 observations (oldest first -- the exact chronological order
+  `analyze_route_churn` compares), analyzes `[*history, this run]`, and only
+  then appends the new snapshot -- compare-then-observe, the same ordering
+  doctrine v0.4 set for throughput baselines: a run must never contaminate
+  its own comparison.
+- **Hop-level diffs**: a `RouteChange` now records WHICH hops moved
+  (`RouteHopChange`, positionally paired -- the same pairing the signature
+  compares, so the diff can never disagree with the verdict). A hop that
+  answered last run and timed out this run shows as `→ no reply`, not as a
+  generic "changed"; a path that grew or shrank diffs at exactly the
+  positions the hop lists disagree.
+- **`netscope route` verdicts that mean something**: "first observation --
+  future runs compare against this path" replaces the old single-snapshot
+  "stable" (a certainty the evidence did not support); "unchanged across the
+  last N runs -- same path since <date>"; and "changed vs <date> -- hop K:
+  <old> → <new>", with the window's change count beneath it when more than
+  one path transition is in the window. `--json`'s `stability` block gains
+  `prior_runs`, `window_start`, and a `last_change` object carrying the
+  FULL hop diff (the human line caps at three hops; machines get every
+  moved position).
+- **TUI route screen speaks the same language**: the status tail carries
+  the compact verdict ("stable across 5 runs" / "changed vs 11-09 10:00 --
+  hop 3: ...") from the same shared renderer the CLI uses -- one wording,
+  two densities, no drift.
+
+### Notes
+
+- Verdict honesty is enforced by wording, not just intent: `prior_runs == 0`
+  (a first observation, or no repository wired) can never print "stable" --
+  `route_stability_summary` reserves that word for windows that actually
+  contain more than one observation.
+- Graceful degradation, v0.7 doctrine: no `RouteRepository` wired -> v0.7's
+  single-snapshot behavior, byte for byte, and nothing is stored (an
+  automatic observation is not a user-issued save -- there is nothing to
+  refuse to lose, unlike the curated service list's explicit writes).
+- Lookup enrichment stays outside the comparison: `signature()` is
+  address-derived, so an ASN database or reverse-DNS refresh alone can
+  never register as a route change -- the guarantee
+  `tests/test_routing.py::test_churn_detection_is_unaffected_by_asn_organization_country_changes`
+  has pinned since v0.2, now load-bearing for persisted history.
+
 ## [0.7.0] — 2026-11-09
 
 The "services that stick" release: the curated service list finally has a

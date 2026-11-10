@@ -71,9 +71,22 @@ presentation as `netscope check`, and results persist to the same log.
 
 Traceroute to a target with hop RTT/loss and route-stability analysis.
 
+Every run is stored locally (schema v1's `route_snapshots`/`route_hops`
+tables, finally fed by v0.8), so the stability verdict compares against your
+target's real history — not just the run that produced it:
+
+- **first observation** — nothing stored yet; future runs compare against
+  this path
+- **unchanged across the last N runs — same path since <date>** — the stored
+  path matches, hop for hop
+- **changed vs <date> — hop K: <old> → <new>** — the path moved; which hop
+  position and what it became (a hop that stopped answering reads as
+  `→ no reply`)
+
 | Flag | Meaning |
 |---|---|
 | `--no-resolve` | skip reverse-DNS hostname resolution for hops |
+| `--json` | machine-readable output; `stability.last_change` carries the full hop diff (the human line caps at three hops) |
 
 ## `netscope history`
 
