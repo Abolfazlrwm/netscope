@@ -473,18 +473,125 @@ def test_route_command_presents_a_hop_with_no_response_without_fabricating_data(
 # --- F. Route-analysis wiring --------------------------------------------------
 
 
-def test_route_command_reports_stability_for_a_single_snapshot(capsys):
-    """A single traceroute has nothing to compare against --
-    analyze_route_churn's own documented behavior (TASK-021) reports
-    this as stable; the CLI must present that honestly, not claim
-    certainty beyond what was observed."""
+def test_route_command_reports_a_first_observation_for_a_single_snapshot(capsys):
+    """A single traceroute has nothing to compare against -- the CLI
+    must present that honestly as a FIRST OBSERVATION, not claim a
+    stability the evidence does not support (analyze_route_churn's
+    documented behavior, v0.8's wording)."""
     fake = _FakeTracerouteProbe(hops=_sample_hops())
     container = Container(probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}))
 
     run_route_command(container, "example.com")
 
     captured = capsys.readouterr()
-    assert "stable" in captured.out.lower()
+    assert "first observation" in captured.out.lower()
+
+
+def test_route_command_reports_stability_across_stored_runs(capsys):
+    """With route memory wired and an unchanged stored path, the verdict
+    names the run count and the window -- real cross-run evidence, not
+    the single-snapshot non-verdict."""
+    from datetime import UTC, datetime
+
+    class _RememberingRepo:
+        def __init__(self) -> None:
+            self.saved: list[RouteSnapshot] = []
+
+        def save(self, snapshot: RouteSnapshot) -> None:
+            self.saved.append(snapshot)
+
+        def load_recent(self, target: str, limit: int = 20) -> list[RouteSnapshot]:
+            return [
+                RouteSnapshot(
+                    target=target,
+                    timestamp=datetime(2026, 11, 9, 10, 0, tzinfo=UTC),
+                    hops=list(_sample_hops()),
+                )
+            ]
+
+    fake = _FakeTracerouteProbe(hops=_sample_hops())
+    container = Container(
+        probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}),
+        route_repository=_RememberingRepo(),
+    )
+
+    run_route_command(container, "example.com")
+
+    captured = capsys.readouterr()
+    assert "unchanged across the last 2 runs" in captured.out
+    assert "same path since" in captured.out
+
+
+def _hop_like(address: str, *, ttl: int = 1) -> RouteHop:
+    return RouteHop(ttl=ttl, address=address, hostname=None, avg_rtt_ms=10.0, packet_loss_pct=0.0)
+
+
+def test_route_command_reports_the_changed_hops_when_the_path_moves(capsys):
+    """A stored path that differs from this run's: the verdict leads
+    with WHEN it changed and WHICH hop moved -- the v0.8 promise."""
+    from datetime import UTC, datetime
+
+    previous_hops = [_hop_like(addr, ttl=i + 1) for i, addr in enumerate(["10.0.0.1", "203.0.113.7"])]
+    new_hops = [_hop_like(addr, ttl=i + 1) for i, addr in enumerate(["10.0.0.1", "198.51.100.9"])]
+
+    class _ChangingRepo:
+        def save(self, snapshot: RouteSnapshot) -> None: ...
+
+        def load_recent(self, target: str, limit: int = 20) -> list[RouteSnapshot]:
+            return [RouteSnapshot(target=target, timestamp=datetime(2026, 11, 9, 10, 0, tzinfo=UTC), hops=previous_hops)]
+
+    fake = _FakeTracerouteProbe(hops=new_hops)
+    container = Container(
+        probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}),
+        route_repository=_ChangingRepo(),
+    )
+
+    run_route_command(container, "example.com")
+
+    captured = " ".join(capsys.readouterr().out.split())  # rich wraps long lines; collapse before asserting
+    assert "changed vs 2026-11-09 10:00:00" in captured
+    assert "hop 2: 203.0.113.7 → 198.51.100.9" in captured
+
+
+def test_route_command_json_carries_the_full_stability_shape(capsys):
+    """--json extends the stability block (prior_runs / window_start /
+    last_change with the full hop diff) without touching the existing
+    keys -- machine consumers keep working."""
+    import json as _json
+    from datetime import UTC, datetime
+
+    class _RememberingRepo:
+        def save(self, snapshot: RouteSnapshot) -> None: ...
+
+        def load_recent(self, target: str, limit: int = 20) -> list[RouteSnapshot]:
+            return [
+                RouteSnapshot(
+                    target=target,
+                    timestamp=datetime(2026, 11, 9, 10, 0, tzinfo=UTC),
+                    hops=[_hop_like("10.0.0.1", ttl=1), _hop_like("203.0.113.7", ttl=2)],
+                )
+            ]
+
+    fake = _FakeTracerouteProbe(hops=[_hop_like("10.0.0.1", ttl=1), _hop_like("198.51.100.9", ttl=2)])
+    container = Container(
+        probe_registry=ProbeRegistry(probes={ProbeType.TRACEROUTE: fake}),
+        route_repository=_RememberingRepo(),
+    )
+
+    exit_code = run_route_command(container, "example.com", json_output=True)
+
+    assert exit_code == 0
+    payload = _json.loads(capsys.readouterr().out)
+    stability = payload["stability"]
+    assert stability["is_stable"] is False
+    assert stability["prior_runs"] == 1
+    assert stability["window_start"] == "2026-11-09T10:00:00+00:00"
+    assert stability["last_change"]["changed_hops"] == [
+        {"ttl": 2, "previous_address": "203.0.113.7", "new_address": "198.51.100.9"}
+    ]
+    # pre-existing keys keep their shape
+    assert stability["change_count"] == 1
+    assert stability["snapshot_count"] == 2
 
 
 def test_route_command_does_not_reimplement_route_churn_logic():

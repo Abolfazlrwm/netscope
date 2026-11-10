@@ -1,11 +1,19 @@
 """Tests for netscope.ui.render's speed panel -- the user-facing side
 of the v0.4 baseline-relative verdict: the comparison line appears
-exactly when the use case attached one, with a human-readable label."""
+exactly when the use case attached one, with a human-readable label.
+v0.8 adds the route-memory wording tests: one shared stability verdict
+(`route_stability_summary`) and one hop-diff line (`format_route_change`)
+behind both the CLI and the TUI."""
 
 from __future__ import annotations
 
-from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
-from netscope.ui.render import speed_panel
+from datetime import UTC, datetime
+
+from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, RouteHop, RouteSnapshot
+from netscope.core.routing import RouteChange, RouteHopChange, analyze_route_churn
+from netscope.ui.render import format_route_change, route_stability_summary, speed_panel
+
+_STAMP = datetime(2026, 11, 10, 9, 30, tzinfo=UTC)
 
 
 def _speed_measurement(extra: dict) -> RawMeasurement:
@@ -52,3 +60,110 @@ def test_speed_panel_failure_path_is_unchanged():
         )
     )
     assert "speed test failed" in panel.renderable.plain
+
+
+# ---------------------------------------------------------------------------
+# Route memory wording (v0.8) -- one shared verdict, two densities
+# ---------------------------------------------------------------------------
+
+
+def _hop(address: str | None, *, ttl: int = 1) -> RouteHop:
+    return RouteHop(ttl=ttl, address=address, hostname=None, avg_rtt_ms=10.0, packet_loss_pct=0.0)
+
+
+def _changed_route_change() -> RouteChange:
+    return RouteChange(
+        previous_signature="10.0.0.1|10.0.0.2|10.0.0.3",
+        new_signature="10.0.0.1|10.0.0.2|10.0.0.9",
+        previous_timestamp=datetime(2026, 11, 9, 10, 0, tzinfo=UTC),
+        new_timestamp=datetime(2026, 11, 10, 9, 30, tzinfo=UTC),
+        changed_hops=[RouteHopChange(ttl=3, previous_address="10.0.0.3", new_address="10.0.0.9")],
+    )
+
+
+def test_format_route_change_names_the_moved_hop():
+    line = format_route_change(_changed_route_change())
+    assert line == "hop 3: 10.0.0.3 → 10.0.0.9"
+
+
+def test_format_route_change_reads_a_dropped_hop_as_no_reply():
+    change = RouteChange(
+        previous_signature="10.0.0.1|10.0.0.2",
+        new_signature="10.0.0.1|*",
+        previous_timestamp=datetime(2026, 11, 9, 10, 0, tzinfo=UTC),
+        new_timestamp=datetime(2026, 11, 10, 9, 30, tzinfo=UTC),
+        changed_hops=[RouteHopChange(ttl=2, previous_address="10.0.0.2", new_address=None)],
+    )
+    assert format_route_change(change) == "hop 2: 10.0.0.2 → no reply"
+
+
+def test_format_route_change_caps_at_three_hops_then_discloses_the_rest():
+    change = RouteChange(
+        previous_signature="a|b|c|d|e",
+        new_signature="a|x|y|z|w",
+        previous_timestamp=datetime(2026, 11, 9, 10, 0, tzinfo=UTC),
+        new_timestamp=datetime(2026, 11, 10, 9, 30, tzinfo=UTC),
+        changed_hops=[
+            RouteHopChange(ttl=2, previous_address="b", new_address="x"),
+            RouteHopChange(ttl=3, previous_address="c", new_address="y"),
+            RouteHopChange(ttl=4, previous_address="d", new_address="z"),
+            RouteHopChange(ttl=5, previous_address="e", new_address="w"),
+            RouteHopChange(ttl=6, previous_address="f", new_address="v"),
+        ],
+    )
+    line = format_route_change(change)
+    assert line.startswith("hop 2: b → x, hop 3: c → y, hop 4: d → z")
+    assert line.endswith("(+2 more)")
+
+
+def test_stability_summary_first_observation_is_never_called_stable():
+    churn = analyze_route_churn([RouteSnapshot(target="example.com", timestamp=_STAMP, hops=[_hop("10.0.0.1")])])
+    assert "first observation" in route_stability_summary(churn, prior_runs=0)
+    assert "stable" not in route_stability_summary(churn, prior_runs=0)
+
+
+def test_stability_summary_stable_across_runs_names_the_window():
+    start = datetime(2026, 11, 9, 10, 0, tzinfo=UTC)
+    churn = analyze_route_churn(
+        [
+            RouteSnapshot(target="example.com", timestamp=start, hops=[_hop("10.0.0.1")]),
+            RouteSnapshot(target="example.com", timestamp=_STAMP, hops=[_hop("10.0.0.1")]),
+        ]
+    )
+    line = route_stability_summary(churn, prior_runs=1)
+    assert "unchanged across the last 2 runs" in line
+    assert "same path since 2026-11-09 10:00:00" in line
+
+
+def test_stability_summary_changed_leads_with_when_and_what():
+    previous = RouteSnapshot(
+        target="example.com",
+        timestamp=datetime(2026, 11, 9, 10, 0, tzinfo=UTC),
+        hops=[_hop("10.0.0.1"), _hop("10.0.0.3", ttl=2)],
+    )
+    current = RouteSnapshot(
+        target="example.com",
+        timestamp=_STAMP,
+        hops=[_hop("10.0.0.1"), _hop("10.0.0.9", ttl=2)],
+    )
+    churn = analyze_route_churn([previous, current])
+    line = route_stability_summary(churn, prior_runs=1)
+    assert line == "changed vs 2026-11-09 10:00:00 — hop 2: 10.0.0.3 → 10.0.0.9"
+
+
+def test_stability_summary_compact_is_the_tui_density():
+    previous = RouteSnapshot(
+        target="example.com",
+        timestamp=datetime(2026, 11, 9, 10, 0, tzinfo=UTC),
+        hops=[_hop("10.0.0.1"), _hop("10.0.0.3", ttl=2)],
+    )
+    current = RouteSnapshot(
+        target="example.com",
+        timestamp=datetime(2026, 11, 10, 9, 30, tzinfo=UTC),
+        hops=[_hop("10.0.0.1"), _hop("10.0.0.9", ttl=2)],
+    )
+    churn = analyze_route_churn([previous, current])
+    assert route_stability_summary(churn, prior_runs=1, compact=True) == "changed vs 11-09 10:00 — hop 2: 10.0.0.3 → 10.0.0.9"
+
+    stable = analyze_route_churn([current, current])
+    assert route_stability_summary(stable, prior_runs=2, compact=True) == "stable across 2 runs"

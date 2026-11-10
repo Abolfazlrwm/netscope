@@ -63,6 +63,7 @@ from netscope.app.reports import (
     serialize_evidence_report,
     serialize_experience,
     serialize_measurement,
+    serialize_route_change,
     serialize_route_hops,
 )
 from netscope.app.use_cases import (
@@ -84,6 +85,7 @@ from netscope.ui.render import (
     diagnosis_panel,
     format_time,
     measurements_table,
+    route_stability_summary,
     route_table,
     speed_panel,
     truncate,
@@ -504,6 +506,7 @@ def run_route_command(
     result = run_route_analysis(target, container, resolve_hostnames=resolve_hostnames)
 
     if json_output:
+        churn = result.churn
         payload = {
             "tool": "netscope",
             "report": "route",
@@ -512,9 +515,12 @@ def run_route_command(
             "error": result.measurement.error,
             "hops": serialize_route_hops(result.snapshot.hops) if result.snapshot is not None else [],
             "stability": {
-                "is_stable": result.churn.is_stable if result.churn else None,
-                "change_count": result.churn.change_count if result.churn else None,
-                "snapshot_count": result.churn.snapshot_count if result.churn else None,
+                "is_stable": churn.is_stable if churn else None,
+                "change_count": churn.change_count if churn else None,
+                "snapshot_count": churn.snapshot_count if churn else None,
+                "prior_runs": result.prior_runs,
+                "window_start": churn.window_start.isoformat() if churn is not None and churn.window_start is not None else None,
+                "last_change": serialize_route_change(churn.last_change) if churn is not None and churn.last_change is not None else None,
             },
         }
         console().print_json(json.dumps(payload))
@@ -535,10 +541,12 @@ def run_route_command(
         f"(drop an ASN database at ~/.netscope/ipasn.dat to enable AS numbers)[/dim]"
     )
 
-    if result.churn.is_stable:
-        c.print("Route stability: stable (single snapshot observed -- nothing to compare against yet)")
-    else:
-        c.print(f"Route stability: {result.churn.change_count} change(s) detected across {result.churn.snapshot_count} snapshots")
+    c.print(f"Route stability: {route_stability_summary(result.churn, result.prior_runs)}")
+    if not result.churn.is_stable and result.churn.change_count > 1:
+        c.print(
+            f"  [dim]{result.churn.change_count} path change(s) across the last {result.churn.snapshot_count} runs -- "
+            "the latest is shown; --json carries them all[/dim]"
+        )
     c.print()
     return 0
 

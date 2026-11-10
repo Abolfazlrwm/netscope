@@ -30,6 +30,7 @@ from rich.text import Text
 from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS
 from netscope.core.baseline import VERDICT_AS_USUAL, VERDICT_FASTER, VERDICT_SLOWER
 from netscope.core.models import Diagnosis, ExperienceEvent, ExperienceLevel, Hypothesis, RawMeasurement, RouteHop
+from netscope.core.routing import RouteChange, RouteChurnResult
 
 _console: Console | None = None
 
@@ -296,3 +297,55 @@ def route_table(hops: list[RouteHop], *, title: str | None = None) -> Table:
             loss,
         )
     return table
+
+
+def format_route_change(change: RouteChange) -> str:
+    """One RouteChange -> a human one-liner naming WHICH hops moved:
+    'hop 3: 10.0.0.3 → no reply, hop 4: 10.0.0.4 → 10.0.0.9 (+2 more)'.
+
+    Presentation is the one place allowed to know how a hop diff reads
+    -- core.routing only reports the data (v0.8's RouteHopChange list).
+    A dropped hop reads as '→ no reply' (the traceroute truth: that
+    position stopped answering, '*' in the signature); an added hop is
+    the reverse. At most three hops are spelled out before a '+N more'
+    keeps the line one line -- the full diff stays in the data for the
+    --json payload."""
+    if not change.changed_hops:
+        return "path changed"
+    parts = []
+    for hop_change in change.changed_hops[:3]:
+        previous = hop_change.previous_address or "no reply"
+        new = hop_change.new_address or "no reply"
+        parts.append(f"hop {hop_change.ttl}: {previous} → {new}")
+    line = ", ".join(parts)
+    if len(change.changed_hops) > 3:
+        line += f" (+{len(change.changed_hops) - 3} more)"
+    return line
+
+
+def route_stability_summary(churn: RouteChurnResult, prior_runs: int, *, compact: bool = False) -> str:
+    """The churn verdict as one human phrase -- the shared wording behind
+    `netscope route`'s stability line and the TUI route screen's status
+    tail. `compact=True` is the TUI's shorter density (a tight time
+    stamp, no 'since' clause); the verdict logic lives in exactly one
+    place so the two views cannot drift.
+
+    The honesty rule mirrors the use case's: `prior_runs == 0` is a
+    FIRST OBSERVATION -- 'stable' would claim a certainty (nothing has
+    changed) the evidence does not support, so it is never printed for
+    a single snapshot."""
+    if prior_runs == 0:
+        return "first observation" if compact else "first observation — future runs compare against this path"
+    if churn.is_stable:
+        if compact:
+            return f"stable across {churn.snapshot_count} runs"
+        since = churn.window_start
+        suffix = f" — same path since {format_time(since)}" if since is not None else ""
+        return f"unchanged across the last {churn.snapshot_count} runs{suffix}"
+    change = churn.last_change
+    if change is None:
+        return "path changed"
+    diff = format_route_change(change)
+    if compact:
+        return f"changed vs {change.previous_timestamp.strftime('%m-%d %H:%M')} — {diff}"
+    return f"changed vs {format_time(change.previous_timestamp)} — {diff}"

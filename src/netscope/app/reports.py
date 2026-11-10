@@ -47,6 +47,7 @@ from netscope.core.models import (
     RouteHop,
     RouteSnapshot,
 )
+from netscope.core.routing import RouteChange
 
 _JSON_SCALARS = (str, int, float, bool, type(None))
 
@@ -173,6 +174,25 @@ def serialize_route_snapshot(snapshot: RouteSnapshot) -> dict[str, Any]:
         "target": snapshot.target,
         "timestamp": snapshot.timestamp.isoformat(),
         "hops": serialize_route_hops(snapshot.hops),
+    }
+
+
+def serialize_route_change(change: RouteChange) -> dict[str, Any]:
+    """One RouteChange -> JSON-safe dict (the `--json` shape of
+    `netscope route`'s `stability.last_change`, v0.8). The hop diff is
+    included in full here -- the human rendering caps at three hops,
+    but machine consumers get every moved position."""
+    return {
+        "previous_timestamp": change.previous_timestamp.isoformat(),
+        "new_timestamp": change.new_timestamp.isoformat(),
+        "changed_hops": [
+            {
+                "ttl": hop_change.ttl,
+                "previous_address": hop_change.previous_address,
+                "new_address": hop_change.new_address,
+            }
+            for hop_change in change.changed_hops
+        ],
     }
 
 
