@@ -318,6 +318,19 @@ def create_connection(db_path: Path | str) -> sqlite3.Connection:
     through one connection is safe -- what the default guarded against
     (concurrent unserialized access to a shared connection) is not a
     pattern this codebase has: workers run one operation at a time.
+
+    v0.8 sharpens that story one notch: each repository also holds a
+    `threading.Lock` around each of its methods, so a "short,
+    self-contained transaction" is also EXCLUSIVE. SQLite's serialized
+    mode serializes the C calls, but not the Python-level sequence
+    execute -> fetchall: two threads issuing the SAME SQL through one
+    connection hit the connection's shared statement cache, and the
+    second thread's statement reuse resets the first one's scan
+    mid-fetch -- columns come back as None, tuples change length
+    underneath a reader. The CI windows job caught the services board
+    doing exactly that (a test polling `load_all()` while the save
+    worker refreshed the board); the lock closes it at the repository
+    boundary, where the execute+fetch pair already lives.
     """
     path = Path(db_path)
     if str(path) != ":memory:":

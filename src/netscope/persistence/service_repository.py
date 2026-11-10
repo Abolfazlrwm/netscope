@@ -61,6 +61,7 @@ user left it.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
 from netscope.core.models import ProbeType, Service
@@ -101,6 +102,15 @@ class ServiceRepository:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
         self._conn.row_factory = sqlite3.Row
+        # v0.8: every repository access is a short, self-contained
+        # transaction (the v0.7 cross-thread doctrine) -- the lock makes
+        # "short" also EXCLUSIVE, so two threads can never run the same
+        # statement against the shared connection's statement cache at
+        # once (that race hands back garbage rows: columns read as None
+        # or tuples that change length mid-fetch; the CI windows job
+        # caught the services screen doing exactly this). See
+        # schema.py's create_connection docstring for the full story.
+        self._lock = threading.Lock()
 
     @classmethod
     def open(cls, db_path: Path | str = DEFAULT_DB_PATH) -> ServiceRepository:
@@ -117,36 +127,38 @@ class ServiceRepository:
         why DO UPDATE and not INSERT OR REPLACE). Wrapped in a
         transaction (`with self._conn:`) like every other write in this
         package."""
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
-                INSERT INTO services (name, host, checks)
-                VALUES (?, ?, ?)
-                ON CONFLICT(name) DO UPDATE SET
-                    host = excluded.host,
-                    checks = excluded.checks
-                """,
+                    INSERT INTO services (name, host, checks)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(name) DO UPDATE SET
+                        host = excluded.host,
+                        checks = excluded.checks
+                    """,
                 (service.name, service.host, _checks_to_storage(service.enabled_checks)),
             )
 
     def load_all(self) -> list[Service]:
         """Every saved Service, alphabetical by name -- the port's
         documented deterministic order."""
-        cur = self._conn.execute("SELECT * FROM services ORDER BY name ASC")
-        return [_row_to_service(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute("SELECT * FROM services ORDER BY name ASC")
+            return [_row_to_service(row) for row in cur.fetchall()]
 
     def get(self, name: str) -> Service | None:
         """One saved Service by exact name, or None -- a convenience the
         port doesn't require but every caller (the CLI's add/remove/
         check, the TUI's save flow) ends up wanting."""
-        cur = self._conn.execute("SELECT * FROM services WHERE name = ?", (name,))
-        row = cur.fetchone()
-        return _row_to_service(row) if row is not None else None
+        with self._lock:
+            cur = self._conn.execute("SELECT * FROM services WHERE name = ?", (name,))
+            row = cur.fetchone()
+            return _row_to_service(row) if row is not None else None
 
     def remove(self, name: str) -> bool:
         """Delete one saved Service by exact name; True iff a row
         actually existed."""
-        with self._conn:
+        with self._lock, self._conn:
             cur = self._conn.execute("DELETE FROM services WHERE name = ?", (name,))
         return cur.rowcount > 0
 

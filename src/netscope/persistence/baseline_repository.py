@@ -49,6 +49,7 @@ WHAT THIS MODULE DOES NOT DO
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
 from netscope.core.baseline import MetricBaseline, UserBaseline
@@ -81,6 +82,11 @@ class BaselineRepository:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
         self._conn.row_factory = sqlite3.Row
+        # Every repository access is a short, self-contained transaction
+        # (the v0.7 cross-thread doctrine); the lock makes "short" also
+        # EXCLUSIVE -- see ServiceRepository's own comment for the
+        # statement-cache race this closes, and schema.py for the story.
+        self._lock = threading.Lock()
 
     @classmethod
     def open(cls, db_path: Path | str = DEFAULT_DB_PATH) -> BaselineRepository:
@@ -95,15 +101,16 @@ class BaselineRepository:
         `UserBaseline` when nothing has been saved yet -- a missing
         baseline is the normal first-run state, not an error (the same
         convention the port's own docstring establishes)."""
-        baseline = UserBaseline()
-        cur = self._conn.execute("SELECT target, metric_type, count, mean, m2 FROM metric_baselines")
-        for row in cur.fetchall():
-            store_name = _METRIC_TYPE_TO_STORE[row["metric_type"]]
-            getattr(baseline, store_name)[row["target"]] = _row_to_metric_baseline(row)
-        cur = self._conn.execute("SELECT target, count, mean, m2 FROM throughput_baselines")
-        for row in cur.fetchall():
-            baseline.throughput[row["target"]] = _row_to_metric_baseline(row)
-        return baseline
+        with self._lock:
+            baseline = UserBaseline()
+            cur = self._conn.execute("SELECT target, metric_type, count, mean, m2 FROM metric_baselines")
+            for row in cur.fetchall():
+                store_name = _METRIC_TYPE_TO_STORE[row["metric_type"]]
+                getattr(baseline, store_name)[row["target"]] = _row_to_metric_baseline(row)
+            cur = self._conn.execute("SELECT target, count, mean, m2 FROM throughput_baselines")
+            for row in cur.fetchall():
+                baseline.throughput[row["target"]] = _row_to_metric_baseline(row)
+            return baseline
 
     def save(self, baseline: UserBaseline) -> None:
         """Persist the full baseline state in one transaction: replace
@@ -117,7 +124,7 @@ class BaselineRepository:
             (target, metric.count, metric.mean, metric._m2) for target, metric in baseline.throughput.items()
         ]
 
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute("DELETE FROM metric_baselines")
             self._conn.executemany(
                 "INSERT OR REPLACE INTO metric_baselines (target, metric_type, count, mean, m2) VALUES (?, ?, ?, ?, ?)",

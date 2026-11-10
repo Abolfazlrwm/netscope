@@ -60,6 +60,7 @@ observation is append-only evidence.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -94,6 +95,11 @@ class RouteRepository:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
         self._conn.row_factory = sqlite3.Row
+        # Every repository access is a short, self-contained transaction
+        # (the v0.7 cross-thread doctrine); the lock makes "short" also
+        # EXCLUSIVE -- see ServiceRepository's own comment for the
+        # statement-cache race this closes, and schema.py for the story.
+        self._lock = threading.Lock()
 
     @classmethod
     def open(cls, db_path: Path | str = DEFAULT_DB_PATH) -> RouteRepository:
@@ -109,23 +115,23 @@ class RouteRepository:
         `route_hops` row per hop, all in a single transaction (see the
         module docstring for why the snapshot row must not outlive a
         failed hop write)."""
-        with self._conn:
+        with self._lock, self._conn:
             cur = self._conn.execute(
                 """
-                INSERT INTO route_snapshots (target, timestamp)
-                VALUES (?, ?)
-                """,
+                    INSERT INTO route_snapshots (target, timestamp)
+                    VALUES (?, ?)
+                    """,
                 (snapshot.target, snapshot.timestamp.isoformat()),
             )
             snapshot_id = cur.lastrowid
             self._conn.executemany(
                 """
-                INSERT INTO route_hops
-                    (route_snapshot_id, hop_index, ttl, address, hostname,
-                     avg_rtt_ms, packet_loss_pct, asn, organization, country,
-                     is_unstable)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                    INSERT INTO route_hops
+                        (route_snapshot_id, hop_index, ttl, address, hostname,
+                         avg_rtt_ms, packet_loss_pct, asn, organization, country,
+                         is_unstable)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                 [
                     (
                         snapshot_id,
@@ -152,40 +158,41 @@ class RouteRepository:
         if limit <= 0:
             raise ValueError(f"limit must be a positive integer, got {limit!r}")
 
-        cur = self._conn.execute(
-            """
-            SELECT * FROM route_snapshots
-            WHERE target = ?
-            ORDER BY timestamp DESC, id DESC
-            LIMIT ?
-            """,
-            (target, limit),
-        )
-        rows = list(reversed(cur.fetchall()))  # fetched newest first; hand back oldest first
-
-        hops_by_snapshot: dict[int, list[RouteHop]] = {}
-        if rows:
-            snapshot_ids = [row["id"] for row in rows]
-            placeholders = ",".join("?" for _ in snapshot_ids)
-            hops_cur = self._conn.execute(
-                f"""
-                SELECT * FROM route_hops
-                WHERE route_snapshot_id IN ({placeholders})
-                ORDER BY route_snapshot_id ASC, hop_index ASC
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                SELECT * FROM route_snapshots
+                WHERE target = ?
+                ORDER BY timestamp DESC, id DESC
+                LIMIT ?
                 """,
-                snapshot_ids,
+                (target, limit),
             )
-            for hop_row in hops_cur.fetchall():
-                hops_by_snapshot.setdefault(hop_row["route_snapshot_id"], []).append(_row_to_hop(hop_row))
+            rows = list(reversed(cur.fetchall()))  # fetched newest first; hand back oldest first
 
-        return [
-            RouteSnapshot(
-                target=row["target"],
-                timestamp=datetime.fromisoformat(row["timestamp"]),
-                hops=hops_by_snapshot.get(row["id"], []),
-            )
-            for row in rows
-        ]
+            hops_by_snapshot: dict[int, list[RouteHop]] = {}
+            if rows:
+                snapshot_ids = [row["id"] for row in rows]
+                placeholders = ",".join("?" for _ in snapshot_ids)
+                hops_cur = self._conn.execute(
+                    f"""
+                    SELECT * FROM route_hops
+                    WHERE route_snapshot_id IN ({placeholders})
+                    ORDER BY route_snapshot_id ASC, hop_index ASC
+                    """,
+                    snapshot_ids,
+                )
+                for hop_row in hops_cur.fetchall():
+                    hops_by_snapshot.setdefault(hop_row["route_snapshot_id"], []).append(_row_to_hop(hop_row))
+
+            return [
+                RouteSnapshot(
+                    target=row["target"],
+                    timestamp=datetime.fromisoformat(row["timestamp"]),
+                    hops=hops_by_snapshot.get(row["id"], []),
+                )
+                for row in rows
+            ]
 
     def close(self) -> None:
         self._conn.close()

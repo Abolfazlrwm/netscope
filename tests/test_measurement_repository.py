@@ -322,11 +322,13 @@ def test_measurement_repository_does_not_import_ui_or_adapters():
 def test_save_is_wrapped_in_a_transaction():
     """A single INSERT is already atomic in SQLite, but this confirms
     the implementation makes that explicit via `with self._conn:`
-    rather than relying on incidental single-statement behavior."""
+    rather than relying on incidental single-statement behavior.
+    v0.8 adds the repository lock, so the transaction may be spelled
+    `with self._lock, self._conn:` -- both forms count."""
     import inspect
 
     source = inspect.getsource(MeasurementRepository.save)
-    assert "with self._conn" in source
+    assert "with self._conn" in source or "self._lock, self._conn" in source
 
 
 # ===========================================================================

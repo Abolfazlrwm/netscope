@@ -204,3 +204,56 @@ def test_existing_measurements_are_untouched_by_service_writes(tmp_path: Path):
     row = check.execute("SELECT target, success FROM measurements").fetchone()
     assert row == ("gw", 1)
     check.close()
+
+
+# ---------------------------------------------------------------------------
+# Cross-thread access (v0.8) -- the lock makes short transactions exclusive
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_cross_thread_access_never_yields_garbage_rows(tmp_path):
+    """The CI windows job caught the services board reading rows while
+    the save worker wrote them -- two threads issuing the SAME SQL
+    through one connection hit the statement cache, and a mid-fetch
+    reset handed back columns as None (AttributeError on .split) or
+    tuples that changed length. The per-repository lock makes each
+    execute+fetch pair exclusive; this stress pair is the regression
+    guard (it produced garbage within seconds before the lock)."""
+    import threading
+    import time
+
+    repo = ServiceRepository.open(tmp_path / "services.db")
+    repo.save(Service(name="Seed", host="1.2.3.4", enabled_checks={ProbeType.ICMP}))
+
+    failures: list[str] = []
+    stop = threading.Event()
+
+    def reader() -> None:
+        while not stop.is_set():
+            try:
+                for service in repo.load_all():
+                    if service.name is None or service.host is None or service.enabled_checks is None:
+                        failures.append(f"garbage row: {service!r}")
+            except Exception as exc:  # noqa: BLE001 -- any symptom of the race must fail the test
+                failures.append(f"reader raised: {exc!r}")
+
+    def writer() -> None:
+        index = 0
+        while not stop.is_set():
+            try:
+                repo.save(Service(name=f"Svc {index}", host=f"10.0.0.{index % 250}", enabled_checks={ProbeType.ICMP, ProbeType.DNS}))
+                repo.load_all()  # the board refresh after a save
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"writer raised: {exc!r}")
+            index += 1
+
+    threads = [threading.Thread(target=reader) for _ in range(2)] + [threading.Thread(target=writer)]
+    for thread in threads:
+        thread.start()
+    time.sleep(1.0)
+    stop.set()
+    for thread in threads:
+        thread.join()
+
+    assert failures == []
+    assert repo.get("Seed") is not None  # the seed row survived the hammering intact

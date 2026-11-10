@@ -92,6 +92,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -126,6 +127,11 @@ class MeasurementRepository:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
         self._conn.row_factory = sqlite3.Row
+        # Every repository access is a short, self-contained transaction
+        # (the v0.7 cross-thread doctrine); the lock makes "short" also
+        # EXCLUSIVE -- see ServiceRepository's own comment for the
+        # statement-cache race this closes, and schema.py for the story.
+        self._lock = threading.Lock()
 
     @classmethod
     def open(cls, db_path: Path | str = DEFAULT_DB_PATH) -> MeasurementRepository:
@@ -142,14 +148,14 @@ class MeasurementRepository:
         atomic in SQLite, but this makes that guarantee explicit rather
         than incidental.
         """
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
-                INSERT INTO measurements
-                    (probe_type, target, timestamp, success, latency_ms,
-                     packet_loss_pct, jitter_ms, error, error_type, extra_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                    INSERT INTO measurements
+                        (probe_type, target, timestamp, success, latency_ms,
+                         packet_loss_pct, jitter_ms, error, error_type, extra_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                 (
                     measurement.probe_type.value,
                     measurement.target,
@@ -204,8 +210,9 @@ class MeasurementRepository:
             query += " LIMIT ?"
             params.append(limit)
 
-        cur = self._conn.execute(query, params)
-        return [_row_to_measurement(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(query, params)
+            return [_row_to_measurement(row) for row in cur.fetchall()]
 
     def recent(self, target: str, limit: int = 50) -> list[RawMeasurement]:
         """The most recent `limit` measurements for `target`. A thin,
@@ -240,8 +247,9 @@ class MeasurementRepository:
         query += " ORDER BY timestamp DESC, id DESC LIMIT ?"
         params.append(limit)
 
-        cur = self._conn.execute(query, params)
-        return [_row_to_measurement(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(query, params)
+            return [_row_to_measurement(row) for row in cur.fetchall()]
 
     def targets(self) -> list[str]:
         """Every distinct target in the measurement log, alphabetical.
@@ -249,8 +257,9 @@ class MeasurementRepository:
         v0.5's evidence report walks the window as one range query per
         target instead of one unbounded scan of the whole log; this is
         the target list that makes that possible."""
-        cur = self._conn.execute("SELECT DISTINCT target FROM measurements ORDER BY target ASC")
-        return [row[0] for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute("SELECT DISTINCT target FROM measurements ORDER BY target ASC")
+            return [row[0] for row in cur.fetchall()]
 
     def close(self) -> None:
         self._conn.close()
