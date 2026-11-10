@@ -320,11 +320,14 @@ async def test_network_screen_lists_interfaces_and_gateway():
         assert "eth0" in card
 
 
-def _route_app(hops: list[RouteHop] | None, error: str | None) -> NetScopeTUI:
+def _route_app(hops: list[RouteHop] | None, error: str | None, *, route_repository=None) -> NetScopeTUI:
     probes = {p: _FakeProbe(p) for p in (ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP, ProbeType.TCP, ProbeType.TLS)}
     probes[ProbeType.TRACEROUTE] = _ScriptedTraceroute(hops=hops, error=error)
+    container = Container(probe_registry=ProbeRegistry(probes=probes))
+    if route_repository is not None:
+        container.route_repository = route_repository
     return NetScopeTUI(
-        container=Container(probe_registry=ProbeRegistry(probes=probes)),
+        container=container,
         config=NetScopeConfig(),
         interval=3600.0,
         round_fn=_fake_round_fn([_healthy_round()]),
@@ -344,7 +347,45 @@ async def test_route_screen_traces_and_renders_hops():
         await _wait_for(lambda: screen.query_one("#hops_table").row_count == 2, pilot)
         status = str(screen.query_one("#route_status").render())
         assert "1.1.1.1" in status  # the default target (config.public_dns_target)
-        assert "stable" in status
+        # v0.8 route memory: this test's container wires no RouteRepository,
+        # so the honest verdict for a single in-memory snapshot is a first
+        # observation -- "stable" would claim a certainty the evidence
+        # does not support.
+        assert "first observation" in status
+
+
+async def test_route_screen_reports_stability_across_a_stored_history():
+    """With route memory wired, the status tail carries the cross-run
+    verdict -- compact density, run count included."""
+    from datetime import UTC, datetime
+
+    class _RememberingRepo:
+        def save(self, snapshot: RouteSnapshot) -> None: ...
+
+        def load_recent(self, target: str, limit: int = 20) -> list[RouteSnapshot]:
+            return [
+                RouteSnapshot(
+                    target=target,
+                    timestamp=datetime(2026, 11, 10, 8, 0, tzinfo=UTC),
+                    hops=[
+                        RouteHop(ttl=1, address="192.168.1.1", hostname="fritz.box", avg_rtt_ms=2.1, packet_loss_pct=0.0),
+                        RouteHop(ttl=2, address="81.19.104.1", hostname=None, avg_rtt_ms=9.8, packet_loss_pct=0.0),
+                    ],
+                )
+            ]
+
+    hops = [
+        RouteHop(ttl=1, address="192.168.1.1", hostname="fritz.box", avg_rtt_ms=2.1, packet_loss_pct=0.0),
+        RouteHop(ttl=2, address="81.19.104.1", hostname=None, avg_rtt_ms=9.8, packet_loss_pct=0.0),
+    ]
+    app = _route_app(hops=hops, error=None, route_repository=_RememberingRepo())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("p")
+        await _wait_active(pilot, app, RouteScreen)
+        screen = app.screen
+        await _wait_for(lambda: screen.query_one("#hops_table").row_count == 2, pilot)
+        status = str(screen.query_one("#route_status").render())
+        assert "stable across 2 runs" in status
 
 
 async def test_route_screen_reports_a_failed_traceroute_honestly():

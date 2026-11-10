@@ -37,6 +37,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from netscope.app.use_cases import RouteAnalysisResult, run_route_analysis
+from netscope.ui.render import route_stability_summary
 
 if TYPE_CHECKING:
     from netscope.ui.tui.app import NetScopeTUI
@@ -159,11 +160,12 @@ class RouteScreen(Screen):
                 f"{hop.avg_rtt_ms:.1f} ms" if hop.avg_rtt_ms is not None else "—",
             )
 
+        # v0.8 route memory: the churn tail now spans the target's
+        # stored history (prior_runs > 0) -- "stable" only ever prints
+        # when there IS something stored to compare against; a single
+        # in-memory snapshot stays an honest "first observation".
         churn = result.churn
         churn_line = ""
         if churn is not None:
-            if churn.change_count == 0:
-                churn_line = " · stable"
-            else:
-                churn_line = f" · {churn.change_count} change(s) across {churn.snapshot_count} snapshot(s)"
+            churn_line = f" · {route_stability_summary(churn, result.prior_runs, compact=True)}"
         status.update(f"[green]✓[/] route to [bold]{target}[/] · {table.row_count} hops{churn_line} · [dim]enter: trace a target · r: re-trace[/]")
