@@ -36,6 +36,27 @@ from netscope.core.models import RouteSnapshot
 
 
 @dataclass
+class RouteHopChange:
+    """One hop position whose address differed between two consecutive
+    RouteSnapshots -- the hop-level "what actually changed" detail behind
+    a RouteChange (v0.8; before then a change was only "the signatures
+    differed", with no record of WHICH hops moved).
+
+    Positional, not address-keyed: hops are paired by their index in
+    each snapshot's hop list -- the same pairing `RouteSnapshot.signature()`
+    compares, so what this diff reports always agrees with what the
+    signature says changed. A hop that answered last run and timed out
+    this run appears as previous_address set / new_address None; a hop
+    that appeared beyond the old path's end is the reverse. `ttl` is the
+    position's label in whichever snapshot still has a hop there (the
+    new snapshot's when it does, the previous one's otherwise)."""
+
+    ttl: int
+    previous_address: str | None
+    new_address: str | None
+
+
+@dataclass
 class RouteChange:
     """One detected transition between two consecutive RouteSnapshots
     for the same target -- their signature() differed."""
@@ -44,6 +65,7 @@ class RouteChange:
     new_signature: str
     previous_timestamp: datetime
     new_timestamp: datetime
+    changed_hops: list[RouteHopChange] = field(default_factory=list)
 
 
 @dataclass
@@ -62,10 +84,23 @@ class RouteChurnResult:
     snapshot_count: int
     unique_signature_count: int
     changes: list[RouteChange] = field(default_factory=list)
+    # The observed window's boundaries -- the timestamps of the oldest
+    # and newest snapshots the analysis actually saw (None only when a
+    # RouteChurnResult was built by hand, outside analyze_route_churn;
+    # the function itself always has at least one snapshot to report).
+    window_start: datetime | None = None
+    window_end: datetime | None = None
 
     @property
     def change_count(self) -> int:
         return len(self.changes)
+
+    @property
+    def last_change(self) -> RouteChange | None:
+        """The most recent transition in the window, or None when the
+        path never changed -- the change a UI leads with when it has
+        room for exactly one detail line."""
+        return self.changes[-1] if self.changes else None
 
     @property
     def is_stable(self) -> bool:
@@ -114,6 +149,7 @@ def analyze_route_churn(snapshots: list[RouteSnapshot]) -> RouteChurnResult:
                     new_signature=current_signature,
                     previous_timestamp=previous.timestamp,
                     new_timestamp=current.timestamp,
+                    changed_hops=_diff_route_hops(previous, current),
                 )
             )
 
@@ -122,4 +158,40 @@ def analyze_route_churn(snapshots: list[RouteSnapshot]) -> RouteChurnResult:
         snapshot_count=len(snapshots),
         unique_signature_count=len(unique_signatures),
         changes=changes,
+        window_start=snapshots[0].timestamp,
+        window_end=snapshots[-1].timestamp,
     )
+
+
+def _diff_route_hops(previous: RouteSnapshot, current: RouteSnapshot) -> list[RouteHopChange]:
+    """Which hop positions differ between two consecutive snapshots,
+    paired by position -- the same pairing signature() performs (see
+    RouteHopChange's docstring for why positions, not addresses).
+
+    Length mismatch is part of the diff, not an error: a path that grew
+    or shrank between runs changes at exactly the positions the two hop
+    lists disagree, plus every position one list has and the other
+    doesn't. Two snapshots with identical signatures can never reach
+    this function (the caller only diffs on a signature change)."""
+    hop_changes: list[RouteHopChange] = []
+    for position in range(max(len(previous.hops), len(current.hops))):
+        previous_hop = previous.hops[position] if position < len(previous.hops) else None
+        current_hop = current.hops[position] if position < len(current.hops) else None
+        previous_address = previous_hop.address if previous_hop is not None else None
+        current_address = current_hop.address if current_hop is not None else None
+        if previous_address == current_address:
+            continue
+        label_hop = current_hop if current_hop is not None else previous_hop
+        if label_hop is None:
+            # Both sides missing: their addresses compared equal (None),
+            # so this position was already skipped above -- kept explicit
+            # so `ttl` never reads off a None hop.
+            continue
+        hop_changes.append(
+            RouteHopChange(
+                ttl=label_hop.ttl,
+                previous_address=previous_address,
+                new_address=current_address,
+            )
+        )
+    return hop_changes

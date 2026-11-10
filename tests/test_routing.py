@@ -196,12 +196,134 @@ def test_route_churn_result_snapshot_count_matches_input_length():
 
 def test_route_churn_result_does_not_decide_diagnosis():
     """Confirms RouteChurnResult carries only observational fields
-    (target/counts/changes) -- no severity, no verdict, no diagnosis-
-    shaped field -- per Routing's 'must not decide the final diagnosis
-    classification' responsibility. This is checked structurally by
-    listing the dataclass's own fields rather than just trusting the
-    docstring."""
+    (target/counts/changes/window bounds) -- no severity, no verdict, no
+    diagnosis-shaped field -- per Routing's 'must not decide the final
+    diagnosis classification' responsibility. This is checked
+    structurally by listing the dataclass's own fields rather than just
+    trusting the docstring."""
     import dataclasses
 
     field_names = {f.name for f in dataclasses.fields(RouteChurnResult)}
-    assert field_names == {"target", "snapshot_count", "unique_signature_count", "changes"}
+    assert field_names == {
+        "target",
+        "snapshot_count",
+        "unique_signature_count",
+        "changes",
+        "window_start",
+        "window_end",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Hop-level diffs (v0.8) -- WHAT changed, not just THAT something did
+# ---------------------------------------------------------------------------
+
+
+def test_single_address_change_names_the_moved_hop():
+    snap_a = _snapshot("example.com", ["10.0.0.1", "10.0.0.2", "10.0.0.3"], _at(0))
+    snap_b = _snapshot("example.com", ["10.0.0.1", "10.0.0.2", "10.0.0.9"], _at(5))
+
+    result = analyze_route_churn([snap_a, snap_b])
+
+    change = result.last_change
+    assert change is not None
+    assert [(h.ttl, h.previous_address, h.new_address) for h in change.changed_hops] == [(3, "10.0.0.3", "10.0.0.9")]
+
+
+def test_unrelated_hops_do_not_appear_in_the_diff():
+    snap_a = _snapshot("example.com", ["10.0.0.1", "10.0.0.2", "198.51.100.7"], _at(0))
+    snap_b = _snapshot("example.com", ["10.0.0.1", "10.0.0.2", "198.51.100.9"], _at(5))
+
+    result = analyze_route_churn([snap_a, snap_b])
+
+    change = result.last_change
+    assert change is not None
+    assert len(change.changed_hops) == 1  # only hop 3 moved, hops 1-2 stay out of the diff
+
+
+def test_star_hops_count_as_changes_when_a_hop_stops_answering():
+    """A hop that answered last run and timed out this run changes the
+    signature (None addresses join it as '*') -- the diff must show the
+    address dropped to None, not hide behind a generic 'changed'."""
+    snap_a = _snapshot("example.com", ["10.0.0.1", "10.0.0.2"], _at(0))
+    snap_b = _snapshot("example.com", ["10.0.0.1", None], _at(5))
+
+    result = analyze_route_churn([snap_a, snap_b])
+
+    assert result.is_stable is False
+    change = result.last_change
+    assert change is not None
+    assert [(h.ttl, h.previous_address, h.new_address) for h in change.changed_hops] == [(2, "10.0.0.2", None)]
+
+
+def test_growing_path_reports_added_hops():
+    snap_a = _snapshot("example.com", ["10.0.0.1"], _at(0))
+    snap_b = _snapshot("example.com", ["10.0.0.1", "10.0.0.2", "10.0.0.3"], _at(5))
+
+    result = analyze_route_churn([snap_a, snap_b])
+
+    change = result.last_change
+    assert change is not None
+    assert [(h.ttl, h.previous_address, h.new_address) for h in change.changed_hops] == [
+        (2, None, "10.0.0.2"),
+        (3, None, "10.0.0.3"),
+    ]
+
+
+def test_shrinking_path_reports_removed_hops():
+    snap_a = _snapshot("example.com", ["10.0.0.1", "10.0.0.2", "10.0.0.3"], _at(0))
+    snap_b = _snapshot("example.com", ["10.0.0.1"], _at(5))
+
+    result = analyze_route_churn([snap_a, snap_b])
+
+    change = result.last_change
+    assert change is not None
+    assert [(h.ttl, h.previous_address, h.new_address) for h in change.changed_hops] == [
+        (2, "10.0.0.2", None),
+        (3, "10.0.0.3", None),
+    ]
+
+
+def test_stable_snapshots_carry_no_hop_diffs():
+    snap_a = _snapshot("example.com", ["10.0.0.1", "10.0.0.2"], _at(0))
+    snap_b = _snapshot("example.com", ["10.0.0.1", "10.0.0.2"], _at(5))
+
+    result = analyze_route_churn([snap_a, snap_b])
+
+    assert result.last_change is None
+    for change in result.changes:
+        assert change.changed_hops == []
+
+
+def test_each_change_diffs_only_against_its_immediate_predecessor():
+    """Three snapshots A -> B -> C: the first change diffs A against B,
+    the second B against C -- a hop restored between B and C must not
+    leak into the first change's diff."""
+    snap_a = _snapshot("example.com", ["10.0.0.1", "10.0.0.2"], _at(0))
+    snap_b = _snapshot("example.com", ["10.0.0.1", "10.0.0.9"], _at(5))
+    snap_c = _snapshot("example.com", ["10.0.0.1", "10.0.0.2"], _at(10))
+
+    result = analyze_route_churn([snap_a, snap_b, snap_c])
+
+    assert result.change_count == 2
+    assert [(h.ttl, h.previous_address, h.new_address) for h in result.changes[0].changed_hops] == [(2, "10.0.0.2", "10.0.0.9")]
+    assert [(h.ttl, h.previous_address, h.new_address) for h in result.changes[1].changed_hops] == [(2, "10.0.0.9", "10.0.0.2")]
+
+
+def test_window_bounds_span_the_observed_snapshots():
+    snap_a = _snapshot("example.com", ["10.0.0.1"], _at(0))
+    snap_b = _snapshot("example.com", ["10.0.0.1"], _at(5))
+    snap_c = _snapshot("example.com", ["10.0.0.2"], _at(11))
+
+    result = analyze_route_churn([snap_a, snap_b, snap_c])
+
+    assert result.window_start == _at(0)
+    assert result.window_end == _at(11)
+    assert result.last_change is not None
+    assert result.last_change.previous_timestamp == _at(5)
+
+
+def test_last_change_returns_none_when_stable():
+    snap = _snapshot("example.com", ["10.0.0.1"], _at(0))
+    result = analyze_route_churn([snap])
+    assert result.last_change is None
