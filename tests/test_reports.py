@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from netscope.app.container import Container
-from netscope.app.reports import evidence_report_markdown, serialize_evidence_report
+from netscope.app.reports import evidence_report_html, evidence_report_markdown, serialize_evidence_report
 from netscope.app.use_cases import (
     REPORT_MAX_FAILURES,
     REPORT_MAX_ROUNDS,
@@ -359,3 +359,104 @@ def test_repository_targets_lists_distinct_targets_alphabetically():
     repo.save(_m(target="alpha.example"))
     repo.save(_m(target="alpha.example", timestamp=UNTIL))
     assert repo.targets() == ["alpha.example", "zeta.example"]
+
+
+# ---------------------------------------------------------------------------
+# HTML rendering (v0.10): the same facts, dressed for humans. Same caps,
+# same disclosures, same "--" for absent metrics -- and a document that
+# is provably self-contained: no scripts, no external assets.
+# ---------------------------------------------------------------------------
+
+
+def _html(repo):
+    return evidence_report_html(build_evidence_report(_container(repo), days=7, until=UNTIL))
+
+
+def test_html_contains_the_evidence_sections():
+    repo = _repo()
+    _seed_two_rounds(repo)
+    page = _html(repo)
+
+    assert page.startswith("<!doctype html>")
+    assert "NetScope evidence report" in page
+    assert "dns.example" in page
+    assert "Rounds" in page
+    assert "Per-target evidence" in page
+    assert "Failures" in page
+    assert "Notes" in page
+    # The failure appears verbatim, with its taxonomy.
+    assert "no answer within 2.0s" in page
+    # The v0.4 verdict lives in the verdict column, never as latency.
+    assert "verdicts: slower_than_usual ×1" in page
+    # Absent metrics are absent, not zero.
+    assert "--" in page
+
+
+def test_html_is_self_contained_no_scripts_or_external_assets():
+    repo = _repo()
+    _seed_two_rounds(repo)
+    page = _html(repo)
+
+    assert "<script" not in page
+    assert "<link" not in page
+    assert "<img" not in page
+    assert 'src="http' not in page
+    assert 'href="http' not in page
+    assert "<style>" in page  # the one stylesheet rides inline
+
+
+def test_html_escapes_user_controlled_text():
+    repo = _repo()
+    hostile = '"><script>alert(1)</script>'
+    repo.save(_m(target=hostile, timestamp=UNTIL - timedelta(hours=1)))
+    page = _html(repo)
+
+    # The hostile target appears only as escaped text, never as markup.
+    assert "<script>alert(1)</script>" not in page.replace("&#x27;", "'")
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
+
+
+def test_html_discloses_omissions():
+    repo = _repo()
+    for i in range(REPORT_ROWS_PER_TARGET + 6):
+        repo.save(_m(timestamp=UNTIL - timedelta(hours=REPORT_ROWS_PER_TARGET + 12 - i)))
+    page = _html(repo)
+    assert "6 older row(s) omitted" in page
+
+    repo2 = _repo()
+    for i in range(REPORT_MAX_ROUNDS + 3):
+        repo2.save(_m(timestamp=UNTIL - timedelta(minutes=10 * (REPORT_MAX_ROUNDS + 3 - i))))
+    page2 = _html(repo2)
+    assert "3 older round(s) omitted" in page2
+
+
+def test_html_empty_log_is_honest_about_it():
+    page = _html(_repo())
+    assert "No measurements in this window yet" in page
+    assert "Per-target evidence" not in page
+    assert "mean score" in page
+
+
+def test_html_score_trend_needs_two_scored_rounds():
+    repo = _repo()
+    repo.save(_m(timestamp=UNTIL - timedelta(hours=1)))
+    page = _html(repo)
+    assert "Not enough scored rounds for a trend" in page
+    assert "<polyline" not in page
+
+    repo2 = _repo()
+    _seed_two_rounds(repo2)
+    page2 = _html(repo2)
+    assert "<polyline" in page2  # the rounds sparkline
+    assert "score trend, oldest → newest" in page2
+    assert "stroke-dasharray" in page2  # and the mean-score gauge
+
+
+def test_html_latency_sparkline_uses_only_shown_rows():
+    repo = _repo()
+    for i in range(REPORT_ROWS_PER_TARGET + 6):
+        repo.save(_m(latency_ms=10.0 + i, timestamp=UNTIL - timedelta(hours=REPORT_ROWS_PER_TARGET + 12 - i)))
+    page = _html(repo)
+    # The sparkline describes the SHOWN rows (40 points), not the window.
+    assert page.count(",") >= 40  # polyline coordinate pairs exist
+    assert "latency per shown measurement" in page
