@@ -154,10 +154,31 @@ def truncate(text: str | None, width: int = 64) -> str:
     return flat if len(flat) <= width else flat[: width - 1] + "…"
 
 
+def format_loss_note(measurement: RawMeasurement) -> str:
+    """One-line verdict for a loss-confirmation window (v0.9), shared by
+    every surface that shows a measurement's detail -- the same
+    one-shared-wording pattern the route memory established with
+    `route_stability_summary`.
+
+    Reads only what `core.loss.merge_loss_rounds` recorded: `loss_rounds`
+    marks the measurement as a merged window, `loss_confirmed` says
+    whether the loss reproduced in any sweep after the first. Empty
+    string for anything else -- a plain sweep has no confirmation story
+    to tell, and inventing one would be exactly the dishonesty the
+    confirmation policy exists to prevent."""
+    if "loss_rounds" not in measurement.extra:
+        return ""
+    sweeps = measurement.extra.get("loss_window_rounds", len(measurement.extra["loss_rounds"]))
+    verdict = "confirmed" if measurement.extra.get("loss_confirmed") else "transient"
+    return f"loss {verdict} across {sweeps} sweeps"
+
+
 def _success_detail(m: RawMeasurement) -> str:
     """The probe's own non-error detail for successful measurements --
     DNS answers, HTTP status/version -- read from `extra` without
-    interpreting anything."""
+    interpreting anything (the loss note is the exception only in shape:
+    it renders the verdict `core.loss` already computed, it computes
+    nothing new)."""
     parts = []
     if "answers" in m.extra and isinstance(m.extra["answers"], list) and m.extra["answers"]:
         answers = ", ".join(str(r) for r in m.extra["answers"][:2])
@@ -171,6 +192,9 @@ def _success_detail(m: RawMeasurement) -> str:
     if "throughput_mbps" in m.extra:
         peak = f" · peak {m.extra['peak_mbps']:.1f}" if "peak_mbps" in m.extra else ""
         parts.append(f"{m.extra['throughput_mbps']:.1f} Mbps median{peak}")
+    loss_note = format_loss_note(m)
+    if loss_note:
+        parts.append(loss_note)
     return " · ".join(parts)
 
 

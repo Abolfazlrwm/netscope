@@ -7,11 +7,14 @@ behind both the CLI and the TUI."""
 
 from __future__ import annotations
 
+import io
 from datetime import UTC, datetime
+
+from rich.console import Console
 
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, RouteHop, RouteSnapshot
 from netscope.core.routing import RouteChange, RouteHopChange, analyze_route_churn
-from netscope.ui.render import format_route_change, route_stability_summary, speed_panel
+from netscope.ui.render import format_loss_note, format_route_change, measurements_table, route_stability_summary, speed_panel
 
 _STAMP = datetime(2026, 11, 10, 9, 30, tzinfo=UTC)
 
@@ -167,3 +170,41 @@ def test_stability_summary_compact_is_the_tui_density():
 
     stable = analyze_route_churn([current, current])
     assert route_stability_summary(stable, prior_runs=2, compact=True) == "stable across 2 runs"
+
+
+# ---------------------------------------------------------------------------
+# Loss-confirmation wording (v0.9) -- one shared verdict for the detail
+# column, exactly like the route memory's shared stability wording.
+# ---------------------------------------------------------------------------
+
+
+def _merged_loss_measurement(extra: dict) -> RawMeasurement:
+    return RawMeasurement(
+        probe_type=ProbeType.ICMP,
+        target="1.1.1.1",
+        success=True,
+        latency_ms=12.5,
+        packet_loss_pct=8.3,
+        extra=extra,
+    )
+
+
+def test_loss_note_says_confirmed_when_the_loss_reproduced():
+    m = _merged_loss_measurement({"loss_rounds": [50.0, 0.0, 25.0], "loss_confirmed": True, "loss_window_rounds": 3})
+    assert format_loss_note(m) == "loss confirmed across 3 sweeps"
+
+
+def test_loss_note_says_transient_when_confirmations_came_back_clean():
+    m = _merged_loss_measurement({"loss_rounds": [25.0, 0.0, 0.0], "loss_confirmed": False, "loss_window_rounds": 3})
+    assert format_loss_note(m) == "loss transient across 3 sweeps"
+
+
+def test_loss_note_is_empty_for_a_plain_sweep():
+    assert format_loss_note(_merged_loss_measurement({})) == ""
+
+
+def test_measurements_table_detail_carries_the_loss_note():
+    out = io.StringIO()
+    console = Console(file=out, width=160, force_terminal=False)
+    console.print(measurements_table([_merged_loss_measurement({"loss_rounds": [25.0, 0.0], "loss_confirmed": False, "loss_window_rounds": 2})]))
+    assert "loss transient across 2 sweeps" in out.getvalue()
