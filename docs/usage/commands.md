@@ -27,6 +27,22 @@ Probe one target with any subset of the checks and report the result.
 | `--checks LIST` | comma-separated subset of `icmp,dns,tcp,tls,http` (default: all five) |
 | `--json` | machine-readable output |
 
+### Packet-loss confirmation
+
+Every ICMP sweep NetScope runs — in `diagnose`, `check`, `service check` and
+`monitor` — carries this rule (v0.9): a sweep that succeeds but reports partial
+loss is a *suspicion*, not a finding, so it is re-swept twice and the rounds
+merge into one measurement. The loss number you see is the window average, and
+the detail column says which story it tells:
+
+- `loss confirmed across 3 sweeps` — the loss reproduced in a later sweep; treat
+  it as a property of the link right now.
+- `loss transient across 3 sweeps` — every confirmation sweep came back clean;
+  one stray packet dropped, nothing ongoing.
+
+Clean sweeps and dead targets are never re-swept: confirmation costs nothing
+until there is something to confirm.
+
 ## `netscope service`
 
 Manage the **saved service list** — the curated set of targets you keep an

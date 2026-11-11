@@ -6,6 +6,53 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-11
+
+The "confirm before you report" release: a dropped packet is no longer a
+verdict. Every ICMP sweep NetScope runs is four packets wide, and one stray
+drop on a busy hop read straight into scoring, the baseline and the diagnosis
+as 25% loss -- a property of the link, supposedly, measured exactly once. v0.9
+treats partial loss as what it actually is, a suspicion: the sweep is re-run
+twice, the rounds merge into one window, and what reaches every downstream
+verdict is the confirmed reading, with the story of how it was confirmed
+attached.
+
+### Added
+
+- **Loss-confirmation policy** (`core/loss.py`, pure domain): 
+  `needs_loss_confirmation` names the exact shape worth a second opinion -- a
+  successful sweep reporting loss strictly between 0% and 100%. Total failure
+  is a finding, not a suspicion: dead targets never get re-swept. A merged
+  window carries a `loss_rounds` marker, so the policy is idempotent -- a
+  window can never be confirmed into a window of windows.
+- **The window itself** (`merge_loss_rounds`): loss averaged across the sweeps
+  (the per-round numbers ride along in `extra["loss_rounds"]`, so nothing
+  hides behind the average), latency and jitter averaged over the rounds that
+  reported them, success if *any* sweep got an answer, RTT min/max and packet
+  counts re-aggregated across the window, and `loss_confirmed` -- true when
+  the loss reproduced in any sweep after the first, false when every
+  confirmation came back clean: a transient, worth knowing it healed.
+- **Orchestration where execution lives** (`run_with_loss_confirmation`,
+  app layer): both ICMP call sites -- the diagnose round's gateway and
+  public-DNS sweeps, and every service check, saved or ad-hoc -- route
+  through it. Confirmation costs nothing until there is something to
+  confirm: clean sweeps and dead targets run exactly once, byte for byte the
+  pre-0.9 path.
+- **One shared verdict in the output** (`format_loss_note`, the route
+  memory's one-wording pattern): the measurements table's detail column
+  appends `loss confirmed across 3 sweeps` or `loss transient across 3
+  sweeps`; `--json`'s `extra` block carries `loss_rounds`,
+  `loss_confirmed` and `loss_window_rounds` for machines.
+
+### Notes
+
+- The merged window is what the baseline observes: the running loss baseline
+  learns the window average from now on, never the raw first suspicion.
+- No configuration knob, deliberately: two extra sweeps is the smallest
+  number that separates a stray drop from a live problem, and the policy only
+  spends them on lossy sweeps -- confirmation is free exactly when it should
+  be.
+
 ## [0.8.0] — 2026-11-10
 
 The "route memory" release: `netscope route` finally remembers. The

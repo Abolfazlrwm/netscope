@@ -13,6 +13,13 @@ payloads share a canonical envelope:
 `packet_loss_pct`, `jitter_ms`, `error`, `error_type` (one of the structured
 `ProbeErrorType` values, or `null`), and `extra` (probe-specific, JSON-safe).
 
+ICMP measurements whose sweep showed partial loss carry the confirmation window
+(v0.9) in `extra`: `loss_rounds` (per-sweep loss percentages, in run order),
+`loss_confirmed` (`true` when any sweep after the first also lost packets),
+`loss_window_rounds` (sweeps in the window), with `packet_loss_pct` reporting
+the window average. Sweeps that came back clean — or dead — carry none of
+these keys.
+
 ## `diagnose --json` — `report: "diagnose"`
 
 ```json
