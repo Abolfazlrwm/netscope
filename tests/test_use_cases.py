@@ -1009,3 +1009,121 @@ def test_check_target_and_check_service_agree_on_the_same_pipeline():
         (m.probe_type, m.target, m.success, m.latency_ms) for m in service_results[0]
     ]
     assert target_results[1].score == service_results[1].score
+
+
+# ---------------------------------------------------------------------------
+# Packet-loss confirmation (v0.9): a partial-loss sweep is a suspicion,
+# re-swept before it reaches scoring, the baseline or the diagnosis.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ScriptedProbe:
+    """A Probe fake returning a scripted sequence of measurements across
+    repeated `run` calls -- the last script entry repeats for any call
+    beyond the script's length."""
+
+    probe_type: ProbeType
+    script: list[RawMeasurement]
+    calls: list[str] = field(default_factory=list)
+
+    def run(self, target: str, **options) -> RawMeasurement:
+        self.calls.append(target)
+        return self.script[min(len(self.calls), len(self.script)) - 1]
+
+
+def _lossy(target: str, loss: float | None, *, success: bool = True, latency: float | None = 10.0) -> RawMeasurement:
+    return RawMeasurement(
+        probe_type=ProbeType.ICMP,
+        target=target,
+        success=success,
+        latency_ms=latency if success else None,
+        packet_loss_pct=loss,
+    )
+
+
+def test_partial_loss_sweep_is_reconfirmed_and_merged():
+    icmp = _ScriptedProbe(ProbeType.ICMP, script=[_lossy("1.1.1.1", 50.0), _lossy("1.1.1.1", 0.0), _lossy("1.1.1.1", 25.0)])
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.ICMP: icmp}))
+
+    [m] = run_service_checks(Service(name="dns", host="1.1.1.1", enabled_checks={ProbeType.ICMP}), container)
+
+    assert icmp.calls == ["1.1.1.1"] * 3  # original + two confirmation sweeps
+    assert m.packet_loss_pct == pytest.approx(25.0)  # the window average
+    assert m.extra["loss_confirmed"] is True
+    assert m.extra["loss_rounds"] == [50.0, 0.0, 25.0]
+
+
+def test_transient_loss_reports_not_confirmed_when_confirmations_come_back_clean():
+    icmp = _ScriptedProbe(ProbeType.ICMP, script=[_lossy("1.1.1.1", 25.0), _lossy("1.1.1.1", 0.0), _lossy("1.1.1.1", 0.0)])
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.ICMP: icmp}))
+
+    [m] = run_service_checks(Service(name="dns", host="1.1.1.1", enabled_checks={ProbeType.ICMP}), container)
+
+    assert icmp.calls == ["1.1.1.1"] * 3
+    assert m.success
+    assert m.extra["loss_confirmed"] is False
+
+
+def test_clean_sweep_still_runs_exactly_once():
+    icmp = _ScriptedProbe(ProbeType.ICMP, script=[_lossy("1.1.1.1", 0.0)])
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.ICMP: icmp}))
+
+    [m] = run_service_checks(Service(name="dns", host="1.1.1.1", enabled_checks={ProbeType.ICMP}), container)
+
+    assert icmp.calls == ["1.1.1.1"]
+    assert "loss_rounds" not in m.extra
+
+
+def test_dead_target_still_runs_exactly_once():
+    icmp = _ScriptedProbe(ProbeType.ICMP, script=[_lossy("1.1.1.1", None, success=False, latency=None)])
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.ICMP: icmp}))
+
+    [m] = run_service_checks(Service(name="dns", host="1.1.1.1", enabled_checks={ProbeType.ICMP}), container)
+
+    assert icmp.calls == ["1.1.1.1"]
+    assert not m.success
+
+
+def test_loss_free_probes_pass_through_untouched():
+    http = _ScriptedProbe(ProbeType.HTTP, script=[RawMeasurement(probe_type=ProbeType.HTTP, target="https://x/", success=True, latency_ms=50.0)])
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.HTTP: http}))
+
+    [m] = run_service_checks(Service(name="web", host="https://x/", enabled_checks={ProbeType.HTTP}), container)
+
+    assert http.calls == ["https://x/"]
+    assert m.extra == {}
+
+
+def test_measurement_round_confirms_gateway_loss_before_scoring():
+    """The gateway's partial-loss sweep gets confirmed and the *merged*
+    window -- not the raw first sweep -- is what scoring, the baseline
+    and the returned measurements see."""
+    # Script order = call order: the gateway's sweep + its two
+    # confirmations, then the round's public-DNS sweep (same ICMP
+    # adapter, clean) -- the last entry repeats, so that's enough.
+    icmp = _ScriptedProbe(
+        ProbeType.ICMP,
+        script=[
+            _lossy("192.168.1.1", 25.0),
+            _lossy("192.168.1.1", 0.0),
+            _lossy("192.168.1.1", 0.0),
+            _lossy("1.1.1.1", 0.0),
+        ],
+    )
+    http = _FakeProbe(ProbeType.HTTP)
+    dns = _FakeProbe(ProbeType.DNS)
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.ICMP: icmp, ProbeType.HTTP: http, ProbeType.DNS: dns}))
+
+    measurements, _experience, _diagnosis = run_measurement_round(
+        container,
+        NetScopeConfig(gateway="192.168.1.1"),
+        gateway="192.168.1.1",
+        baseline=UserBaseline(),
+    )
+
+    gateway_readings = [m for m in measurements if m.target == "192.168.1.1"]
+    assert len(gateway_readings) == 1  # merged window, not three raw sweeps
+    merged = gateway_readings[0]
+    assert merged.extra["loss_confirmed"] is False
+    assert merged.extra["loss_rounds"] == [25.0, 0.0, 0.0]

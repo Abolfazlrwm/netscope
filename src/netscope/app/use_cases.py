@@ -91,6 +91,7 @@ from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.core.baseline import UserBaseline, compare_throughput
 from netscope.core.diagnosis import diagnose, evidence_from_latency
+from netscope.core.loss import LOSS_CONFIRMATION_ROUNDS, merge_loss_rounds, needs_loss_confirmation
 from netscope.core.models import (
     Diagnosis,
     Evidence,
@@ -103,8 +104,36 @@ from netscope.core.models import (
     Service,
     utcnow,
 )
+from netscope.core.ports import Probe
 from netscope.core.routing import RouteChurnResult, analyze_route_churn
 from netscope.core.scoring import score_measurements
+
+
+def run_with_loss_confirmation(probe: Probe, target: str) -> RawMeasurement:
+    """Run `probe` once against `target`; if the reading shows the
+    partial-loss shape worth a second opinion (core.loss's policy), run
+    `LOSS_CONFIRMATION_ROUNDS` extra sweeps and fold them into one merged
+    measurement -- v0.9's "confirm before you report" rule.
+
+    This helper owns the *running* half of the policy only, which is why
+    it lives in app: execution is orchestration (the same reason the
+    baseline observe/persist wiring lives here), while the judgment of
+    when a reading warrants more evidence and how sweeps fold together
+    stays pure in `core.loss`. Probes whose readings aren't loss-shaped
+    (clean sweeps, dead targets, HTTP/DNS answers) come back untouched
+    after exactly one run -- confirmation costs nothing until there is
+    something to confirm.
+
+    The registry's own failure mode is untouched: the caller resolves the
+    probe via `container.probe_registry.get(...)`, so an unregistered
+    `ProbeType` still surfaces `ProbeNotRegisteredError` before this
+    helper is ever invoked.
+    """
+    measurement = probe.run(target)
+    if not needs_loss_confirmation(measurement):
+        return measurement
+    confirmations = [probe.run(target) for _ in range(LOSS_CONFIRMATION_ROUNDS)]
+    return merge_loss_rounds([measurement, *confirmations])
 
 
 def run_service_checks(service: Service, container: Container) -> list[RawMeasurement]:
@@ -122,8 +151,13 @@ def run_service_checks(service: Service, container: Container) -> list[RawMeasur
     registered adapter surfaces the registry's own defined failure mode
     (`ProbeNotRegisteredError`, adapters/probes/registry.py) rather than
     this module inventing a second one.
+
+    Every run goes through `run_with_loss_confirmation` (v0.9): a sweep
+    that comes back with partial loss gets its confirmation sweeps and
+    reports the merged window, so a saved service's check never reads a
+    one-off stray drop as a property of the link.
     """
-    return [container.probe_registry.get(probe_type).run(service.host) for probe_type in service.enabled_checks]
+    return [run_with_loss_confirmation(container.probe_registry.get(probe_type), service.host) for probe_type in service.enabled_checks]
 
 
 def diagnose_service(
@@ -316,6 +350,12 @@ def run_measurement_round(
        - `config.public_dns_target` via ICMP;
        - `config.dns_lookup_domain` via DNS;
        - `config.public_cdn_url` via HTTP.
+       Both ICMP sweeps run through `run_with_loss_confirmation`
+       (v0.9): a sweep reporting partial loss is re-swept and the rounds
+       merge into one measurement whose loss number is the window
+       average and whose `extra` records whether the loss reproduced --
+       scoring, the baseline and the diagnosis all see the confirmed
+       reading, never the raw first suspicion.
     3. Scoring/diagnosis compare this round against the baseline loaded
        in step 1 -- the round is judged against *past* history, never
        against itself.
@@ -335,8 +375,8 @@ def run_measurement_round(
     gateway = gateway if gateway is not None else config.gateway
     registry = container.probe_registry
 
-    local_gateway = registry.get(ProbeType.ICMP).run(gateway) if gateway else None
-    public_dns = registry.get(ProbeType.ICMP).run(config.public_dns_target)
+    local_gateway = run_with_loss_confirmation(registry.get(ProbeType.ICMP), gateway) if gateway else None
+    public_dns = run_with_loss_confirmation(registry.get(ProbeType.ICMP), config.public_dns_target)
     dns_lookup = registry.get(ProbeType.DNS).run(config.dns_lookup_domain)
     public_cdn = registry.get(ProbeType.HTTP).run(config.public_cdn_url)
 
