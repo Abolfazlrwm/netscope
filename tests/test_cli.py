@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -37,6 +38,7 @@ from netscope.ui.cli import (
     build_arg_parser,
     run_check_command,
     run_diagnose_command,
+    run_history_command,
     run_route_command,
     run_service_add_command,
     run_service_check_command,
@@ -997,3 +999,44 @@ def test_netscope_check_still_renders_through_the_shared_presentation(tmp_path, 
     assert code == 0
     assert "Checks against 1.1.1.1" in out
     assert "Experience score:" in out
+
+
+# ---------------------------------------------------------------------------
+# History score trend (v0.10): the rounds table gains a one-line
+# sparkline of the score series -- no chart dependency, printed only
+# when there is an actual trend to show.
+# ---------------------------------------------------------------------------
+
+
+def test_history_command_prints_the_score_trend_line(capsys):
+    repo = MeasurementRepository.open(":memory:")
+    base = datetime(2026, 11, 11, 12, 0, 0, tzinfo=UTC)
+    for round_index in range(3):
+        for check_index, probe_type in enumerate((ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP)):
+            repo.save(
+                RawMeasurement(
+                    probe_type=probe_type,
+                    target=f"t{probe_type.value}",
+                    timestamp=base + timedelta(seconds=round_index * 180 + check_index),
+                    success=True,
+                    latency_ms=10.0 + round_index * 5,
+                )
+            )
+    container, _ = _fake_container(measurement_repository=repo)
+
+    exit_code = run_history_command(container, limit=20)
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "score trend" in out
+    assert "over 3 scored rounds" in out
+    repo.close()
+
+
+def test_history_command_stays_quiet_without_a_trend(capsys):
+    repo = MeasurementRepository.open(":memory:")
+    container, _ = _fake_container(measurement_repository=repo)
+    exit_code = run_history_command(container, limit=20)
+    assert exit_code == 0
+    assert "score trend" not in capsys.readouterr().out
+    repo.close()

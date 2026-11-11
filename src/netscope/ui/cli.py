@@ -87,6 +87,7 @@ from netscope.ui.render import (
     measurements_table,
     route_stability_summary,
     route_table,
+    sparkline,
     speed_panel,
     truncate,
 )
@@ -599,6 +600,10 @@ def run_history_command(container: Container, *, limit: int = 20, json_output: b
         table.add_row(format_time(r.timestamp), score, level, f"{ok}/{len(r.measurements)}", detail)
     c.print()
     c.print(table)
+    scores = [r.experience.score for r in rounds if r.experience]
+    trend = sparkline(scores)
+    if trend:
+        c.print(f"  score trend  [bold cyan]{trend}[/bold cyan]  low {min(scores):.0f} · high {max(scores):.0f} over {len(scores)} scored rounds")
     c.print()
     return 0
 

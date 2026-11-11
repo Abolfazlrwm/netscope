@@ -20,6 +20,7 @@ Design notes
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from rich.console import Console
@@ -108,6 +109,39 @@ def format_pct(value: float | None) -> str:
 
 def format_time(timestamp: datetime) -> str:
     return timestamp.strftime("%Y-%m-%d %H:%M:%S")
+
+
+# One line, eight levels: the smallest honest trend picture a terminal
+# can draw without a charting dependency. Ordered bottom-to-top by
+# visual height, so index maps directly to relative magnitude.
+_SPARK_BLOCKS = "▁▂▃▄▅▆▇█"
+
+
+def sparkline(values: Sequence[float | None]) -> str:
+    """A one-line Unicode trend over `values` -- the score history at a
+    glance, no charting library, prints anywhere a terminal prints.
+
+    Rules, each a honesty choice:
+
+    - None entries (a round with nothing scorable) are skipped, not
+      flattened to zero -- absence of evidence is not a low score.
+    - Fewer than two scorable values is not a trend: empty string, and
+      the caller shows nothing rather than a fake flat line.
+    - The series normalizes to its own min..max, so a trend between 91
+      and 94 is as readable as one between 20 and 95 -- a sparkline
+      answers "how did it move", not "how bad is it".
+    - A perfectly flat series renders the mid block repeated: nothing
+      moved, and that is the whole message.
+    """
+    clean = [v for v in values if v is not None]
+    if len(clean) < 2:
+        return ""
+    low, high = min(clean), max(clean)
+    if high == low:
+        return _SPARK_BLOCKS[len(_SPARK_BLOCKS) // 2] * len(clean)
+    span = high - low
+    top = len(_SPARK_BLOCKS) - 1
+    return "".join(_SPARK_BLOCKS[round((v - low) / span * top)] for v in clean)
 
 
 # ---------------------------------------------------------------------------

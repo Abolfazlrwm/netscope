@@ -14,7 +14,7 @@ from rich.console import Console
 
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, RouteHop, RouteSnapshot
 from netscope.core.routing import RouteChange, RouteHopChange, analyze_route_churn
-from netscope.ui.render import format_loss_note, format_route_change, measurements_table, route_stability_summary, speed_panel
+from netscope.ui.render import format_loss_note, format_route_change, measurements_table, route_stability_summary, sparkline, speed_panel
 
 _STAMP = datetime(2026, 11, 10, 9, 30, tzinfo=UTC)
 
@@ -208,3 +208,38 @@ def test_measurements_table_detail_carries_the_loss_note():
     console = Console(file=out, width=160, force_terminal=False)
     console.print(measurements_table([_merged_loss_measurement({"loss_rounds": [25.0, 0.0], "loss_confirmed": False, "loss_window_rounds": 2})]))
     assert "loss transient across 2 sweeps" in out.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Score sparkline (v0.10) -- one line, eight blocks, no chart dependency.
+# ---------------------------------------------------------------------------
+
+
+def test_sparkline_maps_a_rising_series_onto_rising_blocks():
+    blocks = "▁▂▃▄▅▆▇█"
+    out = sparkline([0.0, 25.0, 50.0, 75.0, 100.0])
+    assert len(out) == 5
+    assert [blocks.index(ch) for ch in out] == sorted(blocks.index(ch) for ch in out)
+    assert out[0] == "▁" and out[-1] == "█"
+
+
+def test_sparkline_normalizes_to_its_own_range():
+    # A trend between 91 and 94 must read like one between 20 and 95:
+    # the sparkline answers "how did it move", not "how bad is it".
+    assert sparkline([91.0, 92.5, 94.0]) == sparkline([20.0, 21.5, 23.0])
+
+
+def test_sparkline_flat_series_renders_the_mid_block():
+    assert sparkline([80.0, 80.0, 80.0]) == "▅▅▅"
+
+
+def test_sparkline_skips_unscorable_rounds_instead_of_flattening_them():
+    # None is absence of evidence, not a low score.
+    assert sparkline([40.0, None, 80.0]) == sparkline([40.0, 80.0])
+
+
+def test_sparkline_needs_two_scorable_points_to_be_a_trend():
+    assert sparkline([]) == ""
+    assert sparkline([None]) == ""
+    assert sparkline([50.0]) == ""
+    assert sparkline([50.0, None]) == ""
