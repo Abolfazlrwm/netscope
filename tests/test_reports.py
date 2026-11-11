@@ -460,3 +460,55 @@ def test_html_latency_sparkline_uses_only_shown_rows():
     # The sparkline describes the SHOWN rows (40 points), not the window.
     assert page.count(",") >= 40  # polyline coordinate pairs exist
     assert "latency per shown measurement" in page
+
+
+# ---------------------------------------------------------------------------
+# `netscope report --html FILE` (v0.10): the CLI writes the same
+# self-contained page the use case renders -- UTF-8, confirmation line,
+# and the JSON short-circuit keeps winning, as documented.
+# ---------------------------------------------------------------------------
+
+
+def test_argparser_has_the_html_report_argument():
+    args = build_arg_parser().parse_args(["report", "--html", "out.html"])
+    assert args.html == "out.html"
+
+
+def test_report_command_writes_the_html_file(tmp_path, capsys):
+    repo = _repo()
+    _seed_two_rounds(repo)
+    out_path = tmp_path / "report.html"
+
+    exit_code = run_report_command(_container(repo), days=7, html_out=str(out_path))
+
+    assert exit_code == 0
+    page = out_path.read_text(encoding="utf-8")
+    assert page.startswith("<!doctype html>")
+    assert "NetScope evidence report" in page
+    assert "HTML report" in capsys.readouterr().out
+
+
+def test_report_command_html_and_markdown_can_coexist(tmp_path, capsys):
+    repo = _repo()
+    _seed_two_rounds(repo)
+    md_path = tmp_path / "report.md"
+    html_path = tmp_path / "report.html"
+
+    exit_code = run_report_command(_container(repo), days=7, out=str(md_path), html_out=str(html_path))
+
+    assert exit_code == 0
+    assert md_path.read_text(encoding="utf-8").startswith("# NetScope evidence report")
+    assert html_path.read_text(encoding="utf-8").startswith("<!doctype html>")
+
+
+def test_report_command_json_output_ignores_html(tmp_path, capsys):
+    repo = _repo()
+    _seed_two_rounds(repo)
+    html_path = tmp_path / "report.html"
+
+    exit_code = run_report_command(_container(repo), days=7, html_out=str(html_path), json_output=True)
+
+    assert exit_code == 0
+    assert not html_path.exists()  # the JSON short-circuit, unchanged
+    out = capsys.readouterr().out
+    assert '"report": "evidence"' in out

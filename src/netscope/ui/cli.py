@@ -59,6 +59,7 @@ from netscope.app.gateway import AUTO_SENTINEL, resolve_gateway
 from netscope.app.monitoring import MonitorSession, TransitionType
 from netscope.app.reports import (
     build_diagnose_report,
+    evidence_report_html,
     evidence_report_markdown,
     serialize_evidence_report,
     serialize_experience,
@@ -197,6 +198,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     report.add_argument("--days", type=int, default=7, help="window length in days, ending now (default: 7)")
     report.add_argument("--target", default=None, help="restrict the report to one target (default: every target in the window)")
     report.add_argument("--out", default=None, help="write the markdown report to a file (UTF-8) instead of stdout")
+    report.add_argument(
+        "--html",
+        default=None,
+        metavar="FILE",
+        help="write a self-contained HTML report (dark theme, inline SVG trends) to FILE (UTF-8); ignored under --json",
+    )
     report.add_argument("--json", action="store_true", help="output machine-readable JSON instead of markdown")
 
     service = subparsers.add_parser(
@@ -619,17 +626,23 @@ def run_report_command(
     days: int = 7,
     target: str | None = None,
     out: str | None = None,
+    html_out: str | None = None,
     json_output: bool = False,
 ) -> int:
     """Runs the `report` command: rebuilds the persisted measurement
     log into one self-contained evidence document (`build_evidence_report`)
     and emits it as markdown (stdout, or a UTF-8 file via `--out`) or
-    machine-readable JSON (`--json`).
+    machine-readable JSON (`--json`), and -- v0.10 -- as a standalone
+    HTML page via `--html FILE`: the same facts, same caps, same
+    disclosures, dressed with inline SVG trends and a score gauge, no
+    scripts and no external assets.
 
     The markdown goes to stdout through plain `print` on purpose: it is
     an export artifact someone pipes, redirects or attaches -- it must
     reach the terminal byte-for-byte, not re-wrapped by the styled
-    console."""
+    console. The HTML file is written with explicit UTF-8 for the same
+    reason the markdown file is.
+    """
     try:
         report = build_evidence_report(container, days=days, target=target)
     except ValueError as exc:
@@ -649,6 +662,13 @@ def run_report_command(
         console().print(f"Evidence report ({report.measurements} measurement(s), {report.failures} failed) written to [bold]{out}[/bold]")
     else:
         print(markdown)
+
+    if html_out is not None:
+        with open(html_out, "w", encoding="utf-8") as fh:
+            fh.write(evidence_report_html(report))
+        console().print(
+            f"HTML report ({report.measurements} measurement(s), {report.failures} failed) written to [bold]{html_out}[/bold] -- open it in any browser, it needs nothing else"
+        )
     return 0
 
 
@@ -837,7 +857,7 @@ def main() -> None:
     elif command == "history":
         exit_code = run_history_command(container, limit=args.limit, json_output=args.json)
     elif command == "report":
-        exit_code = run_report_command(container, days=args.days, target=args.target, out=args.out, json_output=args.json)
+        exit_code = run_report_command(container, days=args.days, target=args.target, out=args.out, html_out=args.html, json_output=args.json)
     elif command == "monitor":
         exit_code = run_monitor_command(
             container,
