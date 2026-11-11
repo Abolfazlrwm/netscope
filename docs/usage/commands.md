@@ -109,6 +109,9 @@ target's real history — not just the run that produced it:
 Show recent measurement rounds reconstructed from the local log, each scored
 against the *current* baseline (the log alone cannot reconstruct the baseline
 as it stood at each round's time — the report says so rather than pretending).
+Under the table, a one-line **score trend sparkline** (v0.10) sketches the
+series across the shown rounds — `▁▂▃▅▇` — with its low/high; it appears only
+once two rounds carry a score.
 
 | Flag | Meaning |
 |---|---|
@@ -127,6 +130,7 @@ to attach to a ticket.
 | `--days N` | window length in days, ending now (default: 7) |
 | `--target TARGET` | restrict the report to one target (default: every target in the window) |
 | `--out FILE` | write the markdown to a UTF-8 file instead of stdout |
+| `--html FILE` | also write a **self-contained HTML report** to a UTF-8 file (v0.10): dark theme, inline SVG score trend and per-target latency sparklines, a mean-score gauge, zero scripts and zero external assets — open it in any browser, offline, forever. Same facts, caps and disclosures as the markdown, word for word. Ignored under `--json`. |
 | `--json` | machine-readable payload instead of markdown |
 
 Large windows are rendered honestly: per-target tables show the newest 40 rows

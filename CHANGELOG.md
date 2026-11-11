@@ -6,6 +6,51 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-12
+
+The "hand it to someone who doesn't read terminals" release: the evidence
+NetScope collects was locked inside a terminal and a markdown blob. v0.10
+gives both a presentation layer -- a sparkline where a column of numbers
+used to be, and an HTML report a manager, a customer or an ISP ticket can
+actually open -- without adding a single dependency, script or network
+fetch. The facts never move: both renderings claim exactly what the
+markdown claimed, caps and disclosures included.
+
+### Added
+
+- **Score trend sparkline in `netscope history`** (`ui.render.sparkline`):
+  one line of Unicode blocks under the rounds table -- `▁▂▃▄▅▆▇█` -- with
+  the series' low and high. Rules it lives by: `None` scores (rounds with
+  nothing scorable) are skipped, not flattened to zero; fewer than two
+  scorable rounds is not a trend, so nothing prints; and the series
+  normalizes to its own min..max, because a sparkline answers "how did it
+  move", not "how bad is it".
+- **Standalone HTML report** (`evidence_report_html`,
+  `netscope report --html FILE`): the full evidence document as one dark,
+  self-contained page -- a donut gauge for the mean score, an SVG sparkline
+  of the round scores, a per-target latency sparkline, evidence and
+  failure tables, and the markdown's honesty notes verbatim. No scripts,
+  no external assets, no network calls; explicit UTF-8 (the report carries
+  arrows and middle dots, and Windows consoles default to legacy code
+  pages). User-controlled text -- targets, error strings -- is HTML-escaped
+  on the way in: a hostile hostname renders as text, never as markup.
+- **`--html` and `--out` compose**: one invocation can emit both the
+  markdown and the HTML artifact; `--json` still short-circuits, as
+  documented.
+
+### Notes
+
+- One facts, two fonts: the HTML renderer shares the markdown's constants
+  (`REPORT_MAX_ROUNDS`, `REPORT_ROWS_PER_TARGET`, `REPORT_MAX_FAILURES`),
+  its omission disclosures ("… N older row(s) omitted"), and its absent
+  metric renders as `--`, never zero -- the two documents cannot disagree.
+- Self-containment is tested, not promised: the suite asserts the page
+  carries no `<script>`, no `<link>`, no `<img>`, and no `src=`/`href=`
+  pointing anywhere.
+- The sparkline and the SVG trend are presentation-only: no new
+  dependency, no charting library -- eight Unicode blocks and two SVG
+  primitives do all of it.
+
 ## [0.9.0] — 2026-11-11
 
 The "confirm before you report" release: a dropped packet is no longer a
