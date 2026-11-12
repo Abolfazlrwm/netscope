@@ -15,7 +15,7 @@ import argparse
 
 import pytest
 
-from netscope.ui.cli import build_arg_parser
+from netscope.ui.cli import build_arg_parser, run_completions_command
 from netscope.ui.completions import completion_script, completion_shells
 
 # ---------------------------------------------------------------------------
@@ -149,3 +149,43 @@ def test_fish_script_speaks_complete_invocations():
     script = completion_script("fish")
     assert script.count("complete -c netscope") >= 25, "fish completes through one `complete` line per item"
     assert "__fish_use_subcommand" in script
+
+
+# ---------------------------------------------------------------------------
+# the `completions` command: parser + runner
+# ---------------------------------------------------------------------------
+
+
+def test_parser_completions_subcommand_takes_a_shell():
+    args = build_arg_parser().parse_args(["completions", "bash"])
+    assert args.command == "completions"
+    assert args.shell == "bash"
+
+
+def test_parser_completions_accepts_all_three_supported_shells():
+    for shell in completion_shells():
+        args = build_arg_parser().parse_args(["completions", shell])
+        assert args.shell == shell
+
+
+def test_parser_completions_rejects_an_unknown_shell(capsys):
+    with pytest.raises(SystemExit) as exc:
+        build_arg_parser().parse_args(["completions", "powershell"])
+    assert exc.value.code == 2
+    assert "powershell" in capsys.readouterr().err
+
+
+def test_runner_prints_the_script_verbatim_and_exits_cleanly(capsys):
+    """The command's whole contract: stdout carries exactly the shipped
+    script -- byte for byte, so a redirect produces a working file."""
+    assert run_completions_command("zsh") == 0
+    assert capsys.readouterr().out == completion_script("zsh")
+
+
+def test_runner_output_carries_no_ansi_styling(capsys):
+    """Completion output is piped into files and sourced by shells; a
+    single rich-styled escape sequence would corrupt it."""
+    run_completions_command("bash")
+    out = capsys.readouterr().out
+    assert "\x1b[" not in out
+    assert out.endswith("complete -o default -F _netscope netscope\n")

@@ -42,6 +42,9 @@ COMMANDS (v0.2)
 - `netscope tui`
     The live terminal dashboard (requires the `tui` extra:
     `pip install netscope[tui]`).
+- `netscope completions bash|zsh|fish` (v0.11)
+    Print a hand-written completion script for the given shell, ready
+    to be redirected into that shell's completion directory.
 """
 
 from __future__ import annotations
@@ -82,6 +85,7 @@ from netscope.app.use_cases import (
 )
 from netscope.core.models import Diagnosis, ExperienceEvent, ProbeType, RawMeasurement
 from netscope.explanation.explainer import explain
+from netscope.ui.completions import completion_script, completion_shells
 from netscope.ui.render import (
     console,
     diagnosis_panel,
@@ -250,6 +254,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     svc_check = service_sub.add_parser("check", help="run a saved service's checks now and report the result")
     svc_check.add_argument("name", help="exact saved name to check")
     svc_check.add_argument("--json", action="store_true", help="output machine-readable JSON instead of styled text")
+
+    completions = subparsers.add_parser(
+        "completions",
+        help="print a shell completion script to stdout, ready for the shell's completion directory",
+        parents=[global_options],
+    )
+    completions.add_argument(
+        "shell",
+        choices=completion_shells(),
+        help="the shell to print completions for",
+    )
 
     subparsers.add_parser(
         "tui",
@@ -833,6 +848,20 @@ def run_tui_command() -> int:
 
 
 # ---------------------------------------------------------------------------
+# completions
+# ---------------------------------------------------------------------------
+
+
+def run_completions_command(shell: str) -> int:
+    """Runs the `completions` command: prints the requested shell's
+    completion script verbatim. Plain print(), never the rich console --
+    the output is redirected into a file or sourced by a shell, so a
+    single ANSI escape sequence would corrupt it."""
+    print(completion_script(shell), end="")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # entry point
 # ---------------------------------------------------------------------------
 
@@ -841,6 +870,12 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
     command = args.command or "diagnose"
+
+    # Completion scripts are pure static text: print them before any
+    # logging setup, config read or container build -- none of that
+    # belongs in a tab-completion pipeline.
+    if command == "completions":
+        raise SystemExit(run_completions_command(args.shell))
 
     configure_logging(verbose=args.verbose)
     config = load_config()
