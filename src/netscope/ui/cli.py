@@ -885,7 +885,7 @@ def main() -> None:
     if command == "tui":
         raise SystemExit(run_tui_command())
 
-    container = build_container()
+    container = build_container(config=config)
 
     if command == "diagnose":
         exit_code = run_diagnose_command(

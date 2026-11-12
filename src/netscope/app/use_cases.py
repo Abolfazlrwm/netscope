@@ -91,6 +91,7 @@ from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.core.baseline import UserBaseline, compare_throughput
 from netscope.core.diagnosis import diagnose, evidence_from_latency
+from netscope.core.geo import geo_extra
 from netscope.core.loss import LOSS_CONFIRMATION_ROUNDS, merge_loss_rounds, needs_loss_confirmation
 from netscope.core.models import (
     Diagnosis,
@@ -107,6 +108,49 @@ from netscope.core.models import (
 from netscope.core.ports import Probe
 from netscope.core.routing import RouteChurnResult, analyze_route_churn
 from netscope.core.scoring import score_measurements
+
+
+def enrich_with_geo(measurements: list[RawMeasurement], container: Container) -> None:
+    """Attach each measurement's target geography to its `extra` as the
+    canonical `extra["geo"]` dict (v0.12, TASK-023) -- best-effort,
+    in place, before scoring/persistence so every downstream surface
+    (rich detail, --json extra block, the persisted log the HTML
+    report rebuilds from) sees the same single copy of the fact.
+
+    HOW AN IP IS FOUND: an IP-literal target is used as-is; otherwise
+    a DNS probe's already-recorded answers are scanned (the check
+    pipeline resolved that host seconds ago -- re-asking the resolver
+    would be waste); otherwise one stdlib getaddrinfo call. Nothing
+    resolves -> nothing attached, silently: enrichment is display
+    metadata, and a "geo lookup failed" warning on every offline
+    round would be noise, not honesty.
+
+    GRACEFUL DEGRADATION, the same doctrine as `_enrich_snapshot`:
+    no GeoLookup or resolver wired -> no-op; an unresolvable target,
+    a corrupt database, or an address the database does not know ->
+    no-op for that measurement (RuntimeError here covers the lookup
+    adapter's own unavailable-database failure mode -- enrichment is
+    best-effort and must never turn a geo hiccup into a failed
+    check). A measurement that already carries `geo` is never
+    re-enriched (idempotent, like the loss-confirmation marker).
+    """
+    geo = container.geo_lookup
+    resolver = container.ip_resolver
+    if geo is None or resolver is None:
+        return
+    for m in measurements:
+        if "geo" in m.extra:
+            continue
+        ip = resolver.resolve(m.target, m.extra)
+        if ip is None:
+            continue
+        try:
+            info = geo.lookup(ip)
+        except (ValueError, RuntimeError):
+            continue
+        if info is None:
+            continue
+        m.extra["geo"] = geo_extra(info)
 
 
 def run_with_loss_confirmation(probe: Probe, target: str) -> RawMeasurement:
@@ -382,6 +426,8 @@ def run_measurement_round(
 
     measurements = [m for m in (local_gateway, public_dns, dns_lookup, public_cdn) if m is not None]
 
+    enrich_with_geo(measurements, container)
+
     experience = score_measurements(measurements, baseline)
 
     evidence = [
@@ -508,10 +554,13 @@ def run_route_analysis(
 def _enrich_snapshot(snapshot: RouteSnapshot, container: Container, *, resolve_hostnames: bool) -> None:
     """Fill in RouteHop lookup fields the traceroute probe deliberately
     leaves None (see RouteHop's own docstring): ASN from the optional
-    offline database, hostnames from the optional reverse-DNS resolver.
-    Mutates the snapshot's hops in place -- enrichment is a display
-    concern and RouteSnapshot.signature() is immune to it (hop addresses
-    only)."""
+    offline database, hostnames from the optional reverse-DNS resolver,
+    and -- v0.12 -- each hop's country from the optional GeoIP database
+    (`RouteHop.country`'s documented purpose since TASK-020; hops carry
+    a place name, never a distance -- a per-hop distance question has
+    no answer the user asked for). Mutates the snapshot's hops in
+    place -- enrichment is a display concern and
+    RouteSnapshot.signature() is immune to it (hop addresses only)."""
     if container.asn_lookup is not None:
         for hop in snapshot.hops:
             if hop.address is None or hop.asn is not None:
@@ -528,6 +577,17 @@ def _enrich_snapshot(snapshot: RouteSnapshot, container: Container, *, resolve_h
         for hop in snapshot.hops:
             if hop.address is not None and hop.hostname is None:
                 hop.hostname = hostnames.get(hop.address)
+
+    if container.geo_lookup is not None:
+        for hop in snapshot.hops:
+            if hop.address is None or hop.country is not None:
+                continue
+            try:
+                info = container.geo_lookup.lookup(hop.address)
+            except (ValueError, RuntimeError):
+                continue  # hostname hop, or a database that cannot answer
+            if info is not None and info.place is not None and info.place.country is not None:
+                hop.country = info.place.country
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +617,7 @@ def check_service(
     INSUFFICIENT_EVIDENCE, never a fabricated healthy result."""
     baseline = baseline if baseline is not None else UserBaseline()
     measurements = run_service_checks(service, container)
+    enrich_with_geo(measurements, container)
     experience = score_measurements(measurements, baseline)
     evidence = [evidence_from_latency(f"service_{m.probe_type.value}_latency", m, baseline) for m in measurements]
     return measurements, experience, diagnose(evidence)

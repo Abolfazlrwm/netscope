@@ -58,7 +58,20 @@ DEFAULT_CONFIG_PATH = Path.home() / ".netscope" / "config.toml"
 # The only NetScopeConfig fields load_config() will accept from a TOML
 # file -- an unrecognized key is ignored (see load_config's docstring)
 # rather than silently becoming an unintended dataclass field.
-_KNOWN_FIELDS = frozenset({"public_dns_target", "dns_lookup_domain", "public_cdn_url", "gateway", "bandwidth_url", "bandwidth_seconds"})
+_KNOWN_FIELDS = frozenset(
+    {
+        "public_dns_target",
+        "dns_lookup_domain",
+        "public_cdn_url",
+        "gateway",
+        "bandwidth_url",
+        "bandwidth_seconds",
+        "geo_db_path",
+        "home_ip",
+        "home_latitude",
+        "home_longitude",
+    }
+)
 
 
 @dataclass
@@ -88,6 +101,17 @@ class NetScopeConfig:
     # never means a large download on a slow link.
     bandwidth_url: str = "https://speed.cloudflare.com/__down?bytes=104857600"
     bandwidth_seconds: float = 6.0
+
+    # GeoIP enrichment (v0.12): the mmdb database file is the USER'S
+    # own GeoLite2-City download (EULA -- NetScope never ships or
+    # fetches one; None means the standard ~/.netscope location). The
+    # user's own location comes either as explicit coordinates or as
+    # an IP to look up in the same database -- distance is only ever
+    # computed when both sides of it are known, never guessed.
+    geo_db_path: str | None = None
+    home_ip: str | None = None
+    home_latitude: float | None = None
+    home_longitude: float | None = None
 
 
 def load_config(path: Path | None = None) -> NetScopeConfig:

@@ -403,7 +403,10 @@ class MaxMindGeoLookup:
     Construction reads and parses the whole file eagerly, so an
     unusable database fails at wiring time (the composition root
     degrades to no-geo, like a missing ASN database) rather than on
-    the first check command.
+    the first check command. A database that passes construction but
+    corrupts mid-walk degrades per-lookup to None -- the enrichment
+    layer treats every lookup failure as "no geography for this
+    address", never as an error a check command should die on.
     """
 
     def __init__(self, db_path: str | Path, home: Place | None = None) -> None:
@@ -427,11 +430,11 @@ class MaxMindGeoLookup:
         ipaddress.ip_address(ip_address)  # validate; ValueError propagates per the port contract
         try:
             record = self._reader.get(ip_address)
-        except MMDBFormatError as exc:
-            # A tree that passed metadata but corrupts mid-walk means
-            # the file is not a usable database -- one failure type
-            # for callers, same as construction-time problems.
-            raise GeoLookupUnavailableError(f"GeoIP database unusable: {exc}") from exc
+        except MMDBFormatError:
+            # A tree that passed metadata but corrupts mid-walk: this
+            # ADDRESS has no geography we can honestly state. Degrade
+            # to None -- enrichment is best-effort display metadata.
+            return None
         if record is None:
             return None
         place = _extract_place(record)
@@ -495,6 +498,26 @@ def _name_of(block: Any) -> str | None:
     return None
 
 
+class TargetIpResolver:
+    """The target-string-to-IP step of geo enrichment, as a wired
+    adapter (the same injection pattern as HostnameResolver): the app
+    layer asks the container for an IP and never imports this module
+    itself -- use_cases is architecture-test-locked to app/core
+    imports, so I/O helpers reach it only through injected
+    dependencies.
+
+    Resolution order: an IP literal wins; else a DNS probe's
+    already-recorded answers are scanned (the check pipeline resolved
+    that host seconds ago -- re-asking the resolver for a fact already
+    on screen would be waste); else one stdlib `getaddrinfo` call.
+    None when nothing resolves -- no IP, no geography, no warning:
+    enrichment is best-effort by design.
+    """
+
+    def resolve(self, target: str, extra: dict | None = None) -> str | None:
+        return resolve_target_ip(target, extra)
+
+
 def resolve_target_ip(target: str, extra: dict | None = None) -> str | None:
     """The target-string-to-IP step of geo enrichment: an IP literal
     wins, else a DNS probe's already-recorded answers are scanned
@@ -504,8 +527,8 @@ def resolve_target_ip(target: str, extra: dict | None = None) -> str | None:
     resolves -- no IP, no geography, no warning: enrichment is
     best-effort by design.
 
-    Lives in adapters (it may consult the resolver), not core; the
-    app layer calls it before `GeoLookup.lookup`.
+    `TargetIpResolver.resolve` is the container-injected entry point;
+    this function is its implementation and the unit-test surface.
     """
     candidate = target.strip()
     try:
