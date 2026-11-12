@@ -65,6 +65,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from netscope.core.baseline import UserBaseline
+from netscope.core.geo import GeoInfo
 from netscope.core.models import ProbeType, RawMeasurement, RouteSnapshot, Service
 
 
@@ -97,6 +98,53 @@ class Probe(Protocol):
     probe_type: ProbeType
 
     def run(self, target: str, **options: Any) -> RawMeasurement: ...
+
+
+@runtime_checkable
+class GeoLookup(Protocol):
+    """Contract for offline geographic lookup of one IP address
+    (v0.12, TASK-023 "Distance estimation").
+
+    WHY THIS CONTRACT EXISTS
+    -------------------------
+    `RouteHop.country` has documented itself as a lookup-ready
+    placeholder since TASK-020: the traceroute probe must not do
+    GeoIP itself (its adapter wraps icmplib, which has no concept of
+    geography), and enrichment is display data applied by `app`
+    afterwards -- the exact pattern `_enrich_snapshot` already runs
+    for ASN and hostnames. This port gives that pattern its third
+    lookup, and gives the measurement-round enrichment its own, so
+    neither ever depends on a concrete mmdb reader. Like `Probe`,
+    this is a capability port, not a repository: one method, pure
+    query, no writes.
+
+    CONTRACT SEMANTICS
+    --------------------
+    - `lookup(ip_address)` returns a `GeoInfo` when the loaded
+      database knows the address, or **None when it doesn't** --
+      unknown addresses (private space, not-yet-allocated blocks, an
+      IPv6 address against an IPv4-only database) are a normal
+      result, never an error, and callers must treat the absence of
+      geography the way `AsnLookupResult.matched == False` is
+      treated: render without it.
+    - A syntactically invalid address raises ValueError -- a caller
+      programming error, distinct from a legitimate-but-unknown
+      address (the same split `AsnLookupAdapter.lookup` draws).
+    - The port says nothing about HOW the database is read (which
+      file format, which library, whether the user's home is
+      configured by coordinates or by IP): that is the adapter's
+      concern. It also says nothing about staleness policy -- the
+      adapter reports `db_age_days` as data; deciding what "too old"
+      means is `core.geo`'s `DB_STALE_AFTER_DAYS`, so the policy stays
+      pure and testable without any database at all.
+
+    The reference adapter is `adapters/geoip.py`
+    (`MaxMindGeoLookup`, a dependency-free MaxMind DB reader --
+    see adr-011-geoip-strategy.md); tests use in-memory fakes, per
+    the same offline-test doctrine every other port here follows.
+    """
+
+    def lookup(self, ip_address: str) -> GeoInfo | None: ...
 
 
 @runtime_checkable
