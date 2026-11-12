@@ -56,6 +56,7 @@ cd netscope && pip install -e ".[tui,dev]"
 
 ```bash
 netscope                # diagnose (gateway auto-detected) — the default command
+netscope --version      # confirm what you're running
 netscope tui            # live terminal dashboard
 netscope speed          # download throughput, judged against your usual
 ```
@@ -137,7 +138,8 @@ older rows were omitted — the aggregates always cover the full window.
 | `netscope history [--limit N]` | Recent measurement rounds from the local log |
 | `netscope monitor [--interval S] [--rounds N]` | Continuous rounds with sustained-problem incident detection |
 | `netscope speed [--url URL] [--seconds S]` | Download throughput: median Mbps, peak sample, bytes moved (v0.3) |
-| `netscope report [--days N] [--target T] [--out FILE]` | Export the log as a self-contained evidence report (v0.5) |
+| `netscope report [--days N] [--target T] [--out FILE] [--html FILE]` | Export the log as a self-contained evidence report — markdown, or a dark HTML page with inline SVG trends (v0.5; HTML v0.10) |
+| `netscope completions bash\|zsh\|fish` | Print a ready-to-install shell completion script, verbatim (v0.11) |
 | `netscope tui` | The six-screen live dashboard (requires `[tui]` extra) |
 
 Every read command accepts `--json` for machine-readable output:
@@ -156,6 +158,22 @@ netscope diagnose --json | jq '.experience'
     {"probe_type": "icmp", "target": "1.1.1.1", "success": true, "latency_ms": 8.4, "...": "..."}
   ]
 }
+```
+
+### Shell completions and a man page
+
+Tab completion ships inside the package — three hand-written scripts (bash, zsh, fish), no third-party generator, no runtime TAB lag:
+
+```bash
+netscope completions bash > ~/.local/share/bash-completion/completions/netscope
+netscope completions zsh  > ~/.zfunc/_netscope    # then: fpath=(~/.zfunc $fpath) before compinit
+netscope completions fish > ~/.config/fish/completions/netscope.fish
+```
+
+`docs/netscope.1` is a man page rendered from the live argparse parser (`make man`) — it cannot drift from the CLI because it *is* the CLI, read back:
+
+```bash
+man docs/netscope.1
 ```
 
 ### Gateway localization, automatically

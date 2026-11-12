@@ -205,3 +205,52 @@ Notes:
   --checks` curates subsets.
 - The route screen traces the configured DNS target on open; type
   another host and press enter to trace it.
+
+## `netscope --version` (v0.11)
+
+Print `netscope X.Y.Z` and exit. The number is read from the installed
+package metadata — never a hardcoded copy — so it always matches the
+build actually running. An uninstalled raw checkout (no
+`pip install -e .`) reports `unknown` instead of guessing. The flag
+short-circuits at the top level: it wins even when the rest of the
+command line is nonsense.
+
+## `netscope completions <shell>` (v0.11)
+
+Print a hand-written tab-completion script — verbatim, plain text, ready
+to be redirected into the shell's completion directory:
+
+| Shell | Install |
+|---|---|
+| bash | `mkdir -p ~/.local/share/bash-completion/completions && netscope completions bash > ~/.local/share/bash-completion/completions/netscope` |
+| zsh | `mkdir -p ~/.zfunc && netscope completions zsh > ~/.zfunc/_netscope`, then put `fpath=(~/.zfunc $fpath)` **before** `compinit` in `.zshrc` |
+| fish | `mkdir -p ~/.config/fish/completions && netscope completions fish > ~/.config/fish/completions/netscope.fish` |
+
+To try one out without installing: `source <(netscope completions bash)`.
+The command short-circuits before any config file read or container
+build — printing a static script needs none of that.
+
+The scripts cover every command (including the `service` subcommands),
+every per-command flag, `--version`, and the five `--checks` values
+(bash completes the last segment of a comma-separated list, so
+`icmp,d<TAB>` works). They are static on purpose: a completion that ran
+`netscope` on every TAB press would be slower than the tool it
+completes, and the trade-off — drift — is pinned shut by tests that
+compare each script against the real parser surface.
+
+## The man page (v0.11)
+
+`docs/netscope.1` is rendered from the live argparse parser by
+`scripts/gen_man.py` (`make man`): every command section, option,
+positional placeholder, the exit codes, and the `~/.netscope` files.
+
+```bash
+man docs/netscope.1
+# or install it system-wide:
+install -m644 docs/netscope.1 /usr/local/share/man/man1/netscope.1
+```
+
+Because the page is generated, it cannot drift from the CLI: a test
+re-renders it and compares byte for byte, so touching the CLI without
+running `make man` fails the build. The committed page is never
+hand-edited.

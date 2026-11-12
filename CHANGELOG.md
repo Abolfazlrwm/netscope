@@ -6,6 +6,47 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-11-12
+
+The "meet the machine's expectations" release: the diagnostics have been
+evidence-grade since v0.5; the shell-level plumbing around them now is
+too. The three things every serious CLI ships -- a `--version` flag, tab
+completion, and a man page -- added without a single new dependency.
+
+### Added
+
+- **`netscope --version`**: reads package metadata (never a hardcoded
+  copy), exits 0 before any subcommand is parsed; an uninstalled raw
+  checkout honestly reports `unknown` rather than guessing a number.
+- **Shell completions** (`netscope completions bash|zsh|fish`): three
+  hand-written scripts printed verbatim to stdout, install paths included
+  as comments. They cover every command (including the `service`
+  subcommands), every per-command flag, and the five `--checks` values --
+  bash completes the last segment of a comma-separated list, so
+  `icmp,d<TAB>` works. The command short-circuits before any config read
+  or container build, and prints with plain `print()`, never rich -- a
+  single ANSI escape would corrupt a sourced script.
+- **A man page that cannot drift** (`docs/netscope.1`): rendered from the
+  live argparse parser by `scripts/gen_man.py` (`make man`) -- every
+  command section, option, positional placeholder, the exit codes, and
+  the `~/.netscope` files. Option dashes are roff-escaped (`\-\-json`)
+  everywhere, prose included, and the committed page must equal a fresh
+  render byte for byte.
+
+### Notes
+
+- The completion scripts are static on purpose: a completion that ran
+  `netscope` on every TAB press would be slower than the tool it
+  completes. The trade-off is drift, so the tests pin every script to
+  the real parser surface -- a future command or flag without a
+  completion fails the build.
+- Regenerating the man page is part of touching the CLI: `make man`,
+  then commit, or the sync test fails. The generated page is
+  deterministic (no auto-dates), so two renders never disagree.
+- 787 tests passing -- the new surface carries its own offline suite
+  (version fallback, script verbatim-ness, ANSI-free output, roff
+  escaping, sync).
+
 ## [0.10.0] — 2026-11-12
 
 The "hand it to someone who doesn't read terminals" release: the evidence
