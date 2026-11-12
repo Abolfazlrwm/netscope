@@ -20,6 +20,10 @@ run.
 | `public_cdn_url` | string | `https://www.cloudflare.com/` | the public HTTP(S) target of a diagnostic round |
 | `bandwidth_url` | string | Cloudflare's speed endpoint | the download endpoint `netscope speed` measures |
 | `bandwidth_seconds` | float | `6.0` | the speed measurement window in seconds |
+| `geo_db_path` | string | `~/.netscope/GeoLite2-City.mmdb` | your own GeoLite2-City database file for the optional geo/distance feature ([setup guide](geoip.md)) |
+| `home_ip` | string | *(none)* | your public IP, looked up in the same database to compute distance — or use the coordinates below |
+| `home_latitude` | float | *(none)* | your latitude (wins over `home_ip` when both are set) |
+| `home_longitude` | float | *(none)* | your longitude |
 
 ### Example
 
@@ -28,6 +32,9 @@ gateway = "192.168.1.1"
 public_cdn_url = "https://www.gstatic.com/generate_204"
 bandwidth_url = "https://speed.example/down?bytes=104857600"
 bandwidth_seconds = 10.0
+geo_db_path = "D:/geo/GeoLite2-City.mmdb"
+home_latitude = 35.6892
+home_longitude = 51.3890
 ```
 
 ## The local database

@@ -16,6 +16,7 @@ This section is the user-facing documentation. The engineering documents
 | [Quickstart](quickstart.md) | The first five commands to run |
 | [Command reference](commands.md) | Every command, flag, and exit behavior |
 | [Configuration](configuration.md) | `~/.netscope/config.toml` keys and the local database |
+| [Geo location](geoip.md) | The optional GeoLite2 feature: setup, home configuration, distance, `extra.geo` keys (v0.12) |
 | [JSON output](json-output.md) | The `--json` payloads for scripting |
 
 The two ideas NetScope measures against:

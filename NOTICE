@@ -27,7 +27,15 @@ were studied for research/design purposes only (see NetScope-Research-Phase1.md)
 MTR (GPL-2.0), WinMTR (GPL-2.0), SmokePing (GPL), Netdata (GPL-3.0+),
 Scapy (GPL-2.0), ntopng (GPL-3.0), LibreNMS (GPL-3.0), Nmap (NPSL).
 
-If a future NetScope version integrates GeoIP data via MaxMind GeoLite2,
-that data is subject to the separate MaxMind GeoLite2 EULA and requires
-its own attribution: "This product includes GeoLite2 data created by MaxMind,
-available from https://www.maxmind.com".
+GeoLite2 data (v0.12, optional at runtime)
+------------------------------------------
+NetScope's GeoIP feature reads MaxMind's GeoLite2 database files, which
+the USER downloads under their own free MaxMind account. NetScope never
+ships, downloads, or redistributes GeoLite2 data; the file is read from
+local disk only. This product includes GeoLite2 data created by MaxMind,
+available from https://www.maxmind.com -- as the GeoLite2 EULA requires.
+GeoLite2 data is not an open-source license; its terms (attribution, no
+redistribution, refresh expectations) are the user's to accept when they
+create the account. NetScope discloses the database's build age at run
+time and surfaces an aging notice past 30 days (the EULA's refresh
+rhythm) -- see docs/usage/geoip.md and adr-011-geoip-strategy.md.

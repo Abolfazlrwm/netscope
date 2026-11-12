@@ -6,6 +6,61 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-12
+
+The "where in the world" release, and the last promise of the route
+model kept: TASK-023's distance estimation lands with **zero new
+dependencies** -- a hand-written MaxMind DB reader (~250 lines of
+stdlib against the public file-format spec), not the `geoip2`/
+`maxminddb` libraries the roadmap had provisionally anticipated. The
+decision (adr-011) repeats the pyasn lesson on purpose: the reader
+compiles nothing, installs everywhere, and stays fully offline-testable
+against a spec-exact synthetic fixture writer -- GeoLite2 data itself
+is never shipped, fetched, or committed.
+
+### Added
+
+- **`GeoLookup` port** (`core/ports.py`) with `Place`/`GeoInfo` domain
+  types, the haversine great-circle distance (`core/geo.py`, IUGG mean
+  radius), and the staleness policy: a database older than 30 days --
+  the GeoLite2 EULA's monthly refresh rhythm -- stamps `stale_db` and
+  surfaces a visible "refresh recommended" notice.
+- **Dependency-free mmdb reader** (`adapters/geoip.py`): search tree at
+  record sizes 24/28/32, all data types including extended types and
+  all four pointer sizes, IPv4-in-IPv6 via the reference readers'
+  96-zero-bit entry walk, and the trailing metadata map. Conformance is
+  pinned two ways offline: `tests/mmdb_fixture.py` writes real-format
+  synthetic databases, and -- when the official `maxminddb` reference
+  library happens to be installed locally -- crosscheck tests compare
+  both readers' answers on the same bytes (skipped in CI; never a
+  dependency).
+- **Geo enrichment in every read path**: `check`/`service check`/
+  `diagnose` show place, distance and db age in the measurement detail
+  and in `--json` (`extra.geo`, flat JSON scalars -- stable keys from
+  v0.12); `netscope route` fills each hop's **Country** column (the
+  field `RouteHop.country` reserved since TASK-020); `netscope report`
+  gains a **Geography** section in both markdown and `--html`, carrying
+  the newest geo-aware measurement's recorded facts, never a re-lookup.
+- **Home location, never guessed**: config gains `geo_db_path`,
+  `home_ip`, `home_latitude`, `home_longitude`. Distance is computed
+  only when both sides of the question exist -- explicit coordinates
+  win over a `home_ip` lookup in the same database; with neither, the
+  target's place still renders and the distance stays absent.
+- **EULA compliance by construction** (`NOTICE` now carries the actual
+  attribution): the database is always the user's own download at
+  `~/.netscope/GeoLite2-City.mmdb` (or `geo_db_path`); a missing or
+  corrupt file degrades to no-geo, the same honest-optional posture as
+  `ipasn.dat`. Setup is documented end to end in `docs/usage/geoip.md`.
+
+### Notes
+
+- The reader was validated during development against MaxMind's own
+  published test databases (GeoLite2-City-Test, decoder DB, IPv4/IPv6
+  record-size sets) -- answers match the official library byte for
+  byte; those files are used nowhere in the committed suite.
+- 869 tests passing (32 format/adapter + 27 wiring/UI), ruff clean,
+  mypy clean.
+
 ## [0.11.0] — 2026-11-12
 
 The "meet the machine's expectations" release: the diagnostics have been

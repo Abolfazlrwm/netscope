@@ -20,6 +20,14 @@ ICMP measurements whose sweep showed partial loss carry the confirmation window
 the window average. Sweeps that came back clean — or dead — carry none of
 these keys.
 
+When the optional GeoLite2 database is installed (v0.12 — see the
+[geo setup guide](geoip.md)), measurements whose target resolved to an IP
+carry `extra.geo`: `ip`, `country`, `country_code`, `city`, `latitude`,
+`longitude`, `distance_km` (null unless your home is configured too), `db`,
+`db_age_days`, and `stale_db` (true once the database passes its 30-day
+refresh rhythm). Unknown addresses and absent databases leave `extra.geo`
+out entirely — no geography is never fabricated.
+
 ## `diagnose --json` — `report: "diagnose"`
 
 ```json

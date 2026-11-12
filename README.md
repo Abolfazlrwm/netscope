@@ -71,7 +71,7 @@ The TUI is six screens under one shell (v0.6) — all sharing one round pipeline
 |---|---|---|
 | `d` | Dashboard | Live score, trend, per-probe results, diagnosis, incidents |
 | `n` | Network | Interfaces, their types/addresses, the detected gateway |
-| `p` | Route | Traceroute with hostname/ASN enrichment and the cross-run churn verdict |
+| `p` | Route | Traceroute with hostname/ASN/country enrichment and the cross-run churn verdict |
 | `e` | Evidence | The full evidence table, ruled-out list, plain-language explanation |
 | `h` | History | Recent rounds from the local log, with per-round detail |
 | `s` | Services | Status board of every measured target + on-demand host checks |
@@ -187,7 +187,11 @@ netscope diagnose --gateway none          # skip the gateway check
 
 ### ASN enrichment (optional, offline, license-clean)
 
-Drop any `prefix<TAB>ASN` text database at `~/.netscope/ipasn.dat` (e.g. a routeviews export) and `netscope route` annotates every hop with its AS number — pure-Python longest-prefix-match, zero network calls. Without the file, routes simply render without AS numbers. See [`docs/architecture/adr-011`](docs/architecture) for the format.
+Drop any `prefix<TAB>ASN` text database at `~/.netscope/ipasn.dat` (e.g. a routeviews export) and `netscope route` annotates every hop with its AS number — pure-Python longest-prefix-match, zero network calls. Without the file, routes simply render without AS numbers. See [`adr-011`](docs/architecture/adr-011-geoip-strategy.md)'s sibling rationale in [`docs/architecture/dependency-strategy.md`](docs/architecture/dependency-strategy.md) for the data-source stance.
+
+### Geo location and distance (optional, offline, v0.12)
+
+Download GeoLite2-City (free MaxMind account, your own license key — setup in [`docs/usage/geoip.md`](docs/usage/geoip.md)), drop `GeoLite2-City.mmdb` at `~/.netscope/GeoLite2-City.mmdb`, optionally set `home_ip` (or home coordinates) in `config.toml`, and every check answers *where it is* and *how far away*: `check`/`diagnose` show place, distance and database age in the detail column (and `extra.geo` in `--json`), `route` gains a per-hop Country column, and the evidence report — markdown and `--html` — gains a Geography section. The `.mmdb` reader is hand-written against the public spec (`adr-011`): zero new dependencies, zero compilation, GeoLite2 never shipped or fetched. A database older than 30 days says so, per the EULA's refresh rhythm.
 
 ### Personal baseline that actually learns
 
@@ -248,7 +252,7 @@ The test suite is **fully offline** — every probe is a scripted fake, includin
 
 ## Roadmap
 
-See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell; (v0.7) the saved service list — `netscope service add/list/remove/check`, persisted locally (schema v3), pinned on the TUI services board; (v0.8) route memory — churn verdicts across your stored route history with hop-level diffs. Next: GeoIP distance estimation, packet-loss-triggered extra rounds.
+See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell; (v0.7) the saved service list — `netscope service add/list/remove/check`, persisted locally (schema v3), pinned on the TUI services board; (v0.8) route memory — churn verdicts across your stored route history with hop-level diffs; (v0.11) shell-level plumbing — `--version`, shell completions, a generated man page; (v0.12) GeoIP distance — the dependency-free GeoLite2 reader, place/distance in every read path (TASK-023, the roadmap's last route-model promise).
 
 ## License
 
