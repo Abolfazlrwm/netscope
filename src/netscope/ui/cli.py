@@ -50,6 +50,7 @@ import argparse
 import json
 import time
 from collections.abc import Callable
+from importlib.metadata import PackageNotFoundError, version
 
 from rich.table import Table
 
@@ -97,6 +98,18 @@ from netscope.ui.render import (
 _CHECK_CHOICES = ("icmp", "dns", "tcp", "tls", "http")
 
 
+def package_version() -> str:
+    """Returns netscope's installed version, read from package metadata
+    so the number always comes from the single source of truth (the
+    pyproject.toml version baked in at install time) -- never a
+    hardcoded copy that can drift. A raw, uninstalled checkout reports
+    "unknown" instead of pretending to know."""
+    try:
+        return version("netscope")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Builds the CLI's argument parser -- extracted from main() so
     argument-parsing behavior is testable without executing a real
@@ -123,6 +136,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="NetScope — from raw network measurements to 'what's wrong, and where', with evidence.",
     )
     parser.set_defaults(verbose=False)
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"netscope {package_version()}",
+        help="show netscope's version and exit",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     diagnose = subparsers.add_parser(

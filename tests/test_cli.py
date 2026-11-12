@@ -24,8 +24,10 @@ same diagnose behavior, which the "no subcommand" tests below confirm.
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import PackageNotFoundError
 
 import pytest
 
@@ -91,6 +93,40 @@ def test_parser_bare_invocation_has_a_verbose_attribute_at_all():
     top-level parser ensures args.verbose still exists safely."""
     args = build_arg_parser().parse_args([])
     assert hasattr(args, "verbose")
+
+
+def test_parser_version_flag_prints_the_package_version_and_exits_cleanly(capsys):
+    """--version is a real top-level flag: it exits 0 and reports the
+    version installed through package metadata, never a hardcoded copy."""
+    with pytest.raises(SystemExit) as exc:
+        build_arg_parser().parse_args(["--version"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert re.fullmatch(r"netscope \d+\.\d+\.\d+\n", out)
+
+
+def test_parser_version_falls_back_to_unknown_without_an_install(capsys, monkeypatch):
+    """A raw checkout without a pip install has no package metadata; the
+    version flag says so honestly instead of guessing a number."""
+
+    def raise_missing(_name: str) -> str:
+        raise PackageNotFoundError(_name)
+
+    monkeypatch.setattr("netscope.ui.cli.version", raise_missing)
+    with pytest.raises(SystemExit) as exc:
+        build_arg_parser().parse_args(["--version"])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == "netscope unknown\n"
+
+
+def test_parser_version_short_circuits_before_any_subcommand_parsing(capsys):
+    """--version wins even when the rest of the command line is
+    nonsense: the version action fires during top-level parsing, before
+    a subcommand is ever required to be valid."""
+    with pytest.raises(SystemExit) as exc:
+        build_arg_parser().parse_args(["--version", "not-a-command"])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.startswith("netscope ")
 
 
 def test_parser_diagnose_subcommand_is_recognized():
