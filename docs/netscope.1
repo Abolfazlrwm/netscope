@@ -1,0 +1,205 @@
+.TH NETSCOPE 1 "" "netscope" "NetScope Manual"
+.SH NAME
+netscope \- NetScope — from raw network measurements to 'what's wrong, and where', with evidence.
+.SH SYNOPSIS
+.B netscope
+.IR command " [ " options " ]"
+.br
+.B netscope
+.B \-\-version
+.SH DESCRIPTION
+NetScope — from raw network measurements to 'what's wrong, and where', with evidence.
+.SH OPTIONS
+.TP
+.B \-h, \-\-help
+show this help message and exit
+.TP
+.B \-\-version
+show netscope's version and exit
+.SH COMMANDS
+.SS diagnose
+run a diagnostic round (gateway/DNS/CDN checks) and report the result
+.P
+\fBnetscope diagnose\fR [\-v] [\-\-gateway \fIGATEWAY\fR] [\-\-json]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.TP
+.B \-\-gateway \fIGATEWAY\fR
+gateway to probe: an IP, 'auto' (detect from the OS, default), or 'none' (skip the gateway check)
+.TP
+.B \-\-json
+output machine\-readable JSON instead of styled text
+.SS check
+probe one target with any subset of the service checks and report the result
+.P
+\fBnetscope check\fR \fITARGET\fR [\-v] [\-\-checks \fICHECKS\fR] [\-\-json]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.TP
+.B \-\-checks \fICHECKS\fR
+comma\-separated subset of checks to run (default: all five)
+.TP
+.B \-\-json
+output machine\-readable JSON instead of styled text
+.SS route
+trace the route to a target and report route stability
+.P
+\fBnetscope route\fR \fITARGET\fR [\-v] [\-\-no\-resolve] [\-\-json]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.TP
+.B \-\-no\-resolve
+skip reverse\-DNS hostname resolution for hops
+.TP
+.B \-\-json
+output machine\-readable JSON instead of styled text
+.SS history
+show recent measurement rounds from the local log
+.P
+\fBnetscope history\fR [\-v] [\-\-limit \fILIMIT\fR] [\-\-json]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.TP
+.B \-\-limit \fILIMIT\fR
+maximum number of rounds to show (default: 20)
+.TP
+.B \-\-json
+output machine\-readable JSON instead of styled text
+.SS monitor
+run continuous measurement rounds with incident detection (Ctrl+C to stop)
+.P
+\fBnetscope monitor\fR [\-v] [\-\-interval \fIINTERVAL\fR] [\-\-rounds \fIROUNDS\fR] [\-\-gateway \fIGATEWAY\fR]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.TP
+.B \-\-interval \fIINTERVAL\fR
+seconds between rounds (default: 30)
+.TP
+.B \-\-rounds \fIROUNDS\fR
+number of rounds before stopping (0 = until Ctrl+C)
+.TP
+.B \-\-gateway \fIGATEWAY\fR
+gateway to probe: an IP, 'auto', or 'none'
+.SS speed
+measure download throughput (median Mbps over a sampling window)
+.P
+\fBnetscope speed\fR [\-v] [\-\-url \fIURL\fR] [\-\-seconds \fISECONDS\fR] [\-\-json]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.TP
+.B \-\-url \fIURL\fR
+download URL to measure (default: the bandwidth_url config key)
+.TP
+.B \-\-seconds \fISECONDS\fR
+measurement window in seconds (default: the bandwidth_seconds config key)
+.TP
+.B \-\-json
+output machine\-readable JSON instead of styled text
+.SS report
+export a self\-contained evidence report from the local measurement log (markdown, or \-\-json)
+.P
+\fBnetscope report\fR [\-v] [\-\-days \fIDAYS\fR] [\-\-target \fITARGET\fR] [\-\-out \fIOUT\fR] [\-\-html \fIFILE\fR] [\-\-json]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.TP
+.B \-\-days \fIDAYS\fR
+window length in days, ending now (default: 7)
+.TP
+.B \-\-target \fITARGET\fR
+restrict the report to one target (default: every target in the window)
+.TP
+.B \-\-out \fIOUT\fR
+write the markdown report to a file (UTF\-8) instead of stdout
+.TP
+.B \-\-html \fIFILE\fR
+write a self\-contained HTML report (dark theme, inline SVG trends) to FILE (UTF\-8); ignored under \-\-json
+.TP
+.B \-\-json
+output machine\-readable JSON instead of markdown
+.SS service
+manage the saved service list (persisted locally; shared by the CLI and the TUI services board)
+.P
+\fBnetscope service\fR \fISERVICE_COMMAND\fR [\-v]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.SS service add
+save (or update) a service in the curated list
+.P
+\fBnetscope service add\fR \fINAME\fR \fIHOST\fR [\-\-checks \fICHECKS\fR]
+.P
+.TP
+.B \-\-checks \fICHECKS\fR
+comma\-separated subset of checks to enable (default: all five)
+.SS service list
+list the saved services
+.P
+\fBnetscope service list\fR [\-\-json]
+.P
+.TP
+.B \-\-json
+output machine\-readable JSON instead of styled text
+.SS service remove
+remove a service from the saved list
+.P
+\fBnetscope service remove\fR \fINAME\fR
+.P
+.SS service check
+run a saved service's checks now and report the result
+.P
+\fBnetscope service check\fR \fINAME\fR [\-\-json]
+.P
+.TP
+.B \-\-json
+output machine\-readable JSON instead of styled text
+.SS completions
+print a shell completion script to stdout, ready for the shell's completion directory
+.P
+\fBnetscope completions\fR \fISHELL\fR [\-v]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.SS tui
+launch the live terminal dashboard (requires: pip install netscope[tui])
+.P
+\fBnetscope tui\fR [\-v]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.SH EXIT STATUS
+.TP
+.B 0
+success; the evidence is printed even when the diagnosis reports a problem
+.TP
+.B 1
+runtime failure, e.g. `netscope tui` without its extra installed
+.TP
+.B 2
+usage error (unknown command, bad option value)
+.SH FILES
+.TP
+.I ~/.netscope/config.toml
+optional user configuration
+.TP
+.I ~/.netscope/netscope.db
+local SQLite log: measurements, baselines, route history, saved services
+.TP
+.I ~/.netscope/ipasn.dat
+optional offline ASN database; enables AS numbers in `netscope route`

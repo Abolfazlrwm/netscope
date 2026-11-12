@@ -1,4 +1,4 @@
-.PHONY: install test test-cov lint format typecheck tui clean build
+.PHONY: install test test-cov lint format typecheck man tui clean build
 
 # Editable install with every extra + dev tools
 install:
@@ -21,6 +21,11 @@ format:
 
 typecheck:
 	mypy
+
+# Regenerate the committed man page from the live parser.
+# Run this after changing the CLI; the suite fails on a stale page.
+man:
+	python scripts/gen_man.py
 
 # Launch the dashboard locally
 tui:
