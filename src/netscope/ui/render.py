@@ -28,7 +28,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS
+from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS, geo_summary
 from netscope.core.baseline import VERDICT_AS_USUAL, VERDICT_FASTER, VERDICT_SLOWER
 from netscope.core.models import Diagnosis, ExperienceEvent, ExperienceLevel, Hypothesis, RawMeasurement, RouteHop
 from netscope.core.routing import RouteChange, RouteChurnResult
@@ -212,7 +212,10 @@ def _success_detail(m: RawMeasurement) -> str:
     DNS answers, HTTP status/version -- read from `extra` without
     interpreting anything (the loss note is the exception only in shape:
     it renders the verdict `core.loss` already computed, it computes
-    nothing new)."""
+    nothing new). The v0.12 geo block rides along through the shared
+    `geo_summary` wording -- the same sentence the markdown and HTML
+    evidence reports show, so no two surfaces ever describe a place
+    differently."""
     parts = []
     if "answers" in m.extra and isinstance(m.extra["answers"], list) and m.extra["answers"]:
         answers = ", ".join(str(r) for r in m.extra["answers"][:2])
@@ -229,6 +232,11 @@ def _success_detail(m: RawMeasurement) -> str:
     loss_note = format_loss_note(m)
     if loss_note:
         parts.append(loss_note)
+    geo = m.extra.get("geo")
+    if isinstance(geo, dict):
+        geo_text = geo_summary(geo)
+        if geo_text:
+            parts.append(geo_text)
     return " · ".join(parts)
 
 
@@ -340,6 +348,7 @@ def route_table(hops: list[RouteHop], *, title: str | None = None) -> Table:
     table.add_column("Host", overflow="fold")
     table.add_column("Address", overflow="fold")
     table.add_column("ASN", style="magenta", no_wrap=True)
+    table.add_column("Country", style="magenta", no_wrap=True)
     table.add_column("RTT", justify="right")
     table.add_column("Loss", justify="right")
 
@@ -351,6 +360,7 @@ def route_table(hops: list[RouteHop], *, title: str | None = None) -> Table:
             hop.hostname or "—",
             hop.address or Text("*", style="dim"),
             hop.asn or "—",
+            hop.country or "—",
             rtt,
             loss,
         )

@@ -221,6 +221,7 @@ def serialize_report_row(row: TargetReportRow) -> dict[str, Any]:
         "error": row.error,
         "error_type": row.error_type.value if row.error_type is not None else None,
         "verdict": row.verdict,
+        "geo": row.geo,
     }
 
 
@@ -255,6 +256,7 @@ def serialize_evidence_report(report: EvidenceReport) -> dict[str, Any]:
                 "mean_latency_ms": t.mean_latency_ms,
                 "verdict_counts": t.verdict_counts,
                 "truncated_rows": t.truncated,
+                "geo": t.geo,
                 "rows": [serialize_report_row(row) for row in t.rows],
             }
             for t in report.target_reports
@@ -276,6 +278,37 @@ def _md_cell(value: Any, *, limit: int = 60) -> str:
 
 def _verdict_summary(counts: dict[str, int]) -> str:
     return " · ".join(f"{name} ×{n}" for name, n in sorted(counts.items()))
+
+
+def geo_place_label(geo: dict) -> str | None:
+    """One shared wording for a geo block's place, used by the rich
+    detail, the markdown geography section and the HTML one -- the
+    one-shared-wording pattern the verdict summary established.
+    Reads only canonical `core.geo.geo_extra` keys; a block missing
+    both names (coordinates-only) renders as None -- the distance
+    speaks for it."""
+    parts = [geo.get(part) for part in ("city", "country")]
+    label = ", ".join(str(part) for part in parts if part)
+    return label or None
+
+
+def geo_summary(geo: dict) -> str:
+    """One shared one-line geography summary: place, distance from
+    home when recorded, and the database's age with the aging notice
+    the EULA policy asks for. Every renderer shows exactly this."""
+    parts: list[str] = []
+    place = geo_place_label(geo)
+    if place:
+        parts.append(place)
+    distance = geo.get("distance_km")
+    if isinstance(distance, (int, float)) and distance >= 1:
+        parts.append(f"{distance:,.0f} km from home")
+    age = geo.get("db_age_days")
+    if isinstance(age, int):
+        stale = geo.get("stale_db") is True
+        suffix = " -- refresh recommended" if stale else ""
+        parts.append(f"db {age}d old{suffix}")
+    return " · ".join(parts)
 
 
 def evidence_report_markdown(report: EvidenceReport) -> str:
@@ -363,6 +396,18 @@ def evidence_report_markdown(report: EvidenceReport) -> str:
                 )
                 lines.append("")
 
+    # Geography (v0.12): the persisted place/distance facts, per
+    # target, only when any target actually has one -- honest absence
+    # means no section at all, never an empty table.
+    geo_targets = [t for t in report.target_reports if t.geo is not None]
+    if geo_targets:
+        lines.append("## Geography")
+        lines.append("")
+        for t in geo_targets:
+            assert t.geo is not None
+            lines.append(f"- `{t.target}` → {geo_summary(t.geo)}")
+        lines.append("")
+
     if report.failure_rows:
         lines.append("## Failures")
         lines.append("")
@@ -387,6 +432,9 @@ def evidence_report_markdown(report: EvidenceReport) -> str:
     lines.append("- Untested metrics never read as healthy: absent evidence renders as `--`, never as a passing value.")
     lines.append(
         "- Throughput evidence stays throughput evidence: verdicts live in the verdict column, latency means only ever average successful latency readings."
+    )
+    lines.append(
+        "- Geography rows are the place/distance the NEWEST geo-aware measurement of that target recorded in the window -- looked up at run time from the user's own GeoLite2 database, never re-looked-up here; a stale-database notice rides along when the database has aged past its refresh rhythm."
     )
     lines.append("")
     return "\n".join(lines)
@@ -647,6 +695,21 @@ def evidence_report_html(report: EvidenceReport) -> str:
                     "shown for this target; aggregates above cover the full window)</p>"
                 )
 
+    # Geography (v0.12) -- the markdown's section, word for word.
+    geo_targets = [t for t in report.target_reports if t.geo is not None]
+    if geo_targets:
+        out.append("<h2>Geography</h2>")
+        out.append("<table><thead><tr><th>target</th><th>where it is</th><th>as measured</th></tr></thead><tbody>")
+        for t in geo_targets:
+            assert t.geo is not None
+            place = geo_place_label(t.geo) or "--"
+            stale = t.geo.get("stale_db") is True
+            summary_class = "warn" if stale else "dim"
+            out.append(
+                f"<tr><td><code>{_esc(t.target)}</code></td><td>{_esc(place)}</td><td class='{summary_class}'>{_esc(geo_summary(t.geo))}</td></tr>"
+            )
+        out.append("</tbody></table>")
+
     # Failures, verbatim, capped and disclosed like the markdown.
     if report.failure_rows:
         shown_failures = report.failure_rows[-REPORT_MAX_FAILURES:]
@@ -687,6 +750,11 @@ def evidence_report_html(report: EvidenceReport) -> str:
     out.append(
         "<li>Throughput evidence stays throughput evidence: verdicts live in the verdict column, latency "
         "means only ever average successful latency readings.</li>"
+    )
+    out.append(
+        "<li>Geography rows are the place/distance the newest geo-aware measurement of that target recorded in "
+        "the window &mdash; looked up at run time from the user's own GeoLite2 database, never re-looked-up here; "
+        "a stale-database notice rides along when the database has aged past its refresh rhythm.</li>"
     )
     out.append("</ul>")
 

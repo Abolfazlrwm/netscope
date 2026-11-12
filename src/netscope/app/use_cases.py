@@ -886,7 +886,12 @@ REPORT_MAX_FAILURES = 20
 class TargetReportRow:
     """One measurement as it appears in a target's evidence table.
     Carries its target name so the report-wide failure list can be
-    rendered without re-deriving context."""
+    rendered without re-deriving context.
+
+    `geo` (v0.12) is the measurement's persisted `extra["geo"]` dict,
+    verbatim -- the place/distance fact AS THE RUN RECORDED IT, never
+    re-looked-up at report time: a report is what the log proves, and
+    yesterday's lookup result does not silently become today's."""
 
     target: str
     timestamp: datetime
@@ -897,11 +902,18 @@ class TargetReportRow:
     error: str | None
     error_type: ProbeErrorType | None
     verdict: str | None  # v0.4 baseline-relative throughput verdict, when attached
+    geo: dict | None = None
 
 
 @dataclass
 class TargetReport:
-    """Per-target aggregates plus the (capped) evidence rows."""
+    """Per-target aggregates plus the (capped) evidence rows.
+
+    `geo` (v0.12) is the target's most recent persisted geo block in
+    the window -- the place/distance the NEWEST geo-aware measurement
+    recorded, surfaced once per target in the geography sections; a
+    target never geo-enriched keeps None, and the sections simply
+    omit it."""
 
     target: str
     probe_types: list[str]
@@ -911,6 +923,7 @@ class TargetReport:
     mean_latency_ms: float | None
     verdict_counts: dict[str, int]
     truncated: int = 0
+    geo: dict | None = None
 
 
 @dataclass
@@ -970,8 +983,11 @@ def _window_measurements(
 def _report_row(m: RawMeasurement) -> TargetReportRow:
     """RawMeasurement -> evidence-table row. The v0.4 verdict rides
     along only when `extra["verdict"]` is actually a string -- a
-    bandwidth row's verdict never gets to pose as latency evidence."""
+    bandwidth row's verdict never gets to pose as latency evidence.
+    The v0.12 geo block rides along only when it is actually a dict
+    -- same shape-honesty rule."""
     raw_verdict = m.extra.get("verdict")
+    raw_geo = m.extra.get("geo")
     return TargetReportRow(
         target=m.target,
         timestamp=m.timestamp,
@@ -982,6 +998,7 @@ def _report_row(m: RawMeasurement) -> TargetReportRow:
         error=m.error,
         error_type=m.error_type,
         verdict=raw_verdict if isinstance(raw_verdict, str) else None,
+        geo=raw_geo if isinstance(raw_geo, dict) else None,
     )
 
 
@@ -1005,6 +1022,7 @@ def _target_reports(measurements: list[RawMeasurement]) -> list[TargetReport]:
             if row.verdict is not None:
                 verdict_counts[row.verdict] = verdict_counts.get(row.verdict, 0) + 1
         latencies = [m.latency_ms for m in group if m.success and m.latency_ms is not None]
+        geo = next((row.geo for row in reversed(rows_all) if row.geo is not None), None)
         reports.append(
             TargetReport(
                 target=name,
@@ -1015,6 +1033,7 @@ def _target_reports(measurements: list[RawMeasurement]) -> list[TargetReport]:
                 mean_latency_ms=sum(latencies) / len(latencies) if latencies else None,
                 verdict_counts=verdict_counts,
                 truncated=len(rows_all) - len(shown),
+                geo=geo,
             )
         )
     return reports

@@ -322,3 +322,132 @@ class TestContainerWiring:
         assert info is not None
         assert info.db_age_days == DB_STALE_AFTER_DAYS + 5
         assert info.stale_db is True
+
+
+class TestRenderGeo:
+    """The v0.12 UI surfaces: rich detail, markdown geography, HTML
+    geography, JSON serialization -- all fed by the same canonical
+    extra["geo"] block."""
+
+    GEO = {
+        "ip": LONDON_IP,
+        "country": "United Kingdom",
+        "country_code": "GB",
+        "city": "London",
+        "latitude": 51.5074,
+        "longitude": -0.1278,
+        "distance_km": 4396.57,
+        "db": "GeoLite2-City",
+        "db_age_days": 2,
+        "stale_db": False,
+    }
+
+    def test_rich_detail_shows_place_and_distance(self) -> None:
+        from netscope.ui.render import _success_detail
+
+        m = _measurement()
+        m.extra["geo"] = dict(self.GEO)
+        detail = _success_detail(m)
+        assert "London, United Kingdom" in detail
+        assert "4,397 km from home" in detail
+        assert "db 2d old" in detail
+
+    def test_rich_detail_flags_stale_database(self) -> None:
+        from netscope.ui.render import _success_detail
+
+        geo = dict(self.GEO, db_age_days=DB_STALE_AFTER_DAYS + 10, stale_db=True)
+        m = _measurement()
+        m.extra["geo"] = geo
+        assert "refresh recommended" in _success_detail(m)
+
+    def test_rich_detail_without_geo_is_unchanged(self) -> None:
+        from netscope.ui.render import _success_detail
+
+        m = _measurement()
+        assert "geo" not in _success_detail(m)
+
+    def test_report_row_and_target_aggregate_carry_geo(self) -> None:
+        from netscope.app.use_cases import _report_row, _target_reports
+
+        first = _measurement("example.com")
+        first.extra["geo"] = dict(self.GEO, distance_km=1.0)
+        latest = _measurement("example.com")
+        latest.extra["geo"] = dict(self.GEO)
+        row = _report_row(first)
+        assert row.geo is not None and row.geo["distance_km"] == 1.0
+        reports = _target_reports([first, latest])
+        assert reports[0].geo is not None
+        assert reports[0].geo["distance_km"] == pytest.approx(4396.57)  # the NEWEST one wins
+
+    def test_json_report_includes_geo(self) -> None:
+        from netscope.app.reports import serialize_evidence_report
+        from netscope.app.use_cases import _report_row
+
+        m = _measurement()
+        m.extra["geo"] = dict(self.GEO)
+        row = _report_row(m)
+        assert row.geo is not None and row.geo["country"] == "United Kingdom"
+        serialized = serialize_evidence_report(_build_report([m]))
+        assert serialized["targets"][0]["geo"]["country"] == "United Kingdom"
+
+    def test_markdown_geography_section(self) -> None:
+        from netscope.app.reports import evidence_report_markdown
+
+        m = _measurement()
+        m.extra["geo"] = dict(self.GEO)
+        report = _build_report([m])
+        text = evidence_report_markdown(report)
+        assert "## Geography" in text
+        assert "`example.com` → London, United Kingdom · 4,397 km from home · db 2d old" in text
+
+    def test_markdown_omits_geography_without_geo(self) -> None:
+        from netscope.app.reports import evidence_report_markdown
+
+        assert "## Geography" not in evidence_report_markdown(_build_report([_measurement()]))
+
+    def test_html_geography_section(self) -> None:
+        from netscope.app.reports import evidence_report_html
+
+        m = _measurement()
+        m.extra["geo"] = dict(self.GEO)
+        html = evidence_report_html(_build_report([m]))
+        assert "<h2>Geography</h2>" in html
+        assert "London, United Kingdom" in html
+        assert "4,397 km from home" in html
+
+    def test_html_stale_geo_is_flagged(self) -> None:
+        from netscope.app.reports import evidence_report_html
+
+        m = _measurement()
+        m.extra["geo"] = dict(self.GEO, db_age_days=DB_STALE_AFTER_DAYS + 1, stale_db=True)
+        html = evidence_report_html(_build_report([m]))
+        assert "refresh recommended" in html
+        assert "class='warn'" in html
+
+    def test_html_omits_geography_without_geo(self) -> None:
+        from netscope.app.reports import evidence_report_html
+
+        assert "<h2>Geography</h2>" not in evidence_report_html(_build_report([_measurement()]))
+
+    def test_route_table_has_country_column(self) -> None:
+        from netscope.ui.render import route_table
+
+        hop = RouteHop(ttl=1, address="81.2.69.1", hostname=None, avg_rtt_ms=1.0, packet_loss_pct=0.0, country="United Kingdom")
+        table = route_table([hop])
+        headers = [c.header for c in table.columns]
+        assert "Country" in headers
+
+
+def _build_report(measurements):
+    """The minimal EvidenceReport the geography render tests need --
+    built through the real grouping/aggregate path, not by hand."""
+    from netscope.app.use_cases import EvidenceReport, _target_reports
+    from netscope.core.models import utcnow
+
+    return EvidenceReport(
+        since=measurements[0].timestamp,
+        until=utcnow(),
+        rounds=[],
+        target_reports=_target_reports(measurements),
+        failure_rows=[],
+    )
