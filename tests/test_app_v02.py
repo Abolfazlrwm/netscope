@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from dataclasses import dataclass as _dc
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
@@ -505,6 +507,22 @@ def test_observe_measurements_skips_failures_and_nones():
     observe_measurements(baseline, measurements)
     assert set(baseline.latency) == {"ok", "no-loss-field"}
     assert baseline.packet_loss == {}  # no packet-loss readings observed
+
+
+def test_observe_measurements_observes_jitter_only_when_reported():
+    """v0.13: the third store fills only from sweeps that actually
+    report a variation reading -- a probe type without one (http) and
+    a failed sweep leave it untouched, never poisoned with artifacts."""
+    baseline = UserBaseline()
+    measurements = [
+        RawMeasurement(probe_type=ProbeType.ICMP, target="gw", success=True, latency_ms=10.0, jitter_ms=2.0),
+        RawMeasurement(probe_type=ProbeType.HTTP, target="web", success=True, latency_ms=20.0, jitter_ms=None),
+        RawMeasurement(probe_type=ProbeType.ICMP, target="failed", success=False, latency_ms=None, jitter_ms=None),
+    ]
+    observe_measurements(baseline, measurements)
+    assert set(baseline.jitter) == {"gw"}
+    assert baseline.jitter["gw"].count == 1
+    assert baseline.jitter["gw"].mean == pytest.approx(2.0)
 
 
 def test_recent_rounds_groups_measurements_by_time_window(tmp_path):

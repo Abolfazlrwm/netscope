@@ -111,6 +111,7 @@ def test_expected_tables_exist_after_initialization():
         "route_hops",
         "metric_baselines",
         "throughput_baselines",
+        "jitter_baselines",
         "services",
         "evidence",
         "diagnoses",
@@ -344,12 +345,25 @@ def test_v1_database_upgrades_additively(tmp_path):
     conn.close()
 
 
-def test_v3_is_the_current_schema_version_with_the_services_table():
+def test_v4_is_the_current_schema_version_with_the_jitter_baselines_table():
     conn = _fresh_connection()
     initialize_database(conn)
-    assert SCHEMA_VERSION == 3
+    assert SCHEMA_VERSION == 4
     assert get_schema_version(conn) == SCHEMA_VERSION
-    assert "services" in _table_names(conn)
+    assert "jitter_baselines" in _table_names(conn)
+    assert "services" in _table_names(conn)  # the v3 era's table, still present
+    conn.close()
+
+
+def test_jitter_baselines_table_has_the_welford_shape():
+    """Same Welford-exact triple as the other baseline tables: a
+    MetricBaseline is reconstructed from count/mean/m2, never
+    approximated."""
+    conn = _fresh_connection()
+    initialize_database(conn)
+    conn.execute("INSERT INTO jitter_baselines (target, count, mean, m2) VALUES ('gw', 5, 2.02, 0.088)")
+    row = conn.execute("SELECT count, mean, m2 FROM jitter_baselines WHERE target = 'gw'").fetchone()
+    assert row == (5, 2.02, 0.088)
     conn.close()
 
 
@@ -374,8 +388,8 @@ def test_services_table_has_the_documented_shape():
 
 def test_v2_database_upgrades_additively(tmp_path):
     """A v2 database (what v0.4-v0.6 users have on disk) upgrades in
-    place: the services table appears, user_version moves to 3, and
-    every pre-existing row is untouched."""
+    place: the services table appears, user_version moves up to the
+    current version, and every pre-existing row is untouched."""
     conn = create_connection(tmp_path / "upgrade.db")
     conn.execute("INSERT INTO measurements (probe_type, target, timestamp, success) VALUES ('icmp', 'gw', '2026-11-09T08:00:00+00:00', 1)")
     conn.execute("INSERT INTO metric_baselines (target, metric_type, count, mean, m2) VALUES ('gw', 'latency', 5, 10.0, 8.0)")
@@ -392,6 +406,30 @@ def test_v2_database_upgrades_additively(tmp_path):
     assert measurement == ("gw", 1)
     baseline = conn.execute("SELECT count, mean FROM metric_baselines WHERE target = 'gw'").fetchone()
     assert baseline == (5, 10.0)
+    conn.close()
+
+
+def test_v3_database_upgrades_additively(tmp_path):
+    """A v3 database (what v0.7-v0.12 users have on disk) upgrades in
+    place: the jitter_baselines table appears, user_version moves to 4,
+    and every pre-existing row is untouched -- the same purely-additive
+    pattern every era of this schema has used."""
+    conn = create_connection(tmp_path / "upgrade3.db")
+    conn.execute("INSERT INTO measurements (probe_type, target, timestamp, success) VALUES ('icmp', 'gw', '2026-11-12T08:00:00+00:00', 1)")
+    conn.execute("INSERT INTO services (name, host, checks) VALUES ('svc', 'example.com', 'icmp')")
+    # Simulate the v3 era: no jitter table, user_version rewound.
+    conn.execute("DROP TABLE jitter_baselines")
+    conn.execute("PRAGMA user_version = 3")
+    conn.commit()
+
+    initialize_database(conn)  # what a v0.13 binary does on startup
+
+    assert get_schema_version(conn) == SCHEMA_VERSION
+    assert "jitter_baselines" in _table_names(conn)
+    measurement = conn.execute("SELECT target, success FROM measurements").fetchone()
+    assert measurement == ("gw", 1)
+    service = conn.execute("SELECT name, host, checks FROM services").fetchone()
+    assert service == ("svc", "example.com", "icmp")
     conn.close()
 
 

@@ -54,12 +54,19 @@ class _FakeProbe:
 
     probe_type: ProbeType
     latency_ms: float = 10.0
+    jitter_ms: float | None = None
     success: bool = True
     calls: list[str] = field(default_factory=list)
 
     def run(self, target: str, **options) -> RawMeasurement:
         self.calls.append(target)
-        return RawMeasurement(probe_type=self.probe_type, target=target, success=self.success, latency_ms=self.latency_ms)
+        return RawMeasurement(
+            probe_type=self.probe_type,
+            target=target,
+            success=self.success,
+            latency_ms=self.latency_ms,
+            jitter_ms=self.jitter_ms,
+        )
 
 
 def _mature_baseline(target: str, values: list[float]) -> UserBaseline:
@@ -302,6 +309,42 @@ def test_diagnose_service_evidence_metric_names_are_scoped_to_service_and_catego
     diagnosis = diagnose_service(service, container, baseline=baseline)
 
     assert all(e.metric.startswith("service_") for e in diagnosis.evidence)
+
+
+def test_diagnose_service_includes_the_jitter_twin_for_each_check():
+    """v0.13: every latency Evidence now has a `_jitter` sibling. For a
+    check type that never reports variation (http), that sibling is
+    tested-but-zero-confidence -- present, never a fabricated claim."""
+    http = _FakeProbe(ProbeType.HTTP, latency_ms=900.0)
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.HTTP: http}))
+    service = Service(name="svc", host="example.com", enabled_checks={ProbeType.HTTP})
+    baseline = _mature_baseline("example.com", [20.0] * 6)
+
+    diagnosis = diagnose_service(service, container, baseline=baseline)
+
+    assert diagnosis is not None  # the 900ms latency reading is CRITICAL against the mature baseline
+    metrics = {e.metric for e in diagnosis.evidence}
+    assert metrics == {"service_http_latency", "service_http_jitter"}
+    jitter_evidence = next(e for e in diagnosis.evidence if e.metric == "service_http_jitter")
+    assert jitter_evidence.tested is True
+    assert jitter_evidence.confidence == 0.0
+
+
+def test_diagnose_service_anomalous_jitter_against_mature_jitter_baseline_is_service_issue():
+    """A steady 20ms line that suddenly wobbles at 40ms against a ~2ms
+    history is a diagnosable problem even though latency and loss look
+    perfect -- the v0.13 headline, expressed through the diagnosis."""
+    icmp = _FakeProbe(ProbeType.ICMP, latency_ms=20.0, jitter_ms=40.0)
+    container = Container(probe_registry=ProbeRegistry(probes={ProbeType.ICMP: icmp}))
+    service = Service(name="svc", host="example.com", enabled_checks={ProbeType.ICMP})
+    baseline = _mature_baseline("example.com", [20.0] * 6)
+    for v in [2.0, 2.2, 1.8, 2.1, 2.0]:
+        baseline.observe_jitter("example.com", v)
+
+    diagnosis = diagnose_service(service, container, baseline=baseline)
+
+    assert diagnosis is not None
+    assert diagnosis.classification == Hypothesis.SERVICE_ISSUE
 
 
 # ---------------------------------------------------------------------------

@@ -155,3 +155,35 @@ def test_saving_an_empty_throughput_store_clears_old_rows(tmp_path):
     repository.save(UserBaseline())
 
     assert repository.load().throughput == {}
+
+
+def test_jitter_baseline_round_trips_exactly(tmp_path):
+    """v0.13, Welford-exact like its latency/loss/throughput siblings:
+    count/mean/m2 survive save+load with no drift, and the stores next
+    to it are untouched."""
+    repository = BaselineRepository.open(tmp_path / "jitter.db")
+    baseline = UserBaseline()
+    for v in [2.0, 2.2, 1.8, 2.1, 2.0]:
+        baseline.observe_jitter("gw", v)
+    baseline.observe_latency("gw", 5.0)
+
+    repository.save(baseline)
+    loaded = repository.load()
+
+    learned = loaded.jitter["gw"]
+    expected = baseline.jitter["gw"]
+    assert (learned.count, learned.mean, learned._m2) == (expected.count, expected.mean, expected._m2)
+    assert loaded.latency["gw"].count == 1
+
+
+def test_saving_an_empty_jitter_store_clears_old_rows(tmp_path):
+    """save() mirrors the in-memory object exactly -- a cleared jitter
+    store must not leave orphaned rows behind."""
+    repository = BaselineRepository.open(tmp_path / "jitter-clear.db")
+    baseline = UserBaseline()
+    baseline.observe_jitter("t", 2.0)
+    repository.save(baseline)
+
+    repository.save(UserBaseline())
+
+    assert repository.load().jitter == {}

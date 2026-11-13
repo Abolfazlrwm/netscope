@@ -75,6 +75,13 @@ speculative:
   separation mirrors the domain doctrine bandwidth_probe.py documents
   -- a throughput reading must never be queryable as a latency row.
   Columns are the same Welford-exact `count`/`mean`/`m2` triple.
+- `jitter_baselines` (v4): UserBaseline's `jitter` dict of
+  MetricBaseline -- the v0.13 delay-variation baseline. Same decision
+  as `throughput_baselines`: a separate table rather than widening
+  `metric_baselines`' CHECK constraint (SQLite cannot ALTER a CHECK),
+  with the same Welford-exact `count`/`mean`/`m2` triple. The raw
+  reading has always existed (`measurements.jitter_ms`); this table is
+  what lets it finally be learned.
 - `services` (v3): core.models.Service -- the curated service list
   (TASK-032's storage half). One row per user-saved Service, keyed by
   the user-supplied `name`: that is the domain's own identity, and a
@@ -129,7 +136,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # v1 -> v2 migration note: version 2 adds `throughput_baselines` and
 # changes nothing else. The migration is purely additive -- every v1
@@ -145,6 +152,13 @@ SCHEMA_VERSION = 3
 # the new table alongside the existing rows and bumps `user_version`.
 # No data is moved, rewritten, or dropped; there is nothing to roll
 # back.
+#
+# v3 -> v4 migration note: version 4 adds `jitter_baselines` (the
+# v0.13 delay-variation baseline) and changes nothing else -- the same
+# purely-additive pattern: every v3 statement is unchanged and still
+# `IF NOT EXISTS`, so opening a v3 database under v4 creates the new
+# table alongside the existing rows and bumps `user_version`. No data
+# is moved, rewritten, or dropped; there is nothing to roll back.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS measurements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -200,6 +214,16 @@ CREATE TABLE IF NOT EXISTS metric_baselines (
 -- Deliberately NOT a `metric_type` value in metric_baselines -- see
 -- the table rationale above.
 CREATE TABLE IF NOT EXISTS throughput_baselines (
+    target TEXT PRIMARY KEY,
+    count INTEGER NOT NULL,
+    mean REAL NOT NULL,
+    m2 REAL NOT NULL
+);
+
+-- v4: the delay-variation baseline (UserBaseline.jitter). Deliberately
+-- NOT a `metric_type` value in metric_baselines -- same reasoning as
+-- throughput_baselines above.
+CREATE TABLE IF NOT EXISTS jitter_baselines (
     target TEXT PRIMARY KEY,
     count INTEGER NOT NULL,
     mean REAL NOT NULL,

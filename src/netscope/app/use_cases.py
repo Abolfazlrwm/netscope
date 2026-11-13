@@ -90,7 +90,7 @@ from datetime import datetime, timedelta
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.core.baseline import UserBaseline, compare_throughput
-from netscope.core.diagnosis import diagnose, evidence_from_latency
+from netscope.core.diagnosis import diagnose, evidence_from_jitter, evidence_from_latency
 from netscope.core.geo import geo_extra
 from netscope.core.loss import LOSS_CONFIRMATION_ROUNDS, merge_loss_rounds, needs_loss_confirmation
 from netscope.core.models import (
@@ -214,14 +214,18 @@ def diagnose_service(
     every enabled check came back healthy -- `core.diagnosis.diagnose`'s
     own convention, reused as-is here).
 
-    Each `RawMeasurement` becomes one piece of `Evidence` via
-    `core.diagnosis.evidence_from_latency`, using
-    `f"service_{probe_type.value}_latency"` as the metric name. This
-    reuses `core.diagnosis`'s own existing metric-prefix vocabulary
-    unchanged: any metric starting with `"service_"` already categorizes
-    as `Hypothesis.SERVICE_ISSUE` (see `core/diagnosis.py`'s
-    `_METRIC_CATEGORY`, anticipating this exact use since TASK-026) --
-    nothing about that module needed to change for this task.
+    Each `RawMeasurement` becomes one or two pieces of `Evidence` via
+    `core.diagnosis`: `evidence_from_latency` with
+    `f"service_{probe_type.value}_latency"` as the metric name, and
+    (v0.13) `evidence_from_jitter` with the `_jitter` twin. For check
+    types that never report a variation reading the jitter Evidence is
+    tested-but-zero-confidence -- never a fabricated healthy or bad
+    claim. This reuses `core.diagnosis`'s own existing metric-prefix
+    vocabulary unchanged: any metric starting with `"service_"` already
+    categorizes as `Hypothesis.SERVICE_ISSUE` (see
+    `core/diagnosis.py`'s `_METRIC_CATEGORY`, anticipating this exact
+    use since TASK-026) -- nothing about that module needed to change
+    for this task.
 
     `baseline` defaults to a fresh, empty `UserBaseline()` if not given
     -- the same "no BaselineRepository-backed load/persist wiring exists
@@ -236,7 +240,10 @@ def diagnose_service(
     """
     baseline = baseline if baseline is not None else UserBaseline()
     measurements = run_service_checks(service, container)
-    evidence = [evidence_from_latency(f"service_{measurement.probe_type.value}_latency", measurement, baseline) for measurement in measurements]
+    evidence = []
+    for measurement in measurements:
+        evidence.append(evidence_from_latency(f"service_{measurement.probe_type.value}_latency", measurement, baseline))
+        evidence.append(evidence_from_jitter(f"service_{measurement.probe_type.value}_jitter", measurement, baseline))
     return diagnose(evidence)
 
 
@@ -432,8 +439,11 @@ def run_measurement_round(
 
     evidence = [
         evidence_from_latency("gateway_latency", local_gateway, baseline),
+        evidence_from_jitter("gateway_jitter", local_gateway, baseline),
         evidence_from_latency("dns_latency", public_dns, baseline),
+        evidence_from_jitter("dns_jitter", public_dns, baseline),
         evidence_from_latency("destination_latency", public_cdn, baseline),
+        evidence_from_jitter("destination_jitter", public_cdn, baseline),
     ]
     diagnosis = diagnose(evidence)
 
@@ -451,7 +461,11 @@ def observe_measurements(baseline: UserBaseline, measurements: list[RawMeasureme
     Only successful measurements with an actual reading are observed:
     a failed probe has no latency to learn from, and observing failure
     artifacts (None) would corrupt the running statistics. Failed
-    rounds influence diagnosis through the evidence layer instead."""
+    rounds influence diagnosis through the evidence layer instead. The
+    same rule covers jitter (v0.13): only sweeps that actually report a
+    variation reading are observed, so a probe type without one simply
+    leaves that store untouched.
+    """
     for m in measurements:
         if not m.success:
             continue
@@ -459,6 +473,8 @@ def observe_measurements(baseline: UserBaseline, measurements: list[RawMeasureme
             baseline.observe_latency(m.target, m.latency_ms)
         if m.packet_loss_pct is not None:
             baseline.observe_packet_loss(m.target, m.packet_loss_pct)
+        if m.jitter_ms is not None:
+            baseline.observe_jitter(m.target, m.jitter_ms)
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +635,10 @@ def check_service(
     measurements = run_service_checks(service, container)
     enrich_with_geo(measurements, container)
     experience = score_measurements(measurements, baseline)
-    evidence = [evidence_from_latency(f"service_{m.probe_type.value}_latency", m, baseline) for m in measurements]
+    evidence = []
+    for m in measurements:
+        evidence.append(evidence_from_latency(f"service_{m.probe_type.value}_latency", m, baseline))
+        evidence.append(evidence_from_jitter(f"service_{m.probe_type.value}_jitter", m, baseline))
     return measurements, experience, diagnose(evidence)
 
 
