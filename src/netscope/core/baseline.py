@@ -18,6 +18,18 @@ bandwidth result can never pose as a latency reading), so it gets its
 own store on UserBaseline and its own table in persistence -- and its
 comparison is percentage-based rather than sigma-based, because "your
 download is 30% below usual" is the sentence a human actually acts on.
+
+v0.13 adds delay variation (jitter) to the sigma-scored family. The raw
+reading has ridden along on every ICMP sweep since the beginning
+(icmplib reports the mean absolute difference between consecutive RTTs,
+and RawMeasurement.jitter_ms has always carried it) -- what was missing
+was the learned history: nothing observed it, so nothing could say
+"this line is wobblier than usual". It follows the throughput precedent
+structurally: its own store on UserBaseline (a jitter number must never
+pose as a latency reading) and its own persistence table, with the same
+Welford treatment as latency and loss -- because 3ms of variation on a
+20ms line and 3ms on a 200ms satellite link are different sentences,
+and only this user's own history can tell them apart.
 """
 
 from __future__ import annotations
@@ -99,6 +111,10 @@ class UserBaseline:
     # v0.4: download throughput, deliberately its own store -- never
     # merged with the latency/loss metrics it must not pose as.
     throughput: dict[str, MetricBaseline] = field(default_factory=dict)
+    # v0.13: delay variation joins the sigma-scored family in its own
+    # store, same reasoning as throughput's -- a jitter reading must
+    # never be mistakable for a latency or loss one.
+    jitter: dict[str, MetricBaseline] = field(default_factory=dict)
 
     def _get(self, store: dict[str, MetricBaseline], target: str) -> MetricBaseline:
         if target not in store:
@@ -111,11 +127,17 @@ class UserBaseline:
     def observe_packet_loss(self, target: str, loss_pct: float) -> None:
         self._get(self.packet_loss, target).update(loss_pct)
 
+    def observe_jitter(self, target: str, jitter_ms: float) -> None:
+        self._get(self.jitter, target).update(jitter_ms)
+
     def latency_deviation_sigma(self, target: str, latency_ms: float) -> float:
         return self._get(self.latency, target).deviation_sigma(latency_ms)
 
     def loss_deviation_sigma(self, target: str, loss_pct: float) -> float:
         return self._get(self.packet_loss, target).deviation_sigma(loss_pct)
+
+    def jitter_deviation_sigma(self, target: str, jitter_ms: float) -> float:
+        return self._get(self.jitter, target).deviation_sigma(jitter_ms)
 
     def observe_throughput(self, target: str, mbps: float) -> None:
         self._get(self.throughput, target).update(mbps)

@@ -221,3 +221,42 @@ def test_compare_throughput_refuses_a_degenerate_zero_mean():
     for _ in range(4):
         ub.observe_throughput("t", 0.0)
     assert compare_throughput(ub, "t", 50.0) is None
+
+
+# ---------------------------------------------------------------------------
+# v0.13 -- jitter joins the family, in its own store
+# ---------------------------------------------------------------------------
+
+
+def test_user_baseline_keeps_jitter_in_its_own_store():
+    """The throughput doctrine, extended to the third vital sign: a
+    jitter reading lands in UserBaseline.jitter and never touches the
+    latency/loss stores it must never pose as."""
+    ub = UserBaseline()
+    ub.observe_jitter("gateway.local", 3.0)
+    ub.observe_latency("gateway.local", 12.0)
+    assert ub.jitter["gateway.local"].count == 1
+    assert ub.latency["gateway.local"].count == 1
+    assert ub.packet_loss == {}
+    assert ub.throughput == {}
+
+
+def test_user_baseline_jitter_deviation_sigma_delegates_to_metric_baseline():
+    ub = UserBaseline()
+    # No history: the same defined zero MetricBaseline.deviation_sigma returns.
+    assert ub.jitter_deviation_sigma("gateway.local", 8.0) == 0.0
+    for v in (2.0, 2.5, 1.8, 2.2, 2.1):
+        ub.observe_jitter("gateway.local", v)
+    # 8ms of variation against a ~2ms history is beyond anomaly territory.
+    assert ub.jitter_deviation_sigma("gateway.local", 8.0) > 2.5
+    # And the latency store never heard about any of it.
+    assert "gateway.local" not in ub.latency
+
+
+def test_user_baseline_tracks_jitter_targets_independently():
+    ub = UserBaseline()
+    ub.observe_jitter("gateway.local", 3.0)
+    ub.observe_jitter("1.1.1.1", 30.0)
+    assert set(ub.jitter.keys()) == {"gateway.local", "1.1.1.1"}
+    assert ub.jitter["gateway.local"].mean == 3.0
+    assert ub.jitter["1.1.1.1"].mean == 30.0

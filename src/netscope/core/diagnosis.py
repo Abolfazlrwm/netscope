@@ -305,9 +305,10 @@ def _evidence_from_metric_baseline(
     store: dict[str, MetricBaseline],
     source: RawMeasurement | RouteSnapshot | None,
 ) -> Evidence:
-    """Shared baseline-comparison logic for both evidence_from_latency
-    and evidence_from_packet_loss below -- reads `store` (a UserBaseline's
-    `.latency` or `.packet_loss` dict) read-only via `.get(target)`,
+    """Shared baseline-comparison logic for the evidence_from_latency,
+    evidence_from_packet_loss and evidence_from_jitter helpers below --
+    reads `store` (a UserBaseline's `.latency`, `.packet_loss` or
+    `.jitter` dict) read-only via `.get(target)`,
     never `UserBaseline`'s mutating `observe_*`/`_get`. Per-target
     isolation falls out of this for free: `store.get(target)` can only
     ever return that target's own MetricBaseline (or None), never
@@ -402,6 +403,20 @@ def evidence_from_packet_loss(metric: str, measurement: RawMeasurement | None, b
     if not measurement.success:
         return Evidence(metric=metric, tested=True, source=measurement, severity=Severity.CRITICAL, confidence=1.0)
     return _evidence_from_metric_baseline(metric, measurement.target, measurement.packet_loss_pct, baseline.packet_loss, measurement)
+
+
+def evidence_from_jitter(metric: str, measurement: RawMeasurement | None, baseline: UserBaseline) -> Evidence:
+    """Same contract as evidence_from_latency, for delay variation
+    (v0.13): the sweep's jitter reading against the target's learned
+    jitter history. Probe types that never report jitter produce a
+    tested-but-zero-confidence Evidence (never a fabricated healthy or
+    bad reading), exactly like a missing loss figure on a probe type
+    that has none."""
+    if measurement is None:
+        return Evidence(metric=metric, tested=False)
+    if not measurement.success:
+        return Evidence(metric=metric, tested=True, source=measurement, severity=Severity.CRITICAL, confidence=1.0)
+    return _evidence_from_metric_baseline(metric, measurement.target, measurement.jitter_ms, baseline.jitter, measurement)
 
 
 def evidence_from_route_churn(

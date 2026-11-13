@@ -26,13 +26,14 @@ from netscope.core.models import ExperienceLevel, ProbeType, RawMeasurement
 from netscope.core.scoring import score_measurements
 
 
-def _measurement(target="1.1.1.1", latency_ms=None, packet_loss_pct=None, success=True):
+def _measurement(target="1.1.1.1", latency_ms=None, packet_loss_pct=None, jitter_ms=None, success=True):
     return RawMeasurement(
         probe_type=ProbeType.ICMP,
         target=target,
         success=success,
         latency_ms=latency_ms,
         packet_loss_pct=packet_loss_pct,
+        jitter_ms=jitter_ms,
     )
 
 
@@ -44,6 +45,16 @@ def _mature_latency_baseline(target: str, values: list[float]) -> UserBaseline:
     ub = UserBaseline()
     for v in values:
         ub.observe_latency(target, v)
+    return ub
+
+
+def _mature_jitter_baseline(target: str, values: list[float]) -> UserBaseline:
+    """A UserBaseline with a mature (>=5 sample) jitter history for
+    `target` -- built through the same real Welford updates, per the
+    v0.13 third-pillar design."""
+    ub = UserBaseline()
+    for v in values:
+        ub.observe_jitter(target, v)
     return ub
 
 
@@ -334,3 +345,50 @@ def test_missing_latency_on_successful_measurement_is_zero_confidence_not_a_bad_
     m = _measurement(target="1.1.1.1", latency_ms=None, packet_loss_pct=0.0)
     event = score_measurements([m], ub)
     assert event.score == pytest.approx(100.0)
+
+
+# ---------------------------------------------------------------------------
+# v0.13 -- jitter, the third vital sign
+# ---------------------------------------------------------------------------
+
+
+def test_jitter_is_scored_against_its_own_baseline():
+    """Two lines with identical latency and loss figures but different
+    delay-variation history no longer score the same: 22ms of variation
+    is ordinary on the wobbly line and extraordinary on the steady one,
+    and the score now says so."""
+    steady = _mature_jitter_baseline("1.1.1.1", [2.0, 2.2, 1.8, 2.1, 2.0])
+    jittery = _mature_jitter_baseline("1.1.1.1", [18.0, 22.0, 17.5, 21.0, 19.0])
+
+    probe = _measurement(latency_ms=20.0, packet_loss_pct=0.0, jitter_ms=22.0)
+
+    against_steady = score_measurements([probe], steady)
+    against_jittery = score_measurements([probe], jittery)
+
+    # ~13 sigma above the steady history: deep into the falloff...
+    assert against_steady.score < 40.0
+    # ...but under ~1.3 sigma of the jittery line's own normal.
+    assert against_jittery.score > against_steady.score
+
+
+def test_missing_jitter_on_successful_measurement_is_zero_confidence_not_a_bad_score():
+    """DNS/TCP/HTTP probes never report jitter -- the third pillar must
+    weigh nothing for them, the same rule latency already follows when
+    a probe type has no latency reading."""
+    ub = _mature_jitter_baseline("dns.example", [2.0, 2.2, 1.8, 2.1, 2.0])
+    probe = RawMeasurement(probe_type=ProbeType.DNS, target="dns.example", success=True, latency_ms=15.0)
+
+    event = score_measurements([probe], ub)
+
+    assert event.score == pytest.approx(100.0)
+
+
+def test_scoring_never_mutates_the_jitter_store_it_is_given():
+    """The read-only doctrine extends to the third store: scoring may
+    consult baseline.jitter, never observe into it."""
+    ub = _mature_jitter_baseline("1.1.1.1", [2.0, 2.2, 1.8, 2.1, 2.0])
+    before = (ub.jitter["1.1.1.1"].count, ub.jitter["1.1.1.1"].mean)
+
+    score_measurements([_measurement(latency_ms=20.0, packet_loss_pct=0.0, jitter_ms=22.0)], ub)
+
+    assert (ub.jitter["1.1.1.1"].count, ub.jitter["1.1.1.1"].mean) == before

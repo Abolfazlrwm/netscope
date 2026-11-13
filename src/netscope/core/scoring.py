@@ -75,8 +75,8 @@ _NEUTRAL_SCORE = 100.0
 
 @dataclass(frozen=True)
 class MetricEvaluation:
-    """The baseline-relative evaluation of a single metric (latency or
-    packet loss) for a single measurement.
+    """The baseline-relative evaluation of a single metric (latency,
+    packet loss or delay variation) for a single measurement.
 
     `confidence` (0.0-1.0) says how much weight this evaluation should
     carry in the aggregate score -- low for a target/metric with little
@@ -93,7 +93,7 @@ class MetricEvaluation:
 
 def _evaluate_metric(store: dict[str, MetricBaseline], target: str, value: float | None) -> MetricEvaluation:
     """Evaluate one metric value for `target` against its MetricBaseline
-    in `store` (either a UserBaseline's `.latency` or `.packet_loss`
+    in `store` (a UserBaseline's `.latency`, `.packet_loss` or `.jitter`
     dict). Read-only: never creates or mutates entries in `store`.
     """
     if value is None:
@@ -131,8 +131,9 @@ def _evaluate_metric(store: dict[str, MetricBaseline], target: str, value: float
 
     sigma = metric.deviation_sigma(value)
     if sigma <= 0:
-        # At or below the personal mean. For latency/packet-loss, lower
-        # is never worse than usual, so this is unambiguously healthy.
+        # At or below the personal mean. For latency, packet loss and
+        # jitter, lower is never worse than usual, so this is
+        # unambiguously healthy.
         return MetricEvaluation(score=_NEUTRAL_SCORE, confidence=1.0)
 
     # Linear falloff anchored at core/baseline.py's own anomaly
@@ -198,6 +199,9 @@ def score_measurements(measurements: list[RawMeasurement], baseline: UserBaselin
             continue
         evaluations.append(_evaluate_metric(baseline.latency, m.target, m.latency_ms))
         evaluations.append(_evaluate_metric(baseline.packet_loss, m.target, m.packet_loss_pct))
+        # v0.13: delay variation is the third pillar -- a fast, lossless
+        # line that wobbles no longer scores the same as a steady one.
+        evaluations.append(_evaluate_metric(baseline.jitter, m.target, m.jitter_ms))
 
     total_confidence = sum(e.confidence for e in evaluations)
     if total_confidence == 0.0:

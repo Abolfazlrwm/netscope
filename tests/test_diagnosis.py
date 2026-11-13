@@ -34,6 +34,7 @@ import pytest
 from netscope.core.baseline import UserBaseline
 from netscope.core.diagnosis import (
     diagnose,
+    evidence_from_jitter,
     evidence_from_latency,
     evidence_from_packet_loss,
     evidence_from_route_churn,
@@ -306,8 +307,10 @@ def _mature_latency_baseline(target: str, values: list[float]) -> UserBaseline:
     return ub
 
 
-def _measurement(target="1.1.1.1", latency_ms=None, packet_loss_pct=None, success=True):
-    return RawMeasurement(probe_type=ProbeType.ICMP, target=target, success=success, latency_ms=latency_ms, packet_loss_pct=packet_loss_pct)
+def _measurement(target="1.1.1.1", latency_ms=None, packet_loss_pct=None, jitter_ms=None, success=True):
+    return RawMeasurement(
+        probe_type=ProbeType.ICMP, target=target, success=success, latency_ms=latency_ms, packet_loss_pct=packet_loss_pct, jitter_ms=jitter_ms
+    )
 
 
 # 1. Healthy/normal measurement evidence
@@ -530,3 +533,67 @@ def test_diagnosis_module_only_imports_stdlib_and_netscope_core():
         "netscope.core.routing",
     }
     assert "netscope.core.scoring" not in full_module_paths  # independent consumers of baseline, not of each other
+
+
+# 16. Jitter evidence (v0.13)
+def test_evidence_from_jitter_uses_the_jitter_baseline_not_latency():
+    ub = UserBaseline()
+    for v in [2.0, 2.2, 1.8, 2.1, 2.0]:
+        ub.observe_jitter("1.1.1.1", v)
+    e = evidence_from_jitter("gateway_jitter", _measurement(jitter_ms=22.0), ub)
+    assert e.tested is True
+    assert e.severity == Severity.CRITICAL
+    assert round(e.expected_value, 2) == 2.02
+
+
+def test_evidence_from_jitter_mature_baseline_normal_value_is_info():
+    ub = UserBaseline()
+    for v in [2.0, 2.2, 1.8, 2.1, 2.0, 2.1]:
+        ub.observe_jitter("1.1.1.1", v)
+    e = evidence_from_jitter("gateway_jitter", _measurement(jitter_ms=2.0), ub)
+    assert e.tested is True
+    assert e.severity == Severity.INFO
+    assert e.confidence == 1.0
+
+
+def test_evidence_from_jitter_failed_measurement_is_critical_without_consulting_baseline():
+    ub = UserBaseline()
+    for v in [2.0] * 6:
+        ub.observe_jitter("1.1.1.1", v)
+    e = evidence_from_jitter("gateway_jitter", _measurement(success=False), ub)
+    assert e.tested is True
+    assert e.severity == Severity.CRITICAL
+    assert e.observed_value is None  # no fabricated value derived from a failed probe
+
+
+def test_evidence_from_jitter_none_measurement_is_untested():
+    e = evidence_from_jitter("gateway_jitter", None, UserBaseline())
+    assert e.tested is False
+    assert e.observed_value is None
+
+
+def test_evidence_from_jitter_absent_reading_is_tested_but_zero_confidence():
+    """A successful probe type that never reports jitter (dns, tcp,
+    http) yields tested-but-nothing-to-compare: zero confidence, INFO,
+    never a fabricated healthy or bad reading -- the same contract the
+    loss evidence documents for probe types without a loss figure."""
+    ub = UserBaseline()
+    for v in [2.0] * 6:
+        ub.observe_jitter("dns.example", v)
+    e = evidence_from_jitter(
+        "service_dns_jitter",
+        RawMeasurement(probe_type=ProbeType.DNS, target="dns.example", success=True, latency_ms=15.0),
+        ub,
+    )
+    assert e.tested is True
+    assert e.severity == Severity.INFO
+    assert e.confidence == 0.0
+
+
+def test_evidence_from_jitter_immature_baseline_makes_no_claim_yet():
+    ub = UserBaseline()
+    ub.observe_jitter("1.1.1.1", 2.0)
+    e = evidence_from_jitter("gateway_jitter", _measurement(jitter_ms=90.0), ub)
+    assert e.tested is True
+    assert e.severity == Severity.INFO
+    assert e.confidence == pytest.approx(1 / 5)
