@@ -1,11 +1,14 @@
-# Geo location and distance (optional, offline, v0.12)
+# Geo location, distance and ownership (optional, offline, v0.12 + v0.14)
 
 NetScope can tell you *where* a target lives — country, city — and, once
-it knows where **you** are, **how far away** it is. The feature is
-powered by MaxMind's free **GeoLite2** database, read from the file you
-download yourself: NetScope ships no database, fetches none, and works
-fully offline once the file exists. Without it, every command behaves
-exactly as before — no geography, no warnings, no errors.
+it knows where **you** are, **how far away** it is. It can also tell you
+*whose road it sits on*: the autonomous system number and the operating
+organization's name. The features are powered by MaxMind's free
+**GeoLite2** databases (City for geography, ASN for ownership), read
+from the files you download yourself: NetScope ships no database,
+fetches none, and works fully offline once the files exist. Without
+them, every command behaves exactly as before — no geography, no
+ownership, no warnings, no errors.
 
 ## Why the reader is built in
 
@@ -129,6 +132,56 @@ geo_db_path = "D:/geo/GeoLite2-City.mmdb"
 A missing, corrupt, or unreadable database is a degraded install, not an
 error: NetScope degrades to no-geo and everything else keeps working
 (the same posture as the optional `ipasn.dat` ASN database).
+
+## Network ownership: GeoLite2-ASN (v0.14)
+
+Geography answers *where*; the ASN edition answers **whose**: which
+autonomous system an address belongs to, and under whose name it is
+operated. The same hand-written reader reads this edition too — one
+format, two databases (`adr-013`).
+
+Download GeoLite2-**ASN** from the same account (step 1 above), with
+your own credentials:
+
+```bash
+curl -o geolite2-asn.tar.gz \
+  -u "ACCOUNT_ID:LICENSE_KEY" \
+  "https://download.maxmind.com/geoip/databases/GeoLite2-ASN/download?suffix=tar.gz"
+
+tar -xzf geolite2-asn.tar.gz
+mkdir -p ~/.netscope
+cp GeoLite2-ASN*/GeoLite2-ASN.mmdb ~/.netscope/
+```
+
+That is the default location; override it in `config.toml` with
+`asn_db_path`.
+
+What you get once the file is in place:
+
+- **`netscope route`** — the Network column shows the operator:
+  `AS13335 Cloudflare, Inc.` The legacy `~/.netscope/ipasn.dat` text
+  table (v0.2's prefix/ASN file) still works as the fallback — it
+  answers with the number only, honestly without a name, and the
+  database's own `autonomous_system_organization` is preferred when
+  available.
+- **`check` / `service check` / `diagnose`** — the detail column gains
+  the same ownership sentence, and every `--json` payload's
+  per-measurement `extra.asn` block carries it for scripts.
+- **`netscope report`** (markdown and `--html`) — the Geography section
+  becomes **Geography and ownership**, listing each target's place,
+  distance, owner and database ages exactly as the newest enriched
+  measurement recorded them.
+
+### The `extra.asn` block (for scripts)
+
+| Key | Meaning |
+|---|---|
+| `ip` | the address that was looked up |
+| `asn` | the autonomous system number (`null` when the source knows nothing for the address) |
+| `organization` | the operating organization as the database spells it; `null` when the source cannot name one (the `ipasn.dat` fallback never can) |
+| `db` | the source's `database_type` (e.g. `GeoLite2-ASN`); `null` for the text table |
+| `db_age_days` | whole days since the database's build epoch |
+| `stale_db` | `true` once `db_age_days` passes 30 (the refresh-rhythm notice) |
 
 ## Privacy
 

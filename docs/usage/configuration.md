@@ -24,6 +24,7 @@ run.
 | `home_ip` | string | *(none)* | your public IP, looked up in the same database to compute distance — or use the coordinates below |
 | `home_latitude` | float | *(none)* | your latitude (wins over `home_ip` when both are set) |
 | `home_longitude` | float | *(none)* | your longitude |
+| `asn_db_path` | string | `~/.netscope/GeoLite2-ASN.mmdb` | your own GeoLite2-ASN database for ownership enrichment (AS number + organization name); the legacy `ipasn.dat` text table stays the fallback ([setup guide](geoip.md)) |
 
 ### Example
 

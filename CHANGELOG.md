@@ -6,6 +6,64 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-11-13
+
+The "whose road is it" release: ownership enrichment completes the
+pair. TASK-022 could say the NUMBER -- "AS13335" -- but explicitly
+declined the NAME: no reliable, license-clean, dependency-free source
+for organization names existed in its scope, and `RouteHop.organization`
+has documented itself as lookup-ready-but-empty ever since TASK-020.
+v0.12's hand-written mmdb reader was built adapter-agnostic on purpose;
+this release points it at GeoLite2-ASN, the edition whose records carry
+both the number and the operator's name. One reader, two databases,
+one story -- and **zero new dependencies** again, the sixth release in
+a row (decision record: `docs/architecture/adr-013-asn-strategy.md`).
+
+### Added
+
+- **`AsnLookup` port and the shared record** (`core/ports.py`,
+  `core/asn.py`): `lookup(ip) -> AsnInfo | None` -- number, optional
+  organization, matched prefix, and the same disclosure fields
+  `GeoInfo` carries (`db_type`, `db_age_days`, `stale_db`, borrowing
+  `core.geo`'s 30-day policy so both GeoLite2 editions age on one
+  rhythm). `asn_extra()` defines the canonical `extra["asn"]` payload,
+  the exact discipline `geo_extra()` set in v0.12.
+- **GeoLite2-ASN through the same reader** (`adapters/geoip.py`):
+  `MaxMindAsnLookup` reads the user's own
+  `~/.netscope/GeoLite2-ASN.mmdb` -- the TASK-022 text table migrates
+  onto the shared record as the number-only fallback
+  (`organization=None`, honestly bare -- a "prefix, whitespace, ASN"
+  file cannot name anything and never pretends to).
+- **The composition root prefers the richer source**
+  (`app/container.py`, `config.toml` `asn_db_path`): the mmdb edition
+  wins when present; a corrupt mmdb falls THROUGH to the text table
+  (broken names must not cost the numbers); missing everything wires
+  None and routes render without ownership -- the normal state, never
+  an error.
+- **`RouteHop.organization` is finally live** (`app/use_cases.py`):
+  `_enrich_snapshot` fills the field TASK-020 reserved, and target
+  checks carry ownership in `extra["asn"]` (reusing the geo pass's
+  resolved IP -- one resolution per fact per round).
+- **Visible everywhere the evidence is**: `netscope route`'s table
+  gains the Network column -- "AS13335 Cloudflare, Inc." when the
+  source can name the operator, the bare number when it cannot; the
+  check detail's evidence column carries the same `asn_summary`
+  wording; the evidence reports (markdown and `--html`) grow a
+  "Geography and ownership" section; and every `--json` payload
+  surfaces `extra.asn` plus the per-hop `organization` field that has
+  serialized as `null` since v0.2.
+
+### Notes
+
+- 941 tests in the suite, 939 passing outright and 2 skipped in CI (the
+  opt-in `maxminddb` crosscheck; 39 new across asn/lookups/geoip/
+  container/enrichment/reports/render), ruff clean, mypy clean.
+  GeoLite2-ASN is the user's own download under the same EULA discipline
+  as City: attribution in `NOTICE`, no redistribution, the same aging
+  notice -- setup in [`docs/usage/geoip.md`](docs/usage/geoip.md).
+- The legacy `ipasn.dat` table keeps working exactly as before; it
+  simply answers without names now, and says so.
+
 ## [0.13.0] — 2026-11-13
 
 The "steady hands" release: delay variation has ridden along on every
