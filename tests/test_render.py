@@ -211,6 +211,69 @@ def test_measurements_table_detail_carries_the_loss_note():
 
 
 # ---------------------------------------------------------------------------
+# Ownership wording (v0.14) -- the asn block in the detail column and
+# the Network column on the route table, one shared wording everywhere.
+# ---------------------------------------------------------------------------
+
+
+def test_measurements_table_detail_carries_the_asn_summary():
+    m = RawMeasurement(
+        probe_type=ProbeType.DNS,
+        target="example.com",
+        success=True,
+        latency_ms=12.0,
+        extra={
+            "asn": {"ip": "81.2.69.160", "asn": 13335, "organization": "Cloudflare, Inc.", "db": "GeoLite2-ASN", "db_age_days": 2, "stale_db": False}
+        },
+    )
+    out = io.StringIO()
+    console = Console(file=out, width=160, force_terminal=False)
+    console.print(measurements_table([m]))
+    assert "AS13335 · Cloudflare, Inc." in out.getvalue()
+
+
+def test_measurements_table_detail_renders_bare_number_without_a_name():
+    # The TASK-022 text-table shape: a number, no organization -- the
+    # number renders, no placeholder name is invented.
+    m = RawMeasurement(
+        probe_type=ProbeType.DNS,
+        target="example.com",
+        success=True,
+        latency_ms=12.0,
+        extra={"asn": {"ip": "81.2.69.160", "asn": 13335, "organization": None, "db": None, "db_age_days": None, "stale_db": False}},
+    )
+    out = io.StringIO()
+    console = Console(file=out, width=160, force_terminal=False)
+    console.print(measurements_table([m]))
+    rendered = out.getvalue()
+    assert "AS13335" in rendered
+    assert "Cloudflare" not in rendered
+
+
+def test_route_table_network_column_carries_the_organization():
+    from netscope.ui.render import route_table
+
+    hop = RouteHop(ttl=1, address="81.2.69.1", hostname=None, avg_rtt_ms=1.0, packet_loss_pct=0.0, asn="AS13335", organization="Cloudflare, Inc.")
+    out = io.StringIO()
+    console = Console(file=out, width=200, force_terminal=False)
+    console.print(route_table([hop]))
+    rendered = out.getvalue()
+    assert "Network" in [c.header for c in route_table([hop]).columns]
+    assert "AS13335" in rendered
+    assert "Cloudflare, Inc." in rendered
+
+
+def test_route_table_network_column_renders_the_dash_for_unenriched_hops():
+    from netscope.ui.render import route_table
+
+    hop = RouteHop(ttl=1, address="81.2.69.1", hostname=None, avg_rtt_ms=1.0, packet_loss_pct=0.0)
+    out = io.StringIO()
+    console = Console(file=out, width=200, force_terminal=False)
+    console.print(route_table([hop]))
+    assert "—" in out.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # Score sparkline (v0.10) -- one line, eight blocks, no chart dependency.
 # ---------------------------------------------------------------------------
 

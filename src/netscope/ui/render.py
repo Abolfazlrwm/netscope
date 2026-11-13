@@ -28,7 +28,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS, geo_summary
+from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS, asn_summary, geo_summary
 from netscope.core.baseline import VERDICT_AS_USUAL, VERDICT_FASTER, VERDICT_SLOWER
 from netscope.core.models import Diagnosis, ExperienceEvent, ExperienceLevel, Hypothesis, RawMeasurement, RouteHop
 from netscope.core.routing import RouteChange, RouteChurnResult
@@ -212,9 +212,10 @@ def _success_detail(m: RawMeasurement) -> str:
     DNS answers, HTTP status/version -- read from `extra` without
     interpreting anything (the loss note is the exception only in shape:
     it renders the verdict `core.loss` already computed, it computes
-    nothing new). The v0.12 geo block rides along through the shared
-    `geo_summary` wording -- the same sentence the markdown and HTML
-    evidence reports show, so no two surfaces ever describe a place
+    nothing new). The v0.12 geo block and the v0.14 asn block ride
+    along through the shared `geo_summary`/`asn_summary` wording --
+    the same sentences the markdown and HTML evidence reports show,
+    so no two surfaces ever describe a place (or an owner)
     differently."""
     parts = []
     if "answers" in m.extra and isinstance(m.extra["answers"], list) and m.extra["answers"]:
@@ -237,6 +238,11 @@ def _success_detail(m: RawMeasurement) -> str:
         geo_text = geo_summary(geo)
         if geo_text:
             parts.append(geo_text)
+    asn = m.extra.get("asn")
+    if isinstance(asn, dict):
+        asn_text = asn_summary(asn)
+        if asn_text:
+            parts.append(asn_text)
     return " · ".join(parts)
 
 
@@ -343,11 +349,17 @@ def diagnosis_panel(diagnosis: Diagnosis | None) -> Panel:
 
 
 def route_table(hops: list[RouteHop], *, title: str | None = None) -> Table:
+    """The route table shared by `netscope route` and the TUI's route
+    view. The Network column (v0.14) carries the AS number and, when
+    the ownership source can name one, the operating organization
+    after it -- the number-only shape the TASK-022 text table
+    answers renders as the bare AS number, never a placeholder
+    name."""
     table = Table(title=title, show_header=True, header_style="bold cyan", expand=True)
     table.add_column("#", justify="right", style="dim", no_wrap=True)
     table.add_column("Host", overflow="fold")
     table.add_column("Address", overflow="fold")
-    table.add_column("ASN", style="magenta", no_wrap=True)
+    table.add_column("Network", overflow="fold")
     table.add_column("Country", style="magenta", no_wrap=True)
     table.add_column("RTT", justify="right")
     table.add_column("Loss", justify="right")
@@ -355,11 +367,18 @@ def route_table(hops: list[RouteHop], *, title: str | None = None) -> Table:
     for hop in hops:
         rtt = f"{hop.avg_rtt_ms:.1f} ms" if hop.avg_rtt_ms is not None else Text("no response", style="dim")
         loss = format_pct(hop.packet_loss_pct) if hop.packet_loss_pct else "—"
+        network = Text()
+        if hop.asn:
+            network.append(hop.asn, style="magenta")
+            if hop.organization:
+                network.append(f" {hop.organization}", style="dim")
+        else:
+            network.append("—", style="dim")
         table.add_row(
             str(hop.ttl),
             hop.hostname or "—",
             hop.address or Text("*", style="dim"),
-            hop.asn or "—",
+            network,
             hop.country or "—",
             rtt,
             loss,

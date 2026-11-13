@@ -401,13 +401,28 @@ class TestRenderGeo:
         m.extra["geo"] = dict(self.GEO)
         report = _build_report([m])
         text = evidence_report_markdown(report)
-        assert "## Geography" in text
+        assert "## Geography and ownership" in text
         assert "`example.com` → London, United Kingdom · 4,397 km from home · db 2d old" in text
+
+    def test_markdown_ownership_line_rides_the_section(self) -> None:
+        from netscope.app.reports import evidence_report_markdown
+
+        m = _measurement()
+        m.extra["asn"] = {
+            "ip": LONDON_IP,
+            "asn": 13335,
+            "organization": "Cloudflare, Inc.",
+            "db": "GeoLite2-ASN",
+            "db_age_days": 2,
+            "stale_db": False,
+        }
+        text = evidence_report_markdown(_build_report([m]))
+        assert "AS13335 · Cloudflare, Inc." in text
 
     def test_markdown_omits_geography_without_geo(self) -> None:
         from netscope.app.reports import evidence_report_markdown
 
-        assert "## Geography" not in evidence_report_markdown(_build_report([_measurement()]))
+        assert "## Geography and ownership" not in evidence_report_markdown(_build_report([_measurement()]))
 
     def test_html_geography_section(self) -> None:
         from netscope.app.reports import evidence_report_html
@@ -415,9 +430,24 @@ class TestRenderGeo:
         m = _measurement()
         m.extra["geo"] = dict(self.GEO)
         html = evidence_report_html(_build_report([m]))
-        assert "<h2>Geography</h2>" in html
+        assert "<h2>Geography and ownership</h2>" in html
         assert "London, United Kingdom" in html
         assert "4,397 km from home" in html
+
+    def test_html_ownership_line_rides_the_section(self) -> None:
+        from netscope.app.reports import evidence_report_html
+
+        m = _measurement()
+        m.extra["asn"] = {
+            "ip": LONDON_IP,
+            "asn": 13335,
+            "organization": "Cloudflare, Inc.",
+            "db": "GeoLite2-ASN",
+            "db_age_days": 2,
+            "stale_db": False,
+        }
+        html = evidence_report_html(_build_report([m]))
+        assert "AS13335 · Cloudflare, Inc." in html
 
     def test_html_stale_geo_is_flagged(self) -> None:
         from netscope.app.reports import evidence_report_html
@@ -431,7 +461,7 @@ class TestRenderGeo:
     def test_html_omits_geography_without_geo(self) -> None:
         from netscope.app.reports import evidence_report_html
 
-        assert "<h2>Geography</h2>" not in evidence_report_html(_build_report([_measurement()]))
+        assert "<h2>Geography and ownership</h2>" not in evidence_report_html(_build_report([_measurement()]))
 
     def test_route_table_has_country_column(self) -> None:
         from netscope.ui.render import route_table

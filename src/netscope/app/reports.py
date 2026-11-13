@@ -223,6 +223,7 @@ def serialize_report_row(row: TargetReportRow) -> dict[str, Any]:
         "error_type": row.error_type.value if row.error_type is not None else None,
         "verdict": row.verdict,
         "geo": row.geo,
+        "asn": row.asn,
     }
 
 
@@ -258,6 +259,7 @@ def serialize_evidence_report(report: EvidenceReport) -> dict[str, Any]:
                 "verdict_counts": t.verdict_counts,
                 "truncated_rows": t.truncated,
                 "geo": t.geo,
+                "asn": t.asn,
                 "rows": [serialize_report_row(row) for row in t.rows],
             }
             for t in report.target_reports
@@ -307,6 +309,28 @@ def geo_summary(geo: dict) -> str:
     age = geo.get("db_age_days")
     if isinstance(age, int):
         stale = geo.get("stale_db") is True
+        suffix = " -- refresh recommended" if stale else ""
+        parts.append(f"db {age}d old{suffix}")
+    return " · ".join(parts)
+
+
+def asn_summary(asn: dict) -> str:
+    """One shared one-line ownership summary (v0.14): the AS number
+    with the operating organization's name when the database recorded
+    one, plus the same database-age disclosure the geography summary
+    makes -- GeoLite2 editions age on one rhythm, so both notices read
+    identically. Reads only canonical `core.asn.asn_extra` keys; a
+    number without a name renders bare, never "unknown"."""
+    parts: list[str] = []
+    number = asn.get("asn")
+    if isinstance(number, int):
+        parts.append(f"AS{number}")
+    organization = asn.get("organization")
+    if isinstance(organization, str) and organization:
+        parts.append(organization)
+    age = asn.get("db_age_days")
+    if isinstance(age, int):
+        stale = asn.get("stale_db") is True
         suffix = " -- refresh recommended" if stale else ""
         parts.append(f"db {age}d old{suffix}")
     return " · ".join(parts)
@@ -398,16 +422,23 @@ def evidence_report_markdown(report: EvidenceReport) -> str:
                 )
                 lines.append("")
 
-    # Geography (v0.12): the persisted place/distance facts, per
-    # target, only when any target actually has one -- honest absence
-    # means no section at all, never an empty table.
-    geo_targets = [t for t in report.target_reports if t.geo is not None]
-    if geo_targets:
-        lines.append("## Geography")
+    # Geography and ownership (v0.12 + v0.14): the persisted
+    # place/distance facts and the network's owner, per target, only
+    # when any target actually has one -- honest absence means no
+    # section at all, never an empty table.
+    enriched = [t for t in report.target_reports if t.geo is not None or t.asn is not None]
+    if enriched:
+        lines.append("## Geography and ownership")
         lines.append("")
-        for t in geo_targets:
-            assert t.geo is not None
-            lines.append(f"- `{t.target}` → {geo_summary(t.geo)}")
+        for t in enriched:
+            facts = []
+            if t.geo is not None:
+                assert t.geo is not None
+                facts.append(geo_summary(t.geo))
+            if t.asn is not None:
+                assert t.asn is not None
+                facts.append(asn_summary(t.asn))
+            lines.append(f"- `{t.target}` → {' · '.join(facts)}")
         lines.append("")
 
     if report.failure_rows:
@@ -436,7 +467,7 @@ def evidence_report_markdown(report: EvidenceReport) -> str:
         "- Throughput evidence stays throughput evidence: verdicts live in the verdict column, latency means only ever average successful latency readings."
     )
     lines.append(
-        "- Geography rows are the place/distance the NEWEST geo-aware measurement of that target recorded in the window -- looked up at run time from the user's own GeoLite2 database, never re-looked-up here; a stale-database notice rides along when the database has aged past its refresh rhythm."
+        "- Geography and ownership rows are the place/distance and AS/organization the NEWEST enriched measurement of that target recorded in the window -- looked up at run time from the user's own GeoLite2 databases, never re-looked-up here; a stale-database notice rides along when a database has aged past its refresh rhythm."
     )
     lines.append("")
     return "\n".join(lines)
@@ -700,18 +731,28 @@ def evidence_report_html(report: EvidenceReport) -> str:
                     "shown for this target; aggregates above cover the full window)</p>"
                 )
 
-    # Geography (v0.12) -- the markdown's section, word for word.
-    geo_targets = [t for t in report.target_reports if t.geo is not None]
-    if geo_targets:
-        out.append("<h2>Geography</h2>")
+    # Geography and ownership (v0.12 + v0.14) -- the markdown's
+    # section, word for word.
+    enriched = [t for t in report.target_reports if t.geo is not None or t.asn is not None]
+    if enriched:
+        out.append("<h2>Geography and ownership</h2>")
         out.append("<table><thead><tr><th>target</th><th>where it is</th><th>as measured</th></tr></thead><tbody>")
-        for t in geo_targets:
-            assert t.geo is not None
-            place = geo_place_label(t.geo) or "--"
-            stale = t.geo.get("stale_db") is True
+        for t in enriched:
+            place = geo_place_label(t.geo) if t.geo is not None else None
+            if place is None and t.geo is not None:
+                distance = t.geo.get("distance_km")
+                place = f"{distance:,.0f} km away" if isinstance(distance, (int, float)) and distance >= 1 else "--"
+            elif place is None:
+                place = "--"
+            stale = (t.geo or {}).get("stale_db") is True or (t.asn or {}).get("stale_db") is True
             summary_class = "warn" if stale else "dim"
+            facts = []
+            if t.geo is not None:
+                facts.append(geo_summary(t.geo))
+            if t.asn is not None:
+                facts.append(asn_summary(t.asn))
             out.append(
-                f"<tr><td><code>{_esc(t.target)}</code></td><td>{_esc(place)}</td><td class='{summary_class}'>{_esc(geo_summary(t.geo))}</td></tr>"
+                f"<tr><td><code>{_esc(t.target)}</code></td><td>{_esc(place)}</td><td class='{summary_class}'>{_esc(' · '.join(facts))}</td></tr>"
             )
         out.append("</tbody></table>")
 
