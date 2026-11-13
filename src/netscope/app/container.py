@@ -45,6 +45,19 @@ place and distance simply stays None -- the adapter never guesses
 where the user is. A corrupt database is a degraded install (no geo
 anywhere), not a crash: the wiring catches and reports nothing, the
 same contract `_open_asn_lookup` established.
+
+ASN OWNERSHIP (v0.14)
+-----------------------
+`asn_lookup` is wired from TWO offline sources with one preference
+rule: the GeoLite2-ASN database (`~/.netscope/GeoLite2-ASN.mmdb`, or
+`asn_db_path` in the config) wins when it exists -- it answers with
+the AS number AND the operating organization, which the route table's
+`organization` column has waited for since TASK-020 -- and the
+TASK-022 text table (`~/.netscope/ipasn.dat`) stays the fallback,
+number-only. A corrupt mmdb falls THROUGH to the text table rather
+than to nothing (a broken name database is not a reason to lose the
+numbers); a missing/corrupt everything wires None and routes render
+without ownership -- the normal state, never an error.
 """
 
 from __future__ import annotations
@@ -55,14 +68,14 @@ from pathlib import Path
 
 from netscope.adapters.discovery.hostname_resolver import HostnameResolver
 from netscope.adapters.discovery.network_discovery import PsutilNetworkDiscovery
-from netscope.adapters.geoip import GeoLookupUnavailableError, MaxMindGeoLookup, TargetIpResolver
+from netscope.adapters.geoip import GeoLookupUnavailableError, MaxMindAsnLookup, MaxMindGeoLookup, TargetIpResolver
 from netscope.adapters.lookups import AsnLookupAdapter
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
 from netscope.core.baseline import UserBaseline
 from netscope.core.discovery import DiscoveryProvider
 from netscope.core.geo import Place
-from netscope.core.ports import GeoLookup
+from netscope.core.ports import AsnLookup, GeoLookup
 from netscope.persistence.baseline_repository import BaselineRepository
 from netscope.persistence.measurement_repository import MeasurementRepository
 from netscope.persistence.route_repository import RouteRepository
@@ -75,22 +88,35 @@ from netscope.persistence.service_repository import ServiceRepository
 _NETSCOPE_PACKAGES = ("netscope.core", "netscope.adapters", "netscope.persistence", "netscope.app", "netscope.ui")
 
 DEFAULT_ASN_DB_PATH = Path.home() / ".netscope" / "ipasn.dat"
+DEFAULT_ASN_MMDB_PATH = Path.home() / ".netscope" / "GeoLite2-ASN.mmdb"
 DEFAULT_GEO_DB_PATH = Path.home() / ".netscope" / "GeoLite2-City.mmdb"
 
 
-def _open_asn_lookup(db_path: Path = DEFAULT_ASN_DB_PATH) -> AsnLookupAdapter | None:
-    """Wire the ASN lookup adapter iff its offline database exists.
+def _open_asn_lookup(config: NetScopeConfig) -> AsnLookup | None:
+    """Wire the ASN ownership lookup from the best offline source
+    available: the GeoLite2-ASN database (config's `asn_db_path`, or
+    the default location) when it exists -- number AND organization
+    name -- else the TASK-022 text table when that exists -- number
+    only, `organization=None`, honestly bare.
 
-    A missing/invalid database is a normal degradation path, not a
-    failure: route output simply renders without AS numbers (the same
-    "optional enrichment, honest absence" convention the RouteHop
-    lookup fields have documented since TASK-020)."""
-    if not db_path.exists():
-        return None
-    try:
-        return AsnLookupAdapter(ipasn_file=str(db_path))
-    except Exception:  # noqa: BLE001 -- a corrupt database must never block a route command
-        return None
+    Preference is a wiring decision, not a policy verdict: the mmdb
+    edition is strictly more informative, and a text table that
+    answers numbers is better than no ownership at all. A corrupt
+    mmdb falls THROUGH to the text table (broken names must not cost
+    the numbers); a corrupt text table wires None. Every failure here
+    is a degraded install, never an error a route command dies on."""
+    mmdb_path = Path(config.asn_db_path) if config.asn_db_path else DEFAULT_ASN_MMDB_PATH
+    if mmdb_path.exists():
+        try:
+            return MaxMindAsnLookup(mmdb_path)
+        except GeoLookupUnavailableError:
+            pass  # fall through -- the text table may still know the numbers
+    if DEFAULT_ASN_DB_PATH.exists():
+        try:
+            return AsnLookupAdapter(ipasn_file=str(DEFAULT_ASN_DB_PATH))
+        except Exception:  # noqa: BLE001 -- a corrupt database must never block a route command
+            return None
+    return None
 
 
 def _open_geo_lookup(config: NetScopeConfig) -> GeoLookup | None:
@@ -145,7 +171,7 @@ class Container:
     baseline_repository: BaselineRepository | None = None
     service_repository: ServiceRepository | None = None
     route_repository: RouteRepository | None = None
-    asn_lookup: AsnLookupAdapter | None = None
+    asn_lookup: AsnLookup | None = None
     hostname_resolver: HostnameResolver | None = None
     geo_lookup: GeoLookup | None = None
     ip_resolver: TargetIpResolver | None = None
@@ -187,10 +213,10 @@ def build_container(
         baseline_repository=BaselineRepository.open() if with_baseline_persistence else None,
         service_repository=ServiceRepository.open(),
         route_repository=RouteRepository.open(),
-        asn_lookup=_open_asn_lookup() if with_route_enrichment else None,
+        asn_lookup=_open_asn_lookup(geo_config) if with_route_enrichment else None,
         hostname_resolver=HostnameResolver() if with_route_enrichment else None,
         geo_lookup=_open_geo_lookup(geo_config) if with_geo_enrichment else None,
-        ip_resolver=TargetIpResolver() if with_geo_enrichment else None,
+        ip_resolver=TargetIpResolver() if (with_geo_enrichment or with_route_enrichment) else None,
     )
 
 

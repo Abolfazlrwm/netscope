@@ -70,6 +70,7 @@ _KNOWN_FIELDS = frozenset(
         "home_ip",
         "home_latitude",
         "home_longitude",
+        "asn_db_path",
     }
 )
 
@@ -112,6 +113,14 @@ class NetScopeConfig:
     home_ip: str | None = None
     home_latitude: float | None = None
     home_longitude: float | None = None
+
+    # ASN ownership enrichment (v0.14): the GeoLite2-ASN mmdb file is
+    # the USER'S own download (the same EULA discipline as the City
+    # edition -- NetScope never ships or fetches one; None means the
+    # standard ~/.netscope location). When it exists it is the
+    # preferred ownership source -- number AND organization name;
+    # the legacy `ipasn.dat` text table stays the fallback.
+    asn_db_path: str | None = None
 
 
 def load_config(path: Path | None = None) -> NetScopeConfig:

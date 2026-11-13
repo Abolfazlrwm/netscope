@@ -4,12 +4,15 @@ tests.test_geo_enrichment
 The v0.12 app-layer geo wiring: `enrich_with_geo` (measurement ->
 extra["geo"]), the use-case call sites (`run_measurement_round`,
 `check_service`), the route-hop country fill in `_enrich_snapshot`,
-and the composition root's `_open_geo_lookup` wiring decisions.
+and the composition root's `_open_geo_lookup` wiring decisions --
+extended in v0.14 with the ASN ownership twin: `enrich_with_asn`
+(extra["asn"]), the route-hop organization fill, and the source
+preference in `_open_asn_lookup`.
 
-Everything runs offline: the GeoLookup is a fake implementing the
-core port, and the container-wiring tests use the synthetic mmdb
-fixture from tests/mmdb_fixture.py -- the real GeoLite2 database is
-never needed here (or anywhere in the suite).
+Everything runs offline: the lookups are fakes implementing the core
+ports, and the container-wiring tests use synthetic mmdb fixtures
+from tests/mmdb_fixture.py -- the real GeoLite2 databases are never
+needed here (or anywhere in the suite).
 """
 
 from __future__ import annotations
@@ -22,11 +25,12 @@ import pytest
 from netscope.adapters.geoip import GeoLookupUnavailableError, TargetIpResolver
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
-from netscope.app.container import Container, _open_geo_lookup, build_container
-from netscope.app.use_cases import check_target, enrich_with_geo, run_measurement_round
+from netscope.app.container import Container, _open_asn_lookup, _open_geo_lookup, build_container
+from netscope.app.use_cases import check_target, enrich_with_asn, enrich_with_geo, run_measurement_round
+from netscope.core.asn import AsnInfo
 from netscope.core.geo import DB_STALE_AFTER_DAYS, GeoInfo, Place
 from netscope.core.models import ProbeType, RawMeasurement, RouteHop, RouteSnapshot
-from netscope.core.ports import GeoLookup
+from netscope.core.ports import AsnLookup, GeoLookup
 from tests.mmdb_fixture import build_mmdb
 
 LONDON_IP = "81.2.69.160"
@@ -451,3 +455,223 @@ def _build_report(measurements):
         target_reports=_target_reports(measurements),
         failure_rows=[],
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.14 -- ASN ownership enrichment: extra["asn"], the route-hop
+# organization fill, and the composition root's source preference.
+# Same offline discipline as the geo tests above: the lookup is a fake
+# implementing the core port, the wiring tests use a synthetic
+# GeoLite2-ASN fixture -- never a real database.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeAsnLookup:
+    """An AsnLookup-port fake with a scripted answer table -- number
+    and optional organization, or a scripted failure, mirroring
+    FakeGeoLookup's shape so the enrichment branches test identically."""
+
+    answers: dict[str, AsnInfo] = field(default_factory=dict)
+    raise_on: set[str] = field(default_factory=set)
+    calls: list[str] = field(default_factory=list)
+
+    def lookup(self, ip_address: str) -> AsnInfo | None:
+        self.calls.append(ip_address)
+        if ip_address in self.raise_on:
+            raise RuntimeError("scripted failure")
+        return self.answers.get(ip_address)
+
+
+CLOUDFLARE = AsnInfo(ip_address=LONDON_IP, asn=13335, organization="Cloudflare, Inc.", db_type="GeoLite2-ASN", db_age_days=2)
+
+
+class TestEnrichWithAsn:
+    def _container(self, lookup: FakeAsnLookup) -> Container:
+        return Container(probe_registry=ProbeRegistry(), asn_lookup=lookup, ip_resolver=TargetIpResolver())
+
+    def test_attaches_canonical_asn_extra(self) -> None:
+        container = self._container(FakeAsnLookup(answers={LONDON_IP: CLOUDFLARE}))
+        m = _measurement()
+        enrich_with_asn([m], container)
+        assert m.extra["asn"] == {
+            "ip": LONDON_IP,
+            "asn": 13335,
+            "organization": "Cloudflare, Inc.",
+            "db": "GeoLite2-ASN",
+            "db_age_days": 2,
+            "stale_db": False,
+        }
+
+    def test_reuses_the_geo_pass_ip_before_resolving_again(self) -> None:
+        # One resolution per fact per round: the geo block already
+        # recorded which IP the round was about.
+        lookup = FakeAsnLookup(answers={LONDON_IP: CLOUDFLARE})
+        container = self._container(lookup)
+        m = _measurement()
+        m.extra["geo"] = {"ip": LONDON_IP, "country": "United Kingdom"}
+        enrich_with_asn([m], container)
+        assert m.extra["asn"]["asn"] == 13335
+        assert lookup.calls == [LONDON_IP]
+
+    def test_no_lookup_wired_is_noop(self) -> None:
+        container = Container(probe_registry=ProbeRegistry(), ip_resolver=TargetIpResolver())
+        m = _measurement()
+        enrich_with_asn([m], container)
+        assert "asn" not in m.extra
+
+    def test_unknown_address_is_silently_skipped(self) -> None:
+        container = self._container(FakeAsnLookup())
+        m = _measurement()
+        enrich_with_asn([m], container)
+        assert "asn" not in m.extra
+
+    def test_unavailable_source_is_silently_skipped(self) -> None:
+        container = self._container(FakeAsnLookup(raise_on={LONDON_IP}))
+        m = _measurement()
+        enrich_with_asn([m], container)
+        assert "asn" not in m.extra
+
+    def test_already_tagged_is_never_re_enriched(self) -> None:
+        lookup = FakeAsnLookup(answers={LONDON_IP: CLOUDFLARE})
+        container = self._container(lookup)
+        m = _measurement()
+        m.extra["asn"] = {"asn": 99999}
+        enrich_with_asn([m], container)
+        assert m.extra["asn"]["asn"] == 99999
+        assert lookup.calls == []
+
+    def test_number_without_organization_still_attaches(self) -> None:
+        # The TASK-022 text table's shape: a number, no name -- the
+        # payload carries the number honestly.
+        container = self._container(FakeAsnLookup(answers={LONDON_IP: AsnInfo(ip_address=LONDON_IP, asn=13335)}))
+        m = _measurement()
+        enrich_with_asn([m], container)
+        assert m.extra["asn"]["asn"] == 13335
+        assert m.extra["asn"]["organization"] is None
+
+
+class TestRouteHopOrganization:
+    def _snapshot(self, hop: RouteHop) -> RouteSnapshot:
+        return RouteSnapshot(target="example.com", hops=[hop])
+
+    def test_hops_get_number_and_organization_when_mmdb_wired(self) -> None:
+        from netscope.app.use_cases import _enrich_snapshot
+
+        lookup = FakeAsnLookup(answers={"81.2.69.1": CLOUDFLARE})
+        container = Container(probe_registry=ProbeRegistry(), asn_lookup=lookup)
+        hop = RouteHop(ttl=1, address="81.2.69.1", hostname=None, avg_rtt_ms=1.0, packet_loss_pct=0.0)
+        _enrich_snapshot(self._snapshot(hop), container, resolve_hostnames=False)
+        assert hop.asn == "AS13335"
+        assert hop.organization == "Cloudflare, Inc."
+
+    def test_number_only_source_leaves_organization_none(self) -> None:
+        # The text table answers organization=None; a placeholder name
+        # would be fabrication, so the field stays honestly bare.
+        from netscope.app.use_cases import _enrich_snapshot
+
+        lookup = FakeAsnLookup(answers={"81.2.69.1": AsnInfo(ip_address="81.2.69.1", asn=13335, organization=None)})
+        container = Container(probe_registry=ProbeRegistry(), asn_lookup=lookup)
+        hop = RouteHop(ttl=1, address="81.2.69.1", hostname=None, avg_rtt_ms=1.0, packet_loss_pct=0.0)
+        _enrich_snapshot(self._snapshot(hop), container, resolve_hostnames=False)
+        assert hop.asn == "AS13335"
+        assert hop.organization is None
+
+    def test_existing_organization_is_never_overwritten(self) -> None:
+        from netscope.app.use_cases import _enrich_snapshot
+
+        lookup = FakeAsnLookup(answers={"81.2.69.1": CLOUDFLARE})
+        container = Container(probe_registry=ProbeRegistry(), asn_lookup=lookup)
+        hop = RouteHop(ttl=1, address="81.2.69.1", hostname=None, avg_rtt_ms=1.0, packet_loss_pct=0.0, asn="AS99999", organization="Pinned")
+        _enrich_snapshot(self._snapshot(hop), container, resolve_hostnames=False)
+        assert hop.asn == "AS99999"
+        assert hop.organization == "Pinned"
+        assert lookup.calls == []
+
+
+class TestAsnContainerWiring:
+    def _asn_fixture(self, tmp_path: Path, *, build_epoch: int | None = None, name: str = "GeoLite2-ASN.mmdb") -> Path:
+        path = tmp_path / name
+        if build_epoch is None:
+            import time
+
+            build_epoch = int(time.time()) - 2 * 86400
+        path.write_bytes(
+            build_mmdb(
+                {
+                    "81.2.69.0/24": {"autonomous_system_number": 13335, "autonomous_system_organization": "Cloudflare, Inc."},
+                },
+                build_epoch=build_epoch,
+                database_type="GeoLite2-ASN",
+            )
+        )
+        return path
+
+    def test_missing_everything_wires_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("netscope.app.container.DEFAULT_ASN_DB_PATH", tmp_path / "absent.dat")
+        monkeypatch.setattr("netscope.app.container.DEFAULT_ASN_MMDB_PATH", tmp_path / "absent.mmdb")
+        assert _open_asn_lookup(NetScopeConfig()) is None
+
+    def test_mmdb_source_wires_with_organization(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("netscope.app.container.DEFAULT_ASN_DB_PATH", tmp_path / "absent.dat")
+        lookup = _open_asn_lookup(NetScopeConfig(asn_db_path=str(self._asn_fixture(tmp_path))))
+        assert lookup is not None
+        info = lookup.lookup(LONDON_IP)
+        assert info is not None
+        assert info.asn == 13335
+        assert info.organization == "Cloudflare, Inc."
+
+    def test_corrupt_mmdb_falls_through_to_the_text_table(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A broken name database must not cost the numbers: the wiring
+        # falls through to the legacy table when it exists.
+        junk = tmp_path / "junk.mmdb"
+        junk.write_bytes(b"\x00" * 64)
+        table = tmp_path / "ipasn.dat"
+        table.write_text("81.2.69.0/24\t13335\n", encoding="utf-8")
+        monkeypatch.setattr("netscope.app.container.DEFAULT_ASN_DB_PATH", table)
+        lookup = _open_asn_lookup(NetScopeConfig(asn_db_path=str(junk)))
+        assert lookup is not None
+        info = lookup.lookup(LONDON_IP)
+        assert info is not None
+        assert info.asn == 13335
+        assert info.organization is None  # the text table cannot name it
+
+    def test_corrupt_everything_degrades_to_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        junk = tmp_path / "junk.mmdb"
+        junk.write_bytes(b"\x00" * 64)
+        bad_table = tmp_path / "ipasn.dat"
+        bad_table.write_text("not a database line\n", encoding="utf-8")
+        monkeypatch.setattr("netscope.app.container.DEFAULT_ASN_DB_PATH", bad_table)
+        assert _open_asn_lookup(NetScopeConfig(asn_db_path=str(junk))) is None
+
+    def test_build_container_passes_config_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        db = self._asn_fixture(tmp_path)
+        monkeypatch.setattr("netscope.app.container.DEFAULT_ASN_DB_PATH", tmp_path / "absent.dat")
+        container = build_container(
+            with_baseline_persistence=False,
+            with_route_enrichment=True,
+            config=NetScopeConfig(asn_db_path=str(db)),
+        )
+        assert container.asn_lookup is not None
+        assert isinstance(container.asn_lookup, AsnLookup)
+
+    def test_build_container_without_enrichment_flag(self, tmp_path: Path) -> None:
+        container = build_container(
+            with_baseline_persistence=False,
+            with_route_enrichment=False,
+            config=NetScopeConfig(asn_db_path=str(self._asn_fixture(tmp_path))),
+        )
+        assert container.asn_lookup is None
+
+    def test_target_check_round_attaches_ownership(self) -> None:
+        # The full pipeline, offline: probes script their answers, the
+        # round enriches geo-then-asn, and the measurement carries the
+        # canonical ownership payload.
+        probes = {kind: _RoundFakeProbe(kind, extra={"answers": [LONDON_IP]}) for kind in (ProbeType.ICMP,)}
+        container = Container(
+            probe_registry=ProbeRegistry(probes=probes),
+            asn_lookup=FakeAsnLookup(answers={LONDON_IP: CLOUDFLARE}),
+            ip_resolver=TargetIpResolver(),
+        )
+        measurements, _, _ = check_target("example.com", container, {ProbeType.ICMP})
+        assert measurements and measurements[0].extra["asn"]["asn"] == 13335

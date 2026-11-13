@@ -89,6 +89,7 @@ from datetime import datetime, timedelta
 
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
+from netscope.core.asn import asn_extra
 from netscope.core.baseline import UserBaseline, compare_throughput
 from netscope.core.diagnosis import diagnose, evidence_from_jitter, evidence_from_latency
 from netscope.core.geo import geo_extra
@@ -151,6 +152,48 @@ def enrich_with_geo(measurements: list[RawMeasurement], container: Container) ->
         if info is None:
             continue
         m.extra["geo"] = geo_extra(info)
+
+
+def enrich_with_asn(measurements: list[RawMeasurement], container: Container) -> None:
+    """Attach each measurement's target network ownership to its `extra`
+    as the canonical `extra["asn"]` dict (v0.14) -- best-effort, in
+    place, the exact discipline `enrich_with_geo` established for
+    geography: one single copy of the fact, written before scoring and
+    persistence, so every downstream surface (rich detail, --json
+    extra block, the evidence reports) reads the same record.
+
+    HOW AN IP IS FOUND: the same order geo enrichment uses -- an
+    IP-literal target wins; else a DNS probe's already-recorded
+    answers are scanned; else one stdlib getaddrinfo call. When the
+    geo pass already resolved this target this round, its recorded
+    `extra["geo"]["ip"]` is reused -- one resolution per fact per
+    round, never a second lookup for a number already on screen.
+
+    GRACEFUL DEGRADATION, the shared doctrine: no AsnLookup or
+    resolver wired -> no-op; an unresolvable target, a corrupt
+    source, or an address neither source knows -> no-op for that
+    measurement. A measurement that already carries `asn` is never
+    re-enriched (idempotent, like `geo` and the loss marker)."""
+    asn_lookup = container.asn_lookup
+    resolver = container.ip_resolver
+    if asn_lookup is None or resolver is None:
+        return
+    for m in measurements:
+        if "asn" in m.extra:
+            continue
+        geo = m.extra.get("geo")
+        ip = geo.get("ip") if isinstance(geo, dict) else None
+        if not isinstance(ip, str):
+            ip = resolver.resolve(m.target, m.extra)
+        if not ip:
+            continue
+        try:
+            info = asn_lookup.lookup(ip)
+        except (ValueError, RuntimeError):
+            continue
+        if info is None or info.asn is None:
+            continue
+        m.extra["asn"] = asn_extra(info)
 
 
 def run_with_loss_confirmation(probe: Probe, target: str) -> RawMeasurement:
@@ -434,6 +477,7 @@ def run_measurement_round(
     measurements = [m for m in (local_gateway, public_dns, dns_lookup, public_cdn) if m is not None]
 
     enrich_with_geo(measurements, container)
+    enrich_with_asn(measurements, container)
 
     experience = score_measurements(measurements, baseline)
 
@@ -587,6 +631,13 @@ def _enrich_snapshot(snapshot: RouteSnapshot, container: Container, *, resolve_h
                 continue  # hostname hop, not an IP -- nothing to look up
             if result is not None and result.asn is not None:
                 hop.asn = f"AS{result.asn}"
+                if hop.organization is None and result.organization is not None:
+                    # The v0.14 payoff: RouteHop.organization's first
+                    # real population since TASK-020 declared the
+                    # field lookup-ready -- the mmdb source's name,
+                    # never the text table's (it answers None, and a
+                    # placeholder name would be fabrication).
+                    hop.organization = result.organization
 
     if resolve_hostnames and container.hostname_resolver is not None:
         hostnames = container.hostname_resolver.resolve_all([hop.address for hop in snapshot.hops])
@@ -634,6 +685,7 @@ def check_service(
     baseline = baseline if baseline is not None else UserBaseline()
     measurements = run_service_checks(service, container)
     enrich_with_geo(measurements, container)
+    enrich_with_asn(measurements, container)
     experience = score_measurements(measurements, baseline)
     evidence = []
     for m in measurements:

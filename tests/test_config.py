@@ -125,3 +125,22 @@ def test_bandwidth_keys_load_from_toml(tmp_path):
 
     assert config.bandwidth_url == "https://x.example/down"
     assert config.bandwidth_seconds == 3.0
+
+
+# ---------------------------------------------------------------------------
+# ASN ownership keys (v0.14)
+# ---------------------------------------------------------------------------
+
+
+def test_default_config_has_no_asn_database_override():
+    config = NetScopeConfig()
+    assert config.asn_db_path is None
+
+
+def test_asn_db_path_loads_from_toml(tmp_path):
+    config_file = tmp_path / "config.toml"
+    config_file.write_text('asn_db_path = "/opt/databases/GeoLite2-ASN.mmdb"\n', encoding="utf-8")
+
+    config = load_config(config_file)
+
+    assert config.asn_db_path == "/opt/databases/GeoLite2-ASN.mmdb"
