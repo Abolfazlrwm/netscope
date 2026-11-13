@@ -129,8 +129,8 @@ from netscope.ui.tui.screens.route import RouteScreen  # noqa: E402
 from netscope.ui.tui.screens.services import ServicesScreen  # noqa: E402
 
 
-def _ok_measurement(probe: ProbeType, target: str, latency: float) -> RawMeasurement:
-    return RawMeasurement(probe_type=probe, target=target, success=True, latency_ms=latency)
+def _ok_measurement(probe: ProbeType, target: str, latency: float, jitter_ms: float | None = None) -> RawMeasurement:
+    return RawMeasurement(probe_type=probe, target=target, success=True, latency_ms=latency, jitter_ms=jitter_ms)
 
 
 def _experience(score: float = 88.0, level: ExperienceLevel = ExperienceLevel.GOOD) -> ExperienceEvent:
@@ -655,3 +655,23 @@ async def test_services_screen_save_failure_is_honest_when_no_repository_is_wire
 
         log_text = "\n".join(strip.text for strip in screen.query_one("#check_log", RichLog).lines)
         assert "ServiceRepository" in log_text
+
+
+async def test_tui_checks_table_shows_jitter_per_measurement():
+    """v0.13: the dashboard's checks table carries the third vital sign
+    alongside latency and loss -- a real reading where the probe reports
+    one, an honest dash where it never will."""
+    measurements = [
+        _ok_measurement(ProbeType.ICMP, "192.168.1.1", 2.0, jitter_ms=2.4),
+        _ok_measurement(ProbeType.HTTP, "https://www.cloudflare.com/", 30.0),
+    ]
+    app = _make_app([(measurements, _experience(), None)])
+    async with app.run_test(size=(120, 40)) as pilot:
+        assert await _wait_for_rounds(pilot, app, 1)
+        checks = app.query_one("#checks_table")
+        labels = [str(c.label) for c in checks.columns.values()]
+        assert labels == ["Check", "Target", "Status", "Latency", "Loss", "Jitter", "Detail"]
+        gateway_row = checks.get_row_at(0)
+        assert gateway_row[5] == "2.4 ms"
+        http_row = checks.get_row_at(1)
+        assert http_row[5] == "—"

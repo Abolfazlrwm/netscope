@@ -121,7 +121,7 @@ class DashboardScreen(Screen):
     def on_mount(self) -> None:
         self._mounted = True
         checks = self.query_one("#checks_table", DataTable)
-        checks.add_columns("Check", "Target", "Status", "Latency", "Loss", "Detail")
+        checks.add_columns("Check", "Target", "Status", "Latency", "Loss", "Jitter", "Detail")
 
         self.query_one("#network_card", Static).update(self._network_text())
 
@@ -217,6 +217,7 @@ class DashboardScreen(Screen):
                 status,
                 f"{m.latency_ms:.1f} ms" if m.latency_ms is not None else "—",
                 f"{m.packet_loss_pct:.0f}%" if m.packet_loss_pct is not None else "—",
+                f"{m.jitter_ms:.1f} ms" if m.jitter_ms is not None else "—",
                 detail,
             )
 

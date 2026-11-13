@@ -218,6 +218,7 @@ def serialize_report_row(row: TargetReportRow) -> dict[str, Any]:
         "success": row.success,
         "latency_ms": row.latency_ms,
         "packet_loss_pct": row.packet_loss_pct,
+        "jitter_ms": row.jitter_ms,
         "error": row.error,
         "error_type": row.error_type.value if row.error_type is not None else None,
         "verdict": row.verdict,
@@ -368,8 +369,8 @@ def evidence_report_markdown(report: EvidenceReport) -> str:
                 lines.append(f"verdicts: {_verdict_summary(t.verdict_counts)}")
             lines.append("")
             has_verdicts = any(row.verdict is not None for row in t.rows)
-            header = "| when | probe | ok | latency_ms | loss % |"
-            divider = "|---|---|---|---:|---:|"
+            header = "| when | probe | ok | latency_ms | loss % | jitter_ms |"
+            divider = "|---|---|---|---:|---:|---:|"
             if has_verdicts:
                 header += " verdict |"
                 divider += "---|"
@@ -384,6 +385,7 @@ def evidence_report_markdown(report: EvidenceReport) -> str:
                     "yes" if row.success else "no",
                     _md_cell(f"{row.latency_ms:.1f}" if row.latency_ms is not None else None),
                     _md_cell(f"{row.packet_loss_pct:.1f}" if row.packet_loss_pct is not None else None),
+                    _md_cell(f"{row.jitter_ms:.1f}" if row.jitter_ms is not None else None),
                 ]
                 if has_verdicts:
                     cells.append(_md_cell(row.verdict))
@@ -671,7 +673,9 @@ def evidence_report_html(report: EvidenceReport) -> str:
                 out.append("<p class='disclosure'>latency per shown measurement, oldest → newest (ms)</p>")
                 out.append("</div>")
             has_verdicts = any(row.verdict is not None for row in t.rows)
-            out.append("<table><thead><tr><th>when</th><th>probe</th><th>ok</th><th class='num'>latency_ms</th><th class='num'>loss %</th>")
+            out.append(
+                "<table><thead><tr><th>when</th><th>probe</th><th>ok</th><th class='num'>latency_ms</th><th class='num'>loss %</th><th class='num'>jitter_ms</th>"
+            )
             if has_verdicts:
                 out.append("<th>verdict</th>")
             out.append("<th>error</th></tr></thead><tbody>")
@@ -682,6 +686,7 @@ def evidence_report_html(report: EvidenceReport) -> str:
                     "<td class='ok'>yes</td>" if row.success else "<td class='bad'>no</td>",
                     f"<td class='num'>{f'{row.latency_ms:.1f}' if row.latency_ms is not None else '--'}</td>",
                     f"<td class='num'>{f'{row.packet_loss_pct:.1f}' if row.packet_loss_pct is not None else '--'}</td>",
+                    f"<td class='num'>{f'{row.jitter_ms:.1f}' if row.jitter_ms is not None else '--'}</td>",
                 ]
                 if has_verdicts:
                     cells.append(f"<td class='dim'>{_esc(row.verdict) if row.verdict else '--'}</td>")

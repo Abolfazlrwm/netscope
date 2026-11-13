@@ -918,6 +918,7 @@ class TargetReportRow:
     success: bool
     latency_ms: float | None
     packet_loss_pct: float | None
+    jitter_ms: float | None  # v0.13: the sweep's delay-variation reading, when the probe reports one
     error: str | None
     error_type: ProbeErrorType | None
     verdict: str | None  # v0.4 baseline-relative throughput verdict, when attached
@@ -1014,6 +1015,7 @@ def _report_row(m: RawMeasurement) -> TargetReportRow:
         success=m.success,
         latency_ms=m.latency_ms,
         packet_loss_pct=m.packet_loss_pct,
+        jitter_ms=m.jitter_ms,
         error=m.error,
         error_type=m.error_type,
         verdict=raw_verdict if isinstance(raw_verdict, str) else None,

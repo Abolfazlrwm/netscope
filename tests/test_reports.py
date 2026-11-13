@@ -512,3 +512,32 @@ def test_report_command_json_output_ignores_html(tmp_path, capsys):
     assert not html_path.exists()  # the JSON short-circuit, unchanged
     out = capsys.readouterr().out
     assert '"report": "evidence"' in out
+
+
+# ---------------------------------------------------------------------------
+# Jitter columns (v0.13) -- the third vital sign rides along wherever the
+# evidence tables do
+# ---------------------------------------------------------------------------
+
+
+def test_report_rows_carry_and_render_jitter():
+    repo = _repo()
+    repo.save(_m(jitter_ms=3.2, timestamp=UNTIL - timedelta(hours=2)))
+    repo.save(_m(jitter_ms=None, timestamp=UNTIL - timedelta(hours=1)))
+
+    report = build_evidence_report(_container(repo), days=7, until=UNTIL)
+    target = report.target_reports[0]
+    assert [row.jitter_ms for row in target.rows] == [3.2, None]
+
+    md = evidence_report_markdown(report)
+    assert "jitter_ms" in md
+    assert "| 3.2 |" in md
+    assert "| -- |" in md  # a reading that never existed stays absent, not zero
+
+    payload = serialize_evidence_report(report)
+    assert [row["jitter_ms"] for row in payload["targets"][0]["rows"]] == [3.2, None]
+
+    page = evidence_report_html(report)
+    assert "jitter_ms" in page
+    assert "<td class='num'>3.2</td>" in page
+    assert "<td class='num'>--</td>" in page
