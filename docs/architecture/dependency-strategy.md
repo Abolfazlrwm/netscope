@@ -18,7 +18,7 @@ using the standard library.
 
 | Capability | Candidate | License | Maintenance | Cross-platform | Recommendation | Reason |
 |---|---|---|---|---|---|---|
-| ICMP | `icmplib` (installed: 3.0.4) | LGPL-3.0-or-later | Active | Yes (Windows/Linux/macOS) | **Use — already a dependency** | Most accurate/safe ICMP library for Python; unprivileged-socket fallback already implemented and verified in the audited MVP |
+| ICMP | `icmplib` (installed: 3.0.4) | LGPL-3.0-or-later | Active | Yes (Windows/Linux/macOS) | **Use — already a dependency** | Most accurate/safe ICMP library for Python; unprivileged-socket fallback already implemented and verified in the audited MVP; v0.13 additionally consumes its per-sweep jitter output (`Host.jitter`) — no new dependency |
 | ICMP (alt.) | `ping3` | MIT | Low activity | Yes | **Do not add** | Simpler API but less accurate, no traceroute, no unprivileged mode — `icmplib` already covers everything it would |
 | DNS | `dnspython` (installed: 2.8.0) | ISC | Active | Yes | **Use — already a dependency** | De-facto standard; already verified against the installed 2.8.0 API in the implementation audit |
 | DNS (alt.) | stdlib `socket.gethostbyname` | PSF (stdlib) | N/A | Yes | **Do not use as primary** | No custom resolver support, no record-type control, no timing precision needed for a DNS *probe* specifically |

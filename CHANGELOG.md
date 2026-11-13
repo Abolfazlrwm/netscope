@@ -6,6 +6,54 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-13
+
+The "steady hands" release: delay variation has ridden along on every
+ICMP sweep since the first one -- icmplib reports it, the CLI table has
+shown the column for ages -- but nothing listened. Nothing learned it,
+nothing scored it, nothing diagnosed it: a fast, lossless line that
+wobbles scored exactly like a steady one. v0.13 makes jitter the third
+vital sign, with zero new dependencies and a purely-additive schema
+migration (decision record: `docs/architecture/adr-012-jitter-scoring.md`).
+
+### Added
+
+- **Jitter joins the learned baseline** (`core/baseline.py`): a
+  `jitter` store on `UserBaseline` with `observe_jitter()`, the same
+  Welford treatment latency and packet loss get, deliberately in its
+  own store -- the throughput precedent: a jitter number must never
+  pose as a latency reading. Persisted Welford-exact in a new
+  `jitter_baselines` table (schema v4, additive -- every v3 database
+  upgrades in place, nothing rebuilt or moved).
+- **The experience score weighs it** (`core/scoring.py`): the third
+  baseline-relative pillar, next to latency and loss. 22 ms of
+  variation is ordinary on a wobbly line and extraordinary on a steady
+  one, and the score now says so. Probe types that never report
+  jitter weigh nothing (zero confidence, neutral) -- the same rule
+  latency already follows when a probe has no latency reading.
+- **Diagnosable** (`core/diagnosis.py` + app wiring):
+  `evidence_from_jitter` mirrors the latency/loss evidence ladder,
+  and every diagnosis that cites latency now cites a `_jitter` twin --
+  the connectivity round (`gateway_jitter`/`dns_jitter`/
+  `destination_jitter`) and the check/service flows
+  (`service_*_jitter`). A wobble beyond the mature baseline's anomaly
+  anchor is WARNING/CRITICAL evidence; a check type without a reading
+  is tested-but-zero-confidence, never a fabricated claim.
+- **Visible everywhere the evidence is**: the TUI dashboard's checks
+  table gains a Jitter column; evidence-report rows carry `jitter_ms`
+  in `--json`, and the markdown and HTML per-target tables gain a
+  `jitter_ms` column (absent readings stay absent, never zero).
+
+### Notes
+
+- 890 tests passing (21 new across baseline/scoring/diagnosis/
+  persistence/schema/reports/TUI), ruff clean, mypy clean. A fresh
+  target needs ~5 sweeps before jitter claims anything -- the same
+  maturity rule every learned metric follows.
+- Scores can move for users with mature baselines: a wobbly line now
+  scores below a steady one with identical latency and loss. That is
+  the point of the release, not a regression.
+
 ## [0.12.0] — 2026-11-12
 
 The "where in the world" release, and the last promise of the route

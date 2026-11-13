@@ -118,4 +118,6 @@ Verdicts are percentage-based: within ±15% of your usual reads as
 `scope` is the `--target` filter (or `null` for all targets). Per-target `rows`
 carry the newest 40 measurements; `truncated_rows` discloses what was omitted,
 while all aggregates (`measurements`, `failures`, `mean_latency_ms`,
-`verdict_counts`) always cover the full window.
+`verdict_counts`) always cover the full window. Each row carries the
+measurement's scalars -- since v0.13 that includes `jitter_ms` (the sweep's
+delay variation; `null` for probe types that never report one, never zero).

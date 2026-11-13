@@ -195,7 +195,7 @@ Download GeoLite2-City (free MaxMind account, your own license key — setup in 
 
 ### Personal baseline that actually learns
 
-Every successful measurement feeds a per-target Welford tracker (mean + variance, exact round-trips) persisted in `~/.netscope/netscope.db`. After a few rounds NetScope knows *your* normal — 100 ms is a regression for fibre and unremarkable for a mobile hotspot — and scores/diagnoses deviations statistically (σ-based), never against a hardcoded constant.
+Every successful measurement feeds a per-target Welford tracker (mean + variance, exact round-trips) persisted in `~/.netscope/netscope.db`. After a few rounds NetScope knows *your* normal — 100 ms is a regression for fibre and unremarkable for a mobile hotspot — and scores/diagnoses deviations statistically (σ-based), never against a hardcoded constant. Since v0.13 the same treatment covers **jitter**: a fast, lossless line that wobbles now scores — and diagnoses — like what it is, a wobbly line, not like a steady one.
 
 ```bash
 netscope history   # watch the baseline mature round over round
@@ -252,7 +252,7 @@ The test suite is **fully offline** — every probe is a scripted fake, includin
 
 ## Roadmap
 
-See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell; (v0.7) the saved service list — `netscope service add/list/remove/check`, persisted locally (schema v3), pinned on the TUI services board; (v0.8) route memory — churn verdicts across your stored route history with hop-level diffs; (v0.11) shell-level plumbing — `--version`, shell completions, a generated man page; (v0.12) GeoIP distance — the dependency-free GeoLite2 reader, place/distance in every read path (TASK-023, the roadmap's last route-model promise).
+See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell; (v0.7) the saved service list — `netscope service add/list/remove/check`, persisted locally (schema v3), pinned on the TUI services board; (v0.8) route memory — churn verdicts across your stored route history with hop-level diffs; (v0.11) shell-level plumbing — `--version`, shell completions, a generated man page; (v0.12) GeoIP distance — the dependency-free GeoLite2 reader, place/distance in every read path (TASK-023, the roadmap's last route-model promise); (v0.13) jitter — the third vital sign learned per target, weighed in the 0–100 score, cited as diagnosis evidence, shown in the dashboard and the evidence tables.
 
 ## License
 
