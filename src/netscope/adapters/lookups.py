@@ -1,7 +1,18 @@
 """
 netscope.adapters.lookups
 
-ASN lookup adapter -- TASK-022, "ASN/ISP intelligence".
+ASN lookup adapter -- TASK-022, "ASN/ISP intelligence"; v0.14 promotes
+it to one of the two `AsnLookup` port implementations (the other being
+`adapters/geoip.py`'s GeoLite2-ASN reader), answering the shared
+`core.asn.AsnInfo` record both sources produce.
+
+V0.14 NOTE -- the ownership record: this adapter still answers with
+the AS NUMBER only (`organization=None` always) -- that is the honest
+record a "prefix, whitespace, ASN" table can produce, and it stays
+the fallback source for installs that keep their `ipasn.dat`. The
+NAME half of the question is answered by GeoLite2-ASN through the
+mmdb reader (see adr-013); the composition root prefers that source
+when its database exists and falls back to this one.
 
 CORRECTION NOTE: this module originally wrapped the third-party `pyasn`
 package. That implementation was rejected after the user's real
@@ -64,7 +75,8 @@ core.models.RouteHop.organization remains unpopulated by this adapter.
 from __future__ import annotations
 
 import ipaddress
-from dataclasses import dataclass
+
+from netscope.core.asn import AsnInfo
 
 
 class AsnLookupUnavailableError(RuntimeError):
@@ -72,26 +84,8 @@ class AsnLookupUnavailableError(RuntimeError):
     at all. A defined, explicit failure mode, distinct from a normal
     "no match" lookup result -- callers can tell "the lookup capability
     itself isn't usable" apart from "this particular address just
-    isn't in the loaded table," which is not an error (see
-    AsnLookupResult's own docstring)."""
-
-
-@dataclass
-class AsnLookupResult:
-    """Result of an ASN lookup for one IP address.
-
-    asn/prefix are both None when the address has no match in the
-    loaded database (e.g. private/reserved address space, or an
-    address simply not present in the loaded table) -- this is a
-    normal, expected outcome, not an error condition."""
-
-    ip_address: str
-    asn: int | None
-    prefix: str | None
-
-    @property
-    def matched(self) -> bool:
-        return self.asn is not None
+    isn't in the loaded table," which is not an error (the port's
+    lookup answers None for it, never an exception)."""
 
 
 def _parse_database(text: str) -> dict[int, dict[int, tuple[int, str]]]:
@@ -194,15 +188,18 @@ class AsnLookupAdapter:
         except ValueError as exc:
             raise AsnLookupUnavailableError(f"failed to parse ASN database: {exc}") from exc
 
-    def lookup(self, ip_address: str) -> AsnLookupResult:
-        """Look up `ip_address` against the loaded database.
-
-        Returns an AsnLookupResult with asn=None/prefix=None if the
-        address has no match -- a normal outcome, not an error.
+    def lookup(self, ip_address: str) -> AsnInfo | None:
+        """Look up `ip_address` against the loaded database -- an
+        `AsnInfo` (number and prefix, `organization=None`: a text
+        table cannot name an organization and never pretends to), or
+        None when the address has no match -- a normal outcome, not
+        an error, per the port's contract.
 
         Raises ValueError if `ip_address` is not a syntactically valid
         IP address string -- a caller programming error, distinct from
         a legitimate-but-unmatched address.
         """
         asn, prefix = _longest_prefix_match(self._by_prefixlen, ip_address)
-        return AsnLookupResult(ip_address=ip_address, asn=asn, prefix=prefix)
+        if asn is None:
+            return None
+        return AsnInfo(ip_address=ip_address, asn=asn, organization=None, prefix=prefix)

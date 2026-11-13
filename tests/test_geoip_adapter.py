@@ -1,9 +1,10 @@
 """
 tests.test_geoip_adapter
 
-The v0.12 mmdb reader and MaxMind adapter, tested entirely against
-synthetic fixture databases (tests/mmdb_fixture.py) -- GeoLite2 is
-never downloaded, committed, or needed here.
+The v0.12 mmdb reader and its two adapters (MaxMindGeoLookup for
+GeoLite2-City, v0.14's MaxMindAsnLookup for GeoLite2-ASN), tested
+entirely against synthetic fixture databases (tests/mmdb_fixture.py)
+-- GeoLite2 is never downloaded, committed, or needed here.
 
 Two extra layers of confidence, both opt-in and offline:
 
@@ -21,20 +22,23 @@ Two extra layers of confidence, both opt-in and offline:
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from netscope.adapters.geoip import (
     GeoLookupUnavailableError,
+    MaxMindAsnLookup,
     MaxMindGeoLookup,
     MMDBFormatError,
     MMDBReader,
     resolve_target_ip,
 )
+from netscope.core.asn import AsnInfo
 from netscope.core.geo import DB_STALE_AFTER_DAYS, GeoInfo, Place
 from netscope.core.models import utcnow
-from netscope.core.ports import GeoLookup
+from netscope.core.ports import AsnLookup, GeoLookup
 from tests.mmdb_fixture import build_mmdb
 
 # Synthetic GeoLite2-City-shaped records. London/Paris/Tehran carry
@@ -263,6 +267,110 @@ class TestAdapter:
         path.write_bytes(build_mmdb({}, build_epoch=1700000000))
         lookup = MaxMindGeoLookup(path)
         assert lookup.lookup("81.2.69.160") is None
+
+
+# Synthetic GeoLite2-ASN-shaped records (v0.14): flat, no names map,
+# no coordinates -- the shape the real edition's records keep.
+ASN_RECORDS = {
+    "81.2.69.0/24": {"autonomous_system_number": 13335, "autonomous_system_organization": "Cloudflare, Inc."},
+    "5.35.90.0/24": {"autonomous_system_number": 58224},
+    "8.8.8.0/24": {"autonomous_system_number": 15169, "autonomous_system_organization": "GOOGLE"},
+}
+
+
+def write_asn_db(
+    tmp_path: Path,
+    networks: dict[str, dict[str, object]] | None = None,
+    *,
+    build_epoch: int | None = None,
+    record_size: int = 24,
+) -> Path:
+    path = tmp_path / "asn-fixture.mmdb"
+    if build_epoch is None:
+        build_epoch = int(utcnow().timestamp()) - 2 * 86400  # two days old: fresh
+    path.write_bytes(
+        build_mmdb(
+            ASN_RECORDS if networks is None else networks,
+            build_epoch=build_epoch,
+            record_size=record_size,
+            database_type="GeoLite2-ASN",
+        )
+    )
+    return path
+
+
+class TestAsnAdapter:
+    def test_satisfies_asn_port(self, tmp_path: Path) -> None:
+        lookup = MaxMindAsnLookup(write_asn_db(tmp_path))
+        assert isinstance(lookup, AsnLookup)
+
+    def test_lookup_number_and_organization(self, tmp_path: Path) -> None:
+        lookup = MaxMindAsnLookup(write_asn_db(tmp_path))
+        info = lookup.lookup("81.2.69.160")
+        assert isinstance(info, AsnInfo)
+        assert info.asn == 13335
+        assert info.organization == "Cloudflare, Inc."
+        assert info.ip_address == "81.2.69.160"
+
+    def test_number_without_name_is_carried_bare(self, tmp_path: Path) -> None:
+        # The record that names nothing: the number is real evidence,
+        # the missing name is disclosed as None, never filled in.
+        lookup = MaxMindAsnLookup(write_asn_db(tmp_path))
+        info = lookup.lookup("5.35.90.7")
+        assert info is not None
+        assert info.asn == 58224
+        assert info.organization is None
+
+    def test_unknown_address_is_none(self, tmp_path: Path) -> None:
+        lookup = MaxMindAsnLookup(write_asn_db(tmp_path))
+        assert lookup.lookup("203.0.113.7") is None
+        assert lookup.lookup("10.0.0.1") is None
+
+    def test_invalid_address_is_valueerror(self, tmp_path: Path) -> None:
+        lookup = MaxMindAsnLookup(write_asn_db(tmp_path))
+        with pytest.raises(ValueError):
+            lookup.lookup("not-an-ip-address")
+
+    def test_db_age_and_staleness_reported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        real_dt = datetime
+        old = real_dt.now() - timedelta(days=DB_STALE_AFTER_DAYS + 5)
+        lookup = MaxMindAsnLookup(write_asn_db(tmp_path, build_epoch=int(old.timestamp())))
+        info = lookup.lookup("81.2.69.160")
+        assert info is not None
+        assert info.db_type == "GeoLite2-ASN"
+        assert info.db_age_days is not None and info.db_age_days > DB_STALE_AFTER_DAYS
+        assert info.stale_db is True
+
+    def test_fresh_database_not_stale(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        now = utcnow()
+        monkeypatch.setattr("netscope.adapters.geoip.utcnow", lambda: now)
+        lookup = MaxMindAsnLookup(write_asn_db(tmp_path, build_epoch=int(now.timestamp()) - 2 * 86400))
+        info = lookup.lookup("81.2.69.160")
+        assert info is not None
+        assert info.stale_db is False
+
+    def test_record_without_a_number_is_none(self, tmp_path: Path) -> None:
+        # An ownership claim with no AS behind it is not a claim this
+        # adapter carries.
+        lookup = MaxMindAsnLookup(write_asn_db(tmp_path, {"81.2.69.0/24": {"autonomous_system_organization": "Ghost"}}))
+        assert lookup.lookup("81.2.69.1") is None
+
+    def test_corrupt_file_raises_unavailable(self, tmp_path: Path) -> None:
+        path = tmp_path / "junk.mmdb"
+        path.write_bytes(b"\x00" * 512)
+        with pytest.raises(GeoLookupUnavailableError):
+            MaxMindAsnLookup(path)
+
+    def test_missing_file_raises_unavailable(self, tmp_path: Path) -> None:
+        with pytest.raises(GeoLookupUnavailableError):
+            MaxMindAsnLookup(tmp_path / "nope.mmdb")
+
+    @pytest.mark.parametrize("record_size", [24, 28, 32])
+    def test_every_record_size(self, tmp_path: Path, record_size: int) -> None:
+        lookup = MaxMindAsnLookup(write_asn_db(tmp_path, record_size=record_size))
+        info = lookup.lookup("8.8.8.8")
+        assert info is not None
+        assert info.asn == 15169
 
 
 class TestResolveTargetIp:

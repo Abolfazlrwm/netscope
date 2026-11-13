@@ -1,10 +1,15 @@
 """
 netscope.adapters.geoip
 
-Offline GeoIP lookup adapter (v0.12, TASK-023 "Distance estimation"):
-a dependency-free reader for the MaxMind DB (".mmdb") file format and
-the `MaxMindGeoLookup` adapter that turns a GeoLite2 database file
-into the `core.ports.GeoLookup` capability.
+Offline GeoIP lookup adapters (v0.12 TASK-023, extended v0.14): a
+dependency-free reader for the MaxMind DB (".mmdb") file format and
+two adapters that turn GeoLite2 database files into core ports --
+`MaxMindGeoLookup` (GeoLite2-City -> `core.ports.GeoLookup`) and
+`MaxMindAsnLookup` (GeoLite2-ASN -> `core.ports.AsnLookup`, adr-013).
+One reader, two databases, one story: the same publicly specified
+binary format, parsed with the same ~250 lines of stdlib
+`struct`/`ipaddress`, answering "where is it" and "whose road is it"
+alike.
 
 WHY A HAND-WRITTEN READER, NOT A LIBRARY
 -----------------------------------------
@@ -41,7 +46,9 @@ EULA. This module honors that by construction:
   themselves with their own license key, and points NetScope at the
   file (default `~/.netscope/GeoLite2-City.mmdb`). Without that file
   nothing here runs -- a missing database is a normal, silent
-  degradation, exactly like the ASN database before it.
+  degradation, exactly like the ASN database before it. GeoLite2-ASN
+  (v0.14) keeps the identical discipline with its own file, the
+  user's own download, by default `~/.netscope/GeoLite2-ASN.mmdb`.
 - It never writes or redistributes database content: lookups answer
   with a handful of display fields (country, city, coordinates,
   distance), never with raw record dumps.
@@ -74,6 +81,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from netscope.core.asn import AsnInfo
 from netscope.core.geo import GeoInfo, Place, place_distance_km
 from netscope.core.models import utcnow
 
@@ -121,11 +129,14 @@ class MMDBFormatError(ValueError):
 
 
 class GeoLookupUnavailableError(RuntimeError):
-    """Raised when the GeoIP database cannot be read/parsed at all --
-    missing file, corrupt file, not an mmdb file. A defined failure
-    mode, distinct from a normal "this address is not in the
-    database" lookup result (which is None, not an error). Mirrors
-    `adapters.lookups.AsnLookupUnavailableError`."""
+    """Raised when an mmdb-backed database cannot be read/parsed at
+    all -- missing file, corrupt file, not an mmdb file. Raised by
+    BOTH mmdb adapters (the GeoIP one since v0.12, the ASN one since
+    v0.14 -- same reader, same failure type), and distinct from a
+    normal "this address is not in the database" lookup result (which
+    is None, not an error). Mirrors
+    `adapters.lookups.AsnLookupUnavailableError`, the text-table
+    source's own failure type."""
 
 
 @dataclass
@@ -444,6 +455,66 @@ class MaxMindGeoLookup:
             ip_address=ip_address,
             place=place,
             distance_km=place_distance_km(self.home, place),
+            db_type=self.db_type,
+            db_age_days=self.db_age_days,
+        )
+
+
+class MaxMindAsnLookup:
+    """`AsnLookup` port adapter over a local GeoLite2-ASN database
+    file (v0.14, adr-013) -- the ownership answer the TASK-022 text
+    table could never give: the AS number AND the operating
+    organization's name, offline, through the same reader the City
+    database uses.
+
+    The two GeoLite2 editions share one contract shape and differ
+    only in their records: an ASN record is flat --
+    `autonomous_system_number` and `autonomous_system_organization`
+    -- with no names map and no coordinates, so extraction is a
+    couple of type-checked reads rather than a place walk. A record
+    without a number answers None (an ownership claim with no
+    autonomous system behind it is not a claim this adapter will
+    carry); a number without a name is carried, honestly bare.
+
+    Failure semantics are `MaxMindGeoLookup`'s, verbatim: eager
+    construction so an unusable file fails at wiring time, per-lookup
+    degradation to None for a file that corrupts mid-walk, ValueError
+    for a syntactically invalid address.
+    """
+
+    def __init__(self, db_path: str | Path) -> None:
+        try:
+            self._reader = MMDBReader(db_path)
+        except (OSError, MMDBFormatError) as exc:
+            raise GeoLookupUnavailableError(f"ASN database unusable: {exc}") from exc
+        meta = self._reader.metadata
+        self.db_type: str | None = meta.database_type
+        self.db_age_days: int | None = None
+        if meta.build_epoch is not None:
+            age_seconds = utcnow().timestamp() - meta.build_epoch
+            self.db_age_days = max(0, int(age_seconds // 86400))
+
+    def lookup(self, ip_address: str) -> AsnInfo | None:
+        """One address -> its autonomous system and operator, or None
+        when the database does not know the address. ValueError on an
+        invalid address -- the port's documented split between caller
+        error and normal absence."""
+        ipaddress.ip_address(ip_address)  # validate; ValueError propagates per the port contract
+        try:
+            record = self._reader.get(ip_address)
+        except MMDBFormatError:
+            # Corrupt mid-walk: this ADDRESS gets no ownership claim.
+            return None
+        if record is None:
+            return None
+        asn = record.get("autonomous_system_number")
+        organization = record.get("autonomous_system_organization")
+        if not isinstance(asn, int) or isinstance(asn, bool):
+            return None
+        return AsnInfo(
+            ip_address=ip_address,
+            asn=asn,
+            organization=organization if isinstance(organization, str) else None,
             db_type=self.db_type,
             db_age_days=self.db_age_days,
         )

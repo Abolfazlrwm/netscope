@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from netscope.adapters.lookups import AsnLookupAdapter, AsnLookupResult, AsnLookupUnavailableError
+from netscope.adapters.lookups import AsnLookupAdapter, AsnLookupUnavailableError
+from netscope.core.asn import AsnInfo
 
 # A tiny, self-contained test database covering: a normal /24, tab and
 # space as separators, a comment line, and a default route (/0) to
@@ -40,11 +41,26 @@ def test_successful_lookup_returns_asn_and_matching_prefix():
 
     result = adapter.lookup("1.1.1.1")
 
-    assert isinstance(result, AsnLookupResult)
+    assert isinstance(result, AsnInfo)
     assert result.ip_address == "1.1.1.1"
     assert result.asn == 13335
     assert result.prefix == "1.1.1.0/24"
     assert result.matched is True
+
+
+def test_text_table_answers_organization_none():
+    """The v0.14 honesty rule for this source: a 'prefix, whitespace,
+    ASN' table cannot name an organization, so the record carries None
+    -- never a placeholder name."""
+    adapter = AsnLookupAdapter(ipasn_string=_TEST_DB)
+
+    result = adapter.lookup("1.1.1.1")
+
+    assert result is not None
+    assert result.organization is None
+    assert result.db_type is None
+    assert result.db_age_days is None
+    assert result.stale_db is False
 
 
 def test_successful_lookup_for_a_second_distinct_prefix():
@@ -111,14 +127,11 @@ def test_default_route_matches_addresses_outside_any_specific_prefix():
 
 def test_no_match_returns_none_asn_and_prefix_not_an_error():
     """With no default route in the database, a genuinely-uncovered
-    address returns an unmatched result -- no exception."""
+    address returns None (the port's v0.14 contract) -- no exception,
+    no half-filled record."""
     adapter = AsnLookupAdapter(ipasn_string="1.1.1.0/24\t13335\n")
 
-    result = adapter.lookup("192.168.1.1")
-
-    assert result.asn is None
-    assert result.prefix is None
-    assert result.matched is False
+    assert adapter.lookup("192.168.1.1") is None
 
 
 # ---------------------------------------------------------------------------
@@ -138,9 +151,7 @@ def test_ipv6_lookup_works():
 def test_ipv6_no_match_is_unmatched_not_an_error():
     adapter = AsnLookupAdapter(ipasn_string="2001:db8::/32\t65000\n")
 
-    result = adapter.lookup("2001:db9::1")
-
-    assert result.matched is False
+    assert adapter.lookup("2001:db9::1") is None
 
 
 # ---------------------------------------------------------------------------
@@ -257,5 +268,4 @@ def test_lookups_module_has_no_third_party_dependency():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module.split(".")[0])
 
-    allowed = {"__future__", "ipaddress", "dataclasses", "typing"}
-    assert imported <= allowed, f"unexpected imports: {imported - allowed}"
+    assert imported <= {"__future__", "ipaddress", "netscope"}, f"unexpected imports: {imported - {'__future__', 'ipaddress', 'netscope'}}"

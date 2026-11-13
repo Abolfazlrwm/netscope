@@ -585,7 +585,7 @@ def _enrich_snapshot(snapshot: RouteSnapshot, container: Container, *, resolve_h
                 result = container.asn_lookup.lookup(hop.address)
             except ValueError:
                 continue  # hostname hop, not an IP -- nothing to look up
-            if result.matched and result.asn is not None:
+            if result is not None and result.asn is not None:
                 hop.asn = f"AS{result.asn}"
 
     if resolve_hostnames and container.hostname_resolver is not None:

@@ -223,10 +223,12 @@ class _FakeAsnLookup:
     mapping: dict = field(default_factory=dict)
 
     def lookup(self, ip_address: str):
-        from netscope.adapters.lookups import AsnLookupResult
+        from netscope.core.asn import AsnInfo
 
         asn = self.mapping.get(ip_address)
-        return AsnLookupResult(ip_address=ip_address, asn=asn, prefix=None)
+        if asn is None:
+            return None
+        return AsnInfo(ip_address=ip_address, asn=asn, prefix=None)
 
 
 @dataclass
