@@ -64,6 +64,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from netscope.core.asn import AsnInfo
 from netscope.core.baseline import UserBaseline
 from netscope.core.geo import GeoInfo
 from netscope.core.models import ProbeType, RawMeasurement, RouteSnapshot, Service
@@ -145,6 +146,56 @@ class GeoLookup(Protocol):
     """
 
     def lookup(self, ip_address: str) -> GeoInfo | None: ...
+
+
+@runtime_checkable
+class AsnLookup(Protocol):
+    """Contract for offline network-ownership lookup of one IP address
+    (v0.14): which autonomous system an address belongs to, and under
+    whose name it is operated.
+
+    WHY THIS CONTRACT EXISTS
+    -------------------------
+    Route ownership has always been a two-part answer: TASK-022's text
+    table could say the NUMBER (`hop.asn`, "AS13335") but explicitly
+    declined the NAME -- `RouteHop.organization` has documented itself
+    as lookup-ready-but-unpopulated since TASK-020, because no
+    license-clean, dependency-free data source for organization names
+    existed in that task's scope. v0.12's hand-written mmdb reader
+    made GeoLite2-ASN exactly such a source (`adr-013`), and a port is
+    what lets both sources -- the number-only text table and the
+    number+name database -- serve the same enrichment without the app
+    layer ever knowing which one answered. Like `GeoLookup`, this is a
+    capability port, not a repository: one method, pure query, no
+    writes.
+
+    CONTRACT SEMANTICS
+    --------------------
+    - `lookup(ip_address)` returns an `AsnInfo` when the loaded source
+      knows the address, or **None when it doesn't** -- unknown
+      addresses (private space, an address outside every table entry)
+      are a normal result, never an error, and callers must treat the
+      absence of ownership the way they treat the absence of
+      geography: render without it.
+    - A syntactically invalid address raises ValueError -- a caller
+      programming error, distinct from a legitimate-but-unknown
+      address (the split every lookup port here draws).
+    - The port says nothing about HOW the source is read (a text
+      table, an mmdb file, which edition): that is the adapter's
+      concern. Staleness policy is likewise not here -- the adapter
+      reports `db_age_days` as data; deciding what "too old" means
+      stays `core.geo`'s `DB_STALE_AFTER_DAYS`, one number for both
+      GeoLite2 editions.
+
+    Reference adapters: `adapters/geoip.py` (`MaxMindAsnLookup`,
+    GeoLite2-ASN through the v0.12 reader) and `adapters/lookups.py`
+    (`AsnLookupAdapter`, the TASK-022 text table, answers with
+    `organization=None`); tests use in-memory fakes and synthetic
+    fixtures, per the same offline-test doctrine every other port
+    here follows.
+    """
+
+    def lookup(self, ip_address: str) -> AsnInfo | None: ...
 
 
 @runtime_checkable
