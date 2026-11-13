@@ -10,7 +10,7 @@
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 
 <p align="center"><img src="assets/tui-demo.png" alt="netscope TUI dashboard" width="88%"></p>
-[![Tests](https://img.shields.io/badge/tests-869%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-890%20passing-brightgreen)](#development)
 
 NetScope doesn't just show you a latency number — it tells you whether the problem is **your Wi-Fi/router**, **your ISP**, or **the destination service**, and shows you the evidence chain behind that claim.
 
@@ -243,7 +243,7 @@ Deep-dive documents live in [`docs/architecture/`](docs/architecture): architect
 
 ```bash
 make install    # editable install + dev tools
-make test       # 869 tests, fully offline (fake probes, no network needed)
+make test       # 890 tests, fully offline (fake probes, no network needed)
 make lint       # ruff check + format check
 make typecheck  # mypy on the package
 ```
