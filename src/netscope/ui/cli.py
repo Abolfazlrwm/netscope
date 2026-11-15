@@ -53,6 +53,7 @@ import argparse
 import json
 import time
 from collections.abc import Callable
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 
 from rich.table import Table
@@ -662,6 +663,7 @@ def run_report_command(
     out: str | None = None,
     html_out: str | None = None,
     json_output: bool = False,
+    until: datetime | None = None,
 ) -> int:
     """Runs the `report` command: rebuilds the persisted measurement
     log into one self-contained evidence document (`build_evidence_report`)
@@ -676,9 +678,15 @@ def run_report_command(
     reach the terminal byte-for-byte, not re-wrapped by the styled
     console. The HTML file is written with explicit UTF-8 for the same
     reason the markdown file is.
+
+    `until` passes straight through to `build_evidence_report`'s own
+    injectable clock: the CLI never sets it (the window ends now, as
+    always), but the tests seed fixed-date rows and pin the clock to
+    match -- seed dates and window end must age TOGETHER, not one
+    without the other.
     """
     try:
-        report = build_evidence_report(container, days=days, target=target)
+        report = build_evidence_report(container, days=days, target=target, until=until)
     except ValueError as exc:
         console().print(f"[red]{exc}[/red]")
         return 2
