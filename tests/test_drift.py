@@ -16,6 +16,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from netscope.adapters.probes.registry import ProbeRegistry
+from netscope.app.container import Container
+from netscope.app.use_cases import run_drift_analysis
 from netscope.core.drift import (
     DRIFT_DEGRADING,
     DRIFT_IMPROVING,
@@ -28,6 +31,7 @@ from netscope.core.drift import (
     analyze_drift,
 )
 from netscope.core.models import ProbeType, RawMeasurement
+from netscope.persistence.measurement_repository import MeasurementRepository
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
 
@@ -455,3 +459,71 @@ def test_overall_verdict_degradation_outranks_improvement():
     assert report.vitals[0].verdict == DRIFT_DEGRADING
     assert report.vitals[2].verdict == DRIFT_IMPROVING
     assert report.overall == DRIFT_DEGRADING
+
+
+# ---------------------------------------------------------------------------
+# the use case
+# ---------------------------------------------------------------------------
+
+
+def test_run_drift_analysis_reads_the_repository_windows():
+    """The use case fetches the full two-window span in ONE range
+    query and delegates the verdicts to core -- here against a real
+    temp-file repository, the same way the evidence report tests wire
+    one."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = MeasurementRepository.open(Path(tmp) / "watch.db")
+        try:
+            for i in range(6):
+                repo.save(icmp("example.com", days_ago=10, latency=20.0 + i * 0.1))
+            for i in range(6):
+                repo.save(icmp("example.com", days_ago=2, latency=30.0 + i * 0.1))
+            container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+
+            report = run_drift_analysis("example.com", container, now=NOW)
+        finally:
+            repo.close()
+
+    assert report.overall == DRIFT_DEGRADING
+    assert report.vitals[0].older_samples == 6
+    assert report.vitals[0].recent_samples == 6
+
+
+def test_run_drift_analysis_without_a_repository_is_all_insufficient():
+    """No wired repository means no history to judge: an all-
+    insufficient report, not an error -- recent_rounds' graceful shape."""
+    container = Container(probe_registry=ProbeRegistry(probes={}))  # no measurement_repository
+
+    report = run_drift_analysis("example.com", container, now=NOW)
+
+    assert report.overall == DRIFT_INSUFFICIENT
+    assert all(v.older_samples == 0 and v.recent_samples == 0 for v in report.vitals)
+
+
+def test_run_drift_analysis_pins_the_callers_clock():
+    """`now` flows through untouched: two calls with different clocks
+    on the same log produce different windows -- reproducibility, the
+    reason the clock is a parameter at all."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = MeasurementRepository.open(Path(tmp) / "watch.db")
+        try:
+            for _ in range(6):
+                repo.save(icmp("example.com", days_ago=10, latency=20.0))
+            for _ in range(6):
+                repo.save(icmp("example.com", days_ago=2, latency=21.0))
+            container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+
+            pinned = run_drift_analysis("example.com", container, now=NOW)
+            shifted = run_drift_analysis("example.com", container, now=NOW - timedelta(days=30))
+        finally:
+            repo.close()
+
+    assert pinned.end == NOW
+    assert shifted.end == NOW - timedelta(days=30)
+    assert shifted.overall == DRIFT_INSUFFICIENT  # both windows now sit in the future, empty

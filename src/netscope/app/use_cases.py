@@ -92,6 +92,7 @@ from netscope.app.container import Container
 from netscope.core.asn import asn_extra
 from netscope.core.baseline import UserBaseline, compare_throughput
 from netscope.core.diagnosis import diagnose, evidence_from_jitter, evidence_from_latency
+from netscope.core.drift import DriftReport, analyze_drift
 from netscope.core.geo import geo_extra
 from netscope.core.loss import LOSS_CONFIRMATION_ROUNDS, merge_loss_rounds, needs_loss_confirmation
 from netscope.core.models import (
@@ -934,6 +935,57 @@ def recent_rounds(
     rounds = _group_rounds(raw, max_gap_seconds=max_gap_seconds)
     _score_rounds(rounds[-limit:], container.load_baseline())
     return rounds[-limit:]
+
+
+# ---------------------------------------------------------------------------
+# Drift watch (v0.15) -- `netscope drift`: the trend lens over the
+# stored log. Every other reader of the measurement log judges a moment
+# against the learned baseline; the drift watch judges the log's two
+# most recent same-length windows against EACH OTHER, with no baseline
+# involved -- the complementary answer to the slow leak a trailing
+# baseline cannot flag. The window math, thresholds and verdicts all
+# live in core/drift.py; this use case is the read-and-delegate the
+# hexagon asks for: one range query, the caller's clock injected
+# unchanged, and core's verdict returned untouched.
+# ---------------------------------------------------------------------------
+
+
+def run_drift_analysis(
+    target: str,
+    container: Container,
+    *,
+    recent_days: int = 7,
+    now: datetime | None = None,
+) -> DriftReport:
+    """Analyze the drift between the recent window of `target`'s stored
+    history and the same-length window before it, via
+    `core.drift.analyze_drift` (never a second, window-math
+    implementation here).
+
+    The log fetch mirrors `_window_measurements`' discipline: one
+    inclusive range query for the full two-window span
+    ([now - 2*recent_days, now]) rather than two queries or an
+    unbounded scan; core/drift.py slices the two windows from the pool
+    with the same inclusive-boundary semantics the repository documents.
+
+    `now` defaults to utcnow() but stays injectable -- tests and
+    reproducible exports pin the clock, and the verdict is a pure
+    function of the log and the clock. Without a wired measurement
+    repository there is no history to judge: an all-insufficient report
+    is returned rather than an error, the same graceful shape
+    `recent_rounds` gives an empty log.
+    """
+    end = now if now is not None else utcnow()
+    repo = container.measurement_repository
+    if repo is None:
+        return analyze_drift([], target=target, now=end, recent_days=recent_days)
+    pool = repo.history(
+        target,
+        start=end - timedelta(days=2 * recent_days),
+        end=end,
+        limit=None,
+    )
+    return analyze_drift(pool, target=target, now=end, recent_days=recent_days)
 
 
 # ---------------------------------------------------------------------------
