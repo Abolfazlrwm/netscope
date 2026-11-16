@@ -10,7 +10,7 @@
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 
 <p align="center"><img src="assets/tui-demo.png" alt="netscope TUI dashboard" width="88%"></p>
-[![Tests](https://img.shields.io/badge/tests-941%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-970%20passing-brightgreen)](#development)
 
 NetScope doesn't just show you a latency number — it tells you whether the problem is **your Wi-Fi/router**, **your ISP**, or **the destination service**, and shows you the evidence chain behind that claim.
 
@@ -136,6 +136,7 @@ older rows were omitted — the aggregates always cover the full window.
 | `netscope service add/list/remove/check` | Your curated service list, persisted locally: save, list, remove, and run a saved service's own checks (v0.7) |
 | `netscope route <target> [--no-resolve]` | Traceroute with reverse-DNS hostnames, AS numbers (see below) and route-stability analysis **across your stored history** — "unchanged across the last N runs" / "changed vs <date>: hop K: old → new" (v0.8) |
 | `netscope history [--limit N]` | Recent measurement rounds from the local log |
+| `netscope drift <target> [--days N]` | The drift watch: your recent history window vs. the one before it, vital by vital — catches the slow leak no single check can flag (v0.15) |
 | `netscope monitor [--interval S] [--rounds N]` | Continuous rounds with sustained-problem incident detection |
 | `netscope speed [--url URL] [--seconds S]` | Download throughput: median Mbps, peak sample, bytes moved (v0.3) |
 | `netscope report [--days N] [--target T] [--out FILE] [--html FILE]` | Export the log as a self-contained evidence report — markdown, or a dark HTML page with inline SVG trends (v0.5; HTML v0.10) |
@@ -201,6 +202,18 @@ Every successful measurement feeds a per-target Welford tracker (mean + variance
 netscope history   # watch the baseline mature round over round
 ```
 
+### The drift watch: is "usual" getting worse? (v0.15)
+
+The baseline is a trailing average of the measurements it judges — so a line that quietly rots never trips a threshold: every new sweep reads "excellent" against a baseline that rots with it. The drift watch is the complementary lens and needs no baseline at all: it compares the target's **recent history window against the same-length window before it**, vital by vital (latency, loss, jitter, throughput), each with its own verdict and a report-level one that answers exactly one question — *is usual getting worse?*
+
+```bash
+netscope drift example.com          # last 7 days vs. the 7 before them
+netscope drift example.com --days 3 # a shorter, more recent pair
+netscope drift example.com --json   # the full windowed payload for machines
+```
+
+Median latency 23 ms last week and 31 ms this week is degradation **no single check ever flagged** — the drift watch is the lens that says so, with the numbers cited in its evidence lines.
+
 ### Monitoring with honest incident detection
 
 ```bash
@@ -243,7 +256,7 @@ Deep-dive documents live in [`docs/architecture/`](docs/architecture): architect
 
 ```bash
 make install    # editable install + dev tools
-make test       # 941 tests, fully offline (fake probes, no network needed)
+make test       # 970 tests, fully offline (fake probes, no network needed)
 make lint       # ruff check + format check
 make typecheck  # mypy on the package
 ```

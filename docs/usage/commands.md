@@ -118,6 +118,51 @@ once two rounds carry a score.
 | `--limit N` | maximum rounds to show (default: 20) |
 | `--json` | machine-readable output |
 
+## `netscope drift <target>` (v0.15)
+
+The **drift watch** — the slow leak no single check can flag. Every other
+judgment NetScope makes compares one moment against the learned baseline, and
+the baseline itself is a trailing average of the measurements it judges: a line
+that quietly rots never trips a threshold, because every new sweep reads
+"excellent" against a baseline that rots with it. The drift watch needs no
+baseline at all: it splits the target's stored history into the recent window
+and the same-length window before it, and compares them vital by vital —
+latency (median), packet loss (mean), jitter (median), download throughput
+(median) — each with a verdict: `stable`, `degrading`, `improving`, or
+`insufficient_history` (fewer than five usable readings per window — the same
+maturity rule the baseline itself demands).
+
+The overall verdict answers one question: **is usual getting worse?**
+Degradation outranks improvement; a vital that never saw a probe renders as
+`no data` in the table and discloses its empty coverage in `--json` instead of
+being hidden.
+
+| Flag | Meaning |
+|---|---|
+| `target` | hostname or IP whose stored history to watch |
+| `--days N` | recent window length in days; the comparison window is the same length before it (default: 7) |
+| `--json` | machine-readable output: window boundaries, per-vital statistics, sample counts, signed changes, verdicts and every evidence sentence |
+
+```console
+$ netscope drift example.com
+Drift watch: example.com  older window 2026-11-02 -> 2026-11-09 |
+recent window 2026-11-09 -> 2026-11-16
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Vital               ┃ Older (7d) ┃ Recent (7d) ┃         Change ┃ Verdict   ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ Latency (median)    │     20.0ms │      30.0ms │ +10.0ms (+50%) │ degrading │
+│ Packet loss (mean)  │      0.0pp │       0.0pp │         +0.0pp │ stable    │
+│ Jitter (median)     │      2.0ms │       2.0ms │  +0.0ms (+0%)  │ stable    │
+│ Throughput (median) │         -- │          -- │             -- │ no data   │
+└─────────────────────┴────────────┴─────────────┴────────────────┴───────────┘
+Overall: degrading
+  median latency 20.0ms -> 30.0ms (+50%) across the two windows -- the recent
+  window is consistently worse than the one before it
+```
+
+The watch reads what the log has: run `netscope check <target>` (and
+`netscope speed` for the throughput vital) regularly and both windows fill.
+
 ## `netscope report`
 
 Export a self-contained **evidence report** built from the persisted

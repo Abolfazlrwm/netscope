@@ -6,6 +6,71 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-11-16
+
+The drift watch: NetScope finally watches the TREND. Every judgment the
+tool made until now compares a single sweep against the learned
+baseline -- and that design has one structural blind spot: the baseline
+is a trailing average of the very measurements it judges. If the line
+quietly rots -- an ISP's peering degrading week over week, an aging
+router, a resolver that decays by a millisecond a day -- every
+individual sweep still reads "excellent", because the baseline rots
+with it. No threshold ever fires. Nothing was watching the slow leak.
+v0.15 adds the complementary lens and it needs no baseline at all: the
+stored measurement log is split into two adjacent same-length windows,
+each vital is aggregated per window with a robust statistic, and the
+windows are compared against each other (`adr-014`).
+
+### Added
+
+- **`netscope drift <target> [--days N]`** (`core/drift.py`,
+  `app/use_cases.py`, `ui/cli.py`): the recent window (default 7 days)
+  against the same-length window before it, four vitals side by side --
+  latency, packet loss, jitter (the three baseline-relative pillars)
+  and download throughput -- each with its own window statistic, its
+  own change and a verdict: stable / degrading / improving / not
+  enough data, plus the report-level verdict and the evidence
+  sentences that cite their numbers.
+- **Median for latency, jitter and throughput; mean for loss** -- the
+  one deliberate asymmetry: a window is a population of sweeps and a
+  few congested sweeps must not move it (the same robustness the speed
+  command's own "median Mbps" convention chose), while loss readings
+  are almost always 0.0 with spikes -- a median would read 0.0 for
+  every window ever, so the mean carries "how often it actually
+  dropped".
+- **Thresholds borrowed, none invented twice**: a window with fewer
+  than 5 usable readings has no opinion -- the exact maturity
+  `MetricBaseline.deviation_sigma()` demands and scoring/diagnosis
+  reuse; the throughput band is `THROUGHPUT_VERDICT_BAND_PCT` (15%),
+  the same percentage at which a speed test is already called
+  slower/faster than usual; latency and jitter need BOTH a relative
+  and an absolute move (25% & 5ms, 30% & 1.5ms) because a purely
+  relative rule cries wolf on small medians; loss is purely absolute
+  (2 percentage points) because relative change from a 0.2% floor is
+  meaningless.
+- **Degradation outranks improvement in the overall verdict** -- a
+  watch that averaged a leaking latency against a healing jitter into
+  "stable" would have missed its own point.
+- **`--json` payload** with the canonical shape: window boundaries
+  (inclusive both ends, the repository's own semantics), per-vital
+  statistics, sample counts (coverage is evidence too), signed changes,
+  the machine verdict words and every evidence sentence.
+- **The `until`-clock fix this release surfaced**: the three
+  `run_report_command` tests seeded fixed-date rows but relied on
+  wall-clock coincidence -- nine days after the release that seeded
+  them, the rows aged out of the default 7-day window and the tests
+  started failing. `run_report_command` now passes through
+  `build_evidence_report`'s own injectable `until`, and the tests pin
+  the clock the same way the use-case tests always have: seed dates
+  and window end must age TOGETHER.
+
+### Notes
+
+- 970 tests in the suite, 968 passing outright and 2 skipped in CI (the
+  opt-in `maxminddb` crosscheck; 29 new across drift/use-case/CLI),
+  ruff clean, mypy clean. Zero new dependencies -- the seventh release
+  in a row (decision record: `docs/architecture/adr-014-drift-watch.md`).
+
 ## [0.14.0] — 2026-11-13
 
 The "whose road is it" release: ownership enrichment completes the
