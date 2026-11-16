@@ -29,6 +29,11 @@ COMMANDS (v0.2)
     database exists at ~/.netscope/ipasn.dat) AS numbers per hop.
 - `netscope history [--limit N] [--json]`
     Recent measurement rounds reconstructed from the local log.
+- `netscope drift <target> [--days N] [--json]` (v0.15)
+    The drift watch: the target's two most recent same-length history
+    windows compared vital by vital (latency, loss, jitter, throughput)
+    -- the slow leak no single check can flag, because the baseline it
+    is judged against rots with the line it watches.
 - `netscope monitor [--interval S] [--rounds N] [--gateway ...]`
     Continuous rounds with evidence-based incident detection: an
     incident only OPENS after a diagnosis is sustained for 3+ rounds
@@ -79,6 +84,7 @@ from netscope.app.use_cases import (
     list_services,
     recent_rounds,
     remove_service,
+    run_drift_analysis,
     run_measurement_round,
     run_route_analysis,
     run_speed_test,
@@ -190,6 +196,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     history.add_argument("--limit", type=int, default=20, help="maximum number of rounds to show (default: 20)")
     history.add_argument("--json", action="store_true", help="output machine-readable JSON instead of styled text")
+
+    drift = subparsers.add_parser(
+        "drift",
+        help="compare the target's recent history window against the one before it, vital by vital",
+        parents=[global_options],
+    )
+    drift.add_argument("target", help="hostname or IP whose stored history to watch")
+    drift.add_argument(
+        "--days",
+        type=int,
+        default=7,
+        help="recent window length in days; the comparison window is the same length before it (default: 7)",
+    )
+    drift.add_argument("--json", action="store_true", help="output machine-readable JSON instead of styled text")
 
     monitor = subparsers.add_parser(
         "monitor",
@@ -651,6 +671,143 @@ def run_history_command(container: Container, *, limit: int = 20, json_output: b
 
 
 # ---------------------------------------------------------------------------
+# drift
+# ---------------------------------------------------------------------------
+
+
+# Per-vital display metadata, keyed by the core verdict's vital name:
+# the human label (with the window statistic named -- median vs mean is
+# part of the honest story) and the unit each number wears. Presentation
+# only -- the values and verdicts come from core untouched.
+_DRIFT_VITAL_LABELS = {
+    "latency": ("Latency (median)", "ms"),
+    "packet_loss": ("Packet loss (mean)", "pp"),
+    "jitter": ("Jitter (median)", "ms"),
+    "throughput": ("Throughput (median)", "Mbps"),
+}
+
+_DRIFT_VERDICT_STYLES = {
+    "degrading": "bold red",
+    "improving": "green",
+    "stable": "cyan",
+    "insufficient_history": "dim",
+}
+
+# The table is the human rendering, so the machine verdict words get
+# human words where the machine's word is not already a sentence
+# ("degrading" reads fine; "insufficient_history" is JSON vocabulary).
+# The JSON payload keeps the canonical words untouched. The label stays
+# short enough for the narrowest verdict column it renders in -- a
+# wrapped verdict cell would smear the table's borders across the
+# collapse of two rows.
+_DRIFT_VERDICT_LABELS = {
+    "degrading": "degrading",
+    "improving": "improving",
+    "stable": "stable",
+    "insufficient_history": "no data",
+}
+
+
+def _format_drift_change(vital: str, change_abs: float | None, change_pct: float | None) -> str:
+    """The Change cell: the absolute move in the vital's own unit plus
+    the relative one; loss speaks in percentage points only -- a ratio
+    from a 0.2% floor is the meaningless number core/drift.py refuses
+    to make a signal, and the table must not dress it up as one. An
+    unmeasurable change (either half absent) renders as an em dash --
+    absence disclosed, not zero claimed."""
+    if change_abs is None:
+        return "--"
+    unit = _DRIFT_VITAL_LABELS[vital][1]
+    absolute = f"{change_abs:+.1f}{unit}"
+    if change_pct is None or vital == "packet_loss":
+        return absolute
+    return f"{absolute} ({change_pct:+.0f}%)"
+
+
+def run_drift_command(container: Container, target: str, *, days: int = 7, json_output: bool = False) -> int:
+    """Runs the `drift` command: the target's two history windows
+    compared via the `run_drift_analysis` use case (never window math
+    re-derived here), then presentation.
+
+    The exit code is always `0` when the analysis ran: an insufficient
+    verdict is an honest finding about coverage, not a failed command --
+    the same convention `history` sets for an empty log."""
+    report = run_drift_analysis(target, container, recent_days=days)
+
+    if json_output:
+        payload = {
+            "tool": "netscope",
+            "report": "drift",
+            "target": target,
+            "recent_days": report.recent_days,
+            "window": {
+                "start": report.window_start.isoformat(),
+                "boundary": report.boundary.isoformat(),
+                "end": report.end.isoformat(),
+            },
+            "overall": report.overall,
+            "vitals": [
+                {
+                    "vital": v.vital,
+                    "verdict": v.verdict,
+                    "older": v.older_stat,
+                    "recent": v.recent_stat,
+                    "change_abs": v.change_abs,
+                    "change_pct": v.change_pct,
+                    "older_samples": v.older_samples,
+                    "recent_samples": v.recent_samples,
+                    "detail": v.detail,
+                }
+                for v in report.vitals
+            ],
+            "evidence": list(report.evidence),
+        }
+        console().print_json(json.dumps(payload))
+        return 0
+
+    c = console()
+    total_samples = sum(v.older_samples + v.recent_samples for v in report.vitals)
+    c.print()
+    if total_samples == 0:
+        c.print(
+            f"No stored history for [bold]{target}[/bold] in the last {2 * days} days -- "
+            f"run [bold]netscope check {target}[/bold] regularly; the watch needs two windows of stored rounds."
+        )
+        c.print()
+        return 0
+
+    c.print(
+        f"[bold]Drift watch: {target}[/bold]  [dim]"
+        f"older window {report.window_start:%Y-%m-%d %H:%M} -> {report.boundary:%Y-%m-%d %H:%M} | "
+        f"recent window {report.boundary:%Y-%m-%d %H:%M} -> {report.end:%Y-%m-%d %H:%M}[/dim]"
+    )
+
+    table = Table(title=None, show_header=True, header_style="bold cyan", expand=True)
+    table.add_column("Vital", no_wrap=True)
+    table.add_column(f"Older ({days}d)", justify="right")
+    table.add_column(f"Recent ({days}d)", justify="right")
+    table.add_column("Change", justify="right")
+    table.add_column("Verdict")
+    for v in report.vitals:
+        label, unit = _DRIFT_VITAL_LABELS[v.vital]
+        style = _DRIFT_VERDICT_STYLES[v.verdict]
+        older = "--" if v.older_stat is None else f"{v.older_stat:.1f}{unit}"
+        recent = "--" if v.recent_stat is None else f"{v.recent_stat:.1f}{unit}"
+        verdict_label = _DRIFT_VERDICT_LABELS[v.verdict]
+        table.add_row(label, older, recent, _format_drift_change(v.vital, v.change_abs, v.change_pct), f"[{style}]{verdict_label}[/]")
+    c.print(table)
+
+    overall_style = _DRIFT_VERDICT_STYLES[report.overall]
+    overall_label = _DRIFT_VERDICT_LABELS[report.overall]
+    c.print(f"Overall: [{overall_style}]{overall_label}[/]")
+    for sentence in report.evidence:
+        c.print(f"  [dim]{sentence}[/dim]")
+    c.print("  [dim]windows are inclusive on both ends; readings outside them are ignored -- --json carries every sample count[/dim]")
+    c.print()
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # report
 # ---------------------------------------------------------------------------
 
@@ -918,6 +1075,8 @@ def main() -> None:
         )
     elif command == "history":
         exit_code = run_history_command(container, limit=args.limit, json_output=args.json)
+    elif command == "drift":
+        exit_code = run_drift_command(container, args.target, days=args.days, json_output=args.json)
     elif command == "report":
         exit_code = run_report_command(container, days=args.days, target=args.target, out=args.out, html_out=args.html, json_output=args.json)
     elif command == "monitor":

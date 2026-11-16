@@ -73,6 +73,20 @@ maximum number of rounds to show (default: 20)
 .TP
 .B \-\-json
 output machine\-readable JSON instead of styled text
+.SS drift
+compare the target's recent history window against the one before it, vital by vital
+.P
+\fBnetscope drift\fR \fITARGET\fR [\-v] [\-\-days \fIDAYS\fR] [\-\-json]
+.P
+.TP
+.B \-\-verbose, \-v
+enable verbose (INFO\-level) logging
+.TP
+.B \-\-days \fIDAYS\fR
+recent window length in days; the comparison window is the same length before it (default: 7)
+.TP
+.B \-\-json
+output machine\-readable JSON instead of styled text
 .SS monitor
 run continuous measurement rounds with incident detection (Ctrl+C to stop)
 .P

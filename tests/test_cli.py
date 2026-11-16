@@ -40,6 +40,7 @@ from netscope.ui.cli import (
     build_arg_parser,
     run_check_command,
     run_diagnose_command,
+    run_drift_command,
     run_history_command,
     run_route_command,
     run_service_add_command,
@@ -1076,3 +1077,180 @@ def test_history_command_stays_quiet_without_a_trend(capsys):
     assert exit_code == 0
     assert "score trend" not in capsys.readouterr().out
     repo.close()
+
+
+# ---------------------------------------------------------------------------
+# drift (v0.15) -- the trend lens over the stored log. The verdicts and
+# window math live in core/drift.py behind run_drift_analysis; these
+# tests pin the command wiring, the canonical JSON shape and the honest
+# coverage messages.
+# ---------------------------------------------------------------------------
+
+_DRIFT_NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
+
+
+def _seed_drift_history(repo: MeasurementRepository, *, older_latency: float, recent_latency: float) -> None:
+    """Six sweeps in each window: enough for the watch's 5-per-window
+    maturity rule, far enough apart to sit in separate 7-day windows."""
+    for i in range(6):
+        repo.save(
+            RawMeasurement(
+                probe_type=ProbeType.ICMP,
+                target="example.com",
+                timestamp=_DRIFT_NOW - timedelta(days=10, minutes=i),
+                success=True,
+                latency_ms=older_latency,
+                packet_loss_pct=0.0,
+                jitter_ms=2.0,
+            )
+        )
+    for i in range(6):
+        repo.save(
+            RawMeasurement(
+                probe_type=ProbeType.ICMP,
+                target="example.com",
+                timestamp=_DRIFT_NOW - timedelta(days=2, minutes=i),
+                success=True,
+                latency_ms=recent_latency,
+                packet_loss_pct=0.0,
+                jitter_ms=2.0,
+            )
+        )
+
+
+def test_argparser_has_the_drift_arguments():
+    args = build_arg_parser().parse_args(["drift", "example.com", "--days", "3", "--json"])
+    assert args.command == "drift"
+    assert args.target == "example.com"
+    assert args.days == 3
+    assert args.json is True
+
+    default_args = build_arg_parser().parse_args(["drift", "example.com"])
+    assert default_args.days == 7
+    assert default_args.json is False
+
+
+def test_drift_command_renders_the_verdict_and_evidence(capsys):
+    """A line that quietly rotted 20ms -> 30ms: the table names the
+    verdict, the evidence cites the numbers, and no verdict is
+    fabricated for windows that never saw a probe."""
+    repo = MeasurementRepository.open(":memory:")
+    _seed_drift_history(repo, older_latency=20.0, recent_latency=30.0)
+    container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+    try:
+        exit_code = run_drift_command(container, "example.com")
+    finally:
+        repo.close()
+
+    assert exit_code == 0
+    captured = " ".join(capsys.readouterr().out.split())
+    assert "Drift watch: example.com" in captured
+    assert "Overall: degrading" in captured
+    assert "median latency 20.0ms -> 30.0ms" in captured
+    # no bandwidth sweeps ever ran: the throughput row renders the
+    # human verdict ("no data" -- the machine word insufficient_history
+    # and its reason sentence live in the JSON payload)
+    assert "no data" in captured
+
+
+def test_drift_command_loss_change_speaks_in_points_not_ratios(capsys):
+    """The loss row's Change cell carries percentage POINTS only -- the
+    table must not dress a ratio from a near-zero floor up as signal."""
+    repo = MeasurementRepository.open(":memory:")
+    for i in range(6):
+        repo.save(
+            RawMeasurement(
+                probe_type=ProbeType.ICMP,
+                target="example.com",
+                timestamp=_DRIFT_NOW - timedelta(days=10, minutes=i),
+                success=True,
+                latency_ms=20.0,
+                packet_loss_pct=0.2,
+                jitter_ms=2.0,
+            )
+        )
+    for i in range(6):
+        repo.save(
+            RawMeasurement(
+                probe_type=ProbeType.ICMP,
+                target="example.com",
+                timestamp=_DRIFT_NOW - timedelta(days=2, minutes=i),
+                success=True,
+                latency_ms=20.0,
+                packet_loss_pct=3.0,
+                jitter_ms=2.0,
+            )
+        )
+    container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+    try:
+        run_drift_command(container, "example.com")
+    finally:
+        repo.close()
+
+    captured = " ".join(capsys.readouterr().out.split())
+    assert "+2.8pp" in captured
+    assert "+1400%" not in captured  # the ratio exists in the JSON payload, never in the human table
+
+
+def test_drift_command_json_carries_the_canonical_shape(capsys):
+    import json as _json
+
+    repo = MeasurementRepository.open(":memory:")
+    _seed_drift_history(repo, older_latency=20.0, recent_latency=30.0)
+    container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+    try:
+        exit_code = run_drift_command(container, "example.com", json_output=True)
+    finally:
+        repo.close()
+
+    assert exit_code == 0
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["tool"] == "netscope"
+    assert payload["report"] == "drift"
+    assert payload["target"] == "example.com"
+    assert payload["recent_days"] == 7
+    # the CLI's window ends at the real clock (no flag sets it); the
+    # two windows' LENGTHS and adjacency are the invariant to pin
+    window = payload["window"]
+    end = datetime.fromisoformat(window["end"])
+    boundary = datetime.fromisoformat(window["boundary"])
+    start = datetime.fromisoformat(window["start"])
+    assert end - boundary == timedelta(days=7)
+    assert boundary - start == timedelta(days=7)
+    assert payload["overall"] == "degrading"
+    assert [v["vital"] for v in payload["vitals"]] == ["latency", "packet_loss", "jitter", "throughput"]
+    latency = payload["vitals"][0]
+    assert latency["verdict"] == "degrading"
+    assert latency["older_samples"] == 6
+    assert latency["recent_samples"] == 6
+    assert latency["change_pct"] == pytest.approx(50.0)
+    assert any("median latency" in e for e in payload["evidence"])
+
+
+def test_drift_command_no_history_message(capsys):
+    """An empty log is not a failure: the honest coverage sentence and
+    the check-command hint, exit code 0."""
+    repo = MeasurementRepository.open(":memory:")
+    container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+    try:
+        exit_code = run_drift_command(container, "example.com")
+    finally:
+        repo.close()
+
+    assert exit_code == 0
+    captured = " ".join(capsys.readouterr().out.split())
+    assert "No stored history for example.com" in captured
+    assert "netscope check example.com" in captured
+
+
+def test_drift_command_does_not_reimplement_drift():
+    """Static guard: the verdicts and window math must come from
+    core.drift.analyze_drift (reached via the run_drift_analysis use
+    case) -- never re-derived here from medians or windows computed
+    inline."""
+    import inspect
+
+    source = inspect.getsource(run_drift_command)
+    assert "run_drift_analysis(" in source
+    assert "analyze_drift(" not in source  # it lives in the use case, called exactly once there
+    assert "median(" not in source  # the window statistics are core's, not the presentation's

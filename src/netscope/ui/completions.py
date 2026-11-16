@@ -14,9 +14,9 @@ script to the real CLI surface: every command name and every option of
 build_arg_parser() must appear in each script, and a future flag without
 a completion fails the build instead of shipping half-finished tabs.
 
-The scripts know the full v0.11 surface:
+The scripts know the full v0.15 surface:
 
-- diagnose check route history monitor speed report service completions tui
+- diagnose check route history drift monitor speed report service completions tui
 - the `service` sub-subcommands (add / list / remove / check)
 - every per-command option, `--version`, and the five --checks values
 """
@@ -64,7 +64,7 @@ _netscope() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     cmd="${COMP_WORDS[1]}"
 
-    local commands="diagnose check route history monitor speed report service completions tui"
+    local commands="diagnose check route history drift monitor speed report service completions tui"
     local service_commands="add list remove check"
     local checks="icmp dns tcp tls http"
 
@@ -106,6 +106,7 @@ _netscope() {
             check)       opts="--checks --json --verbose" ;;
             route)       opts="--no-resolve --json --verbose" ;;
             history)     opts="--limit --json --verbose" ;;
+            drift)       opts="--days --json --verbose" ;;
             monitor)     opts="--interval --rounds --gateway --verbose" ;;
             speed)       opts="--url --seconds --json --verbose" ;;
             report)      opts="--days --target --out --html --json --verbose" ;;
@@ -141,6 +142,7 @@ _netscope() {
         'check:probe one target with any subset of the service checks'
         'route:trace the route to a target and report route stability'
         'history:show recent measurement rounds from the local log'
+        'drift:compare the target\'s recent history window against the one before it'
         'monitor:run continuous measurement rounds with incident detection'
         'speed:measure download throughput (median Mbps over a sampling window)'
         'report:export a self-contained evidence report from the measurement log'
@@ -184,6 +186,13 @@ _netscope() {
                 history)
                     _arguments \\
                         '--limit[maximum number of rounds to show]:limit:' \\
+                        '--json[output machine-readable JSON instead of styled text]' \\
+                        '(-v --verbose)'{-v,--verbose}'[enable verbose (INFO-level) logging]'
+                    ;;
+                drift)
+                    _arguments \\
+                        '1:target:_host' \\
+                        '--days[recent window length in days]:days:' \\
                         '--json[output machine-readable JSON instead of styled text]' \\
                         '(-v --verbose)'{-v,--verbose}'[enable verbose (INFO-level) logging]'
                     ;;
@@ -277,6 +286,7 @@ complete -c netscope -n "__fish_use_subcommand" -a "diagnose" -d "run a diagnost
 complete -c netscope -n "__fish_use_subcommand" -a "check" -d "probe one target with any subset of the service checks"
 complete -c netscope -n "__fish_use_subcommand" -a "route" -d "trace the route to a target and report route stability"
 complete -c netscope -n "__fish_use_subcommand" -a "history" -d "show recent measurement rounds from the local log"
+complete -c netscope -n "__fish_use_subcommand" -a "drift" -d "compare the target's recent history window against the one before it"
 complete -c netscope -n "__fish_use_subcommand" -a "monitor" -d "run continuous measurement rounds with incident detection"
 complete -c netscope -n "__fish_use_subcommand" -a "speed" -d "measure download throughput (median Mbps over a sampling window)"
 complete -c netscope -n "__fish_use_subcommand" -a "report" -d "export a self-contained evidence report from the measurement log"
@@ -302,6 +312,8 @@ complete -c netscope -n "__fish_seen_subcommand_from route" -l no-resolve -d "sk
 complete -c netscope -n "__fish_seen_subcommand_from route" -l json -d "output machine-readable JSON instead of styled text"
 complete -c netscope -n "__fish_seen_subcommand_from history" -l limit -d "maximum number of rounds to show" -x
 complete -c netscope -n "__fish_seen_subcommand_from history" -l json -d "output machine-readable JSON instead of styled text"
+complete -c netscope -n "__fish_seen_subcommand_from drift" -l days -d "recent window length in days" -x
+complete -c netscope -n "__fish_seen_subcommand_from drift" -l json -d "output machine-readable JSON instead of styled text"
 complete -c netscope -n "__fish_seen_subcommand_from monitor" -l interval -d "seconds between rounds" -x
 complete -c netscope -n "__fish_seen_subcommand_from monitor" -l rounds -d "number of rounds before stopping" -x
 complete -c netscope -n "__fish_seen_subcommand_from monitor" -l gateway -d "gateway to probe: an IP, auto or none" -x
