@@ -56,11 +56,20 @@ def _container(repo: MeasurementRepository | None = None) -> Container:
     )
 
 
-def _seed_two_rounds(repo: MeasurementRepository) -> None:
+def _seed_two_rounds(repo: MeasurementRepository, until: datetime = UNTIL) -> None:
     """Two diagnose-shaped rounds one hour apart: 3 checks each, one
     dns failure in the second round, plus one bandwidth run carrying a
-    v0.4 verdict."""
-    base = UNTIL - timedelta(days=1)
+    v0.4 verdict.
+
+    All seed timestamps derive from `until`, never from wall-clock now.
+    The use-case tests pin `until=UNTIL` on `build_evidence_report`, but
+    the CLI wiring tests below cannot pin a clock (`run_report_command`
+    calls the use case with `until=None`, which means `utcnow()`) -- so
+    they pass `until=datetime.now(UTC)` here. Seeds relative to the same
+    reference the command will use keep the suite date-immune instead of
+    quietly falling out of the 7-day window one week after authoring.
+    """
+    base = until - timedelta(days=1)
     first = [
         _m(timestamp=base, latency_ms=10.0),
         _m(probe_type=ProbeType.DNS, target="dns.example", timestamp=base + timedelta(seconds=2), latency_ms=8.0),
@@ -315,7 +324,7 @@ def test_argparser_has_the_report_arguments():
 
 def test_report_command_stdout(capsys):
     repo = _repo()
-    _seed_two_rounds(repo)
+    _seed_two_rounds(repo, until=datetime.now(UTC))
     code = run_report_command(_container(repo), days=7)
     assert code == 0
     out = capsys.readouterr().out
@@ -325,7 +334,7 @@ def test_report_command_stdout(capsys):
 
 def test_report_command_writes_a_utf8_file(tmp_path, capsys):
     repo = _repo()
-    _seed_two_rounds(repo)
+    _seed_two_rounds(repo, until=datetime.now(UTC))
     out_file = tmp_path / "evidence.md"
     code = run_report_command(_container(repo), days=7, out=str(out_file))
     assert code == 0
@@ -339,7 +348,7 @@ def test_report_command_writes_a_utf8_file(tmp_path, capsys):
 
 def test_report_command_json_output(capsys):
     repo = _repo()
-    _seed_two_rounds(repo)
+    _seed_two_rounds(repo, until=datetime.now(UTC))
     code = run_report_command(_container(repo), days=7, json_output=True)
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -476,7 +485,7 @@ def test_argparser_has_the_html_report_argument():
 
 def test_report_command_writes_the_html_file(tmp_path, capsys):
     repo = _repo()
-    _seed_two_rounds(repo)
+    _seed_two_rounds(repo, until=datetime.now(UTC))
     out_path = tmp_path / "report.html"
 
     exit_code = run_report_command(_container(repo), days=7, html_out=str(out_path))
@@ -490,7 +499,7 @@ def test_report_command_writes_the_html_file(tmp_path, capsys):
 
 def test_report_command_html_and_markdown_can_coexist(tmp_path, capsys):
     repo = _repo()
-    _seed_two_rounds(repo)
+    _seed_two_rounds(repo, until=datetime.now(UTC))
     md_path = tmp_path / "report.md"
     html_path = tmp_path / "report.html"
 
@@ -503,7 +512,7 @@ def test_report_command_html_and_markdown_can_coexist(tmp_path, capsys):
 
 def test_report_command_json_output_ignores_html(tmp_path, capsys):
     repo = _repo()
-    _seed_two_rounds(repo)
+    _seed_two_rounds(repo, until=datetime.now(UTC))
     html_path = tmp_path / "report.html"
 
     exit_code = run_report_command(_container(repo), days=7, html_out=str(html_path), json_output=True)
