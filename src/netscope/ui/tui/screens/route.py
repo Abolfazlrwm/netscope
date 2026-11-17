@@ -5,7 +5,10 @@ The route screen (TASK-043): traceroute with the same enrichment the
 CLI's `route` command shows -- reverse-DNS hostnames per hop (when a
 resolver is wired), AS numbers per hop (when the offline ASN database
 exists), and the churn verdict over the snapshots NetScope has for the
-target.
+target. Since v0.16 the hops table carries the SAME network wording
+the CLI's shared route table does -- the operating organization's
+name after the AS number, and the hop's country -- the TUI is no
+longer the one surface where a hop loses its ownership and its place.
 
 WHY IT WORKS THIS WAY
 ---------------------
@@ -40,6 +43,7 @@ from netscope.app.use_cases import RouteAnalysisResult, run_route_analysis
 from netscope.ui.render import route_stability_summary
 
 if TYPE_CHECKING:
+    from netscope.core.models import RouteHop
     from netscope.ui.tui.app import NetScopeTUI
 
 
@@ -93,7 +97,7 @@ class RouteScreen(Screen):
 
     def on_mount(self) -> None:
         table = self.query_one("#hops_table", DataTable)
-        table.add_columns("TTL", "Host", "Address", "ASN", "Loss", "Avg RTT")
+        table.add_columns("TTL", "Host", "Address", "Network", "Country", "Loss", "Avg RTT")
         shell = cast("NetScopeTUI", self.app)
         default = shell.config.public_dns_target
         target_input = self.query_one("#target_input", Input)
@@ -155,7 +159,8 @@ class RouteScreen(Screen):
                 ttl_cell,
                 host,
                 address,
-                hop.asn or "—",
+                self._network_cell(hop),
+                hop.country or "—",
                 f"{hop.packet_loss_pct:.0f}%",
                 f"{hop.avg_rtt_ms:.1f} ms" if hop.avg_rtt_ms is not None else "—",
             )
@@ -169,3 +174,16 @@ class RouteScreen(Screen):
         if churn is not None:
             churn_line = f" · {route_stability_summary(churn, result.prior_runs, compact=True)}"
         status.update(f"[green]✓[/] route to [bold]{target}[/] · {table.row_count} hops{churn_line} · [dim]enter: trace a target · r: re-trace[/]")
+
+    def _network_cell(self, hop: RouteHop) -> str:
+        """One hop's ownership cell, the SAME wording the CLI's shared
+        route table renders (v0.16): the AS number, the operating
+        organization's name after it when the ownership source can
+        name one -- a number-only source answers bare, never with a
+        placeholder name. Reading RouteHop's lookup-ready fields is
+        all this cell does; no lookup ever happens here."""
+        if not hop.asn:
+            return "[dim]—[/]"
+        if hop.organization:
+            return f"[magenta]{hop.asn}[/] [dim]{hop.organization}[/]"
+        return f"[magenta]{hop.asn}[/]"

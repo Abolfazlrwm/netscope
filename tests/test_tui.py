@@ -775,3 +775,44 @@ async def test_tui_checks_table_shows_where_the_target_lives():
         # the reports and --json carry the name; the table keeps the
         # number that fits a glance
         assert "Cloudflare" not in where
+
+
+async def test_route_screen_names_the_network_and_the_country():
+    """v0.16: the route screen's hops table carries the SAME ownership
+    wording the CLI's shared route table renders -- organization after
+    the AS number when the source can name one, bare number when it
+    cannot, and the hop's country -- so a hop no longer loses its
+    ownership and its place by moving from the CLI to the TUI."""
+    hops = [
+        RouteHop(ttl=1, address="192.168.1.1", hostname="fritz.box", avg_rtt_ms=2.1, packet_loss_pct=0.0),
+        RouteHop(
+            ttl=2,
+            address="81.19.104.1",
+            hostname=None,
+            avg_rtt_ms=9.8,
+            packet_loss_pct=0.0,
+            asn="AS6830",
+            organization="Turkcell Superonline",
+            country="Türkiye",
+        ),
+        RouteHop(ttl=3, address="104.16.1.1", hostname=None, avg_rtt_ms=None, packet_loss_pct=100.0, asn="AS13335"),
+    ]
+    app = _route_app(hops=hops, error=None)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.press("p")
+        await _wait_active(pilot, app, RouteScreen)
+        screen = app.screen
+        await _wait_for(lambda: screen.query_one("#hops_table").row_count == 3, pilot)
+        table = screen.query_one("#hops_table")
+        labels = [str(c.label) for c in table.columns.values()]
+        assert labels == ["TTL", "Host", "Address", "Network", "Country", "Loss", "Avg RTT"]
+        gateway_row = table.get_row_at(0)
+        assert "—" in str(gateway_row[3])  # a private hop is owned by nobody in the database
+        assert str(gateway_row[4]) == "—"
+        named_row = table.get_row_at(1)
+        assert "AS6830" in str(named_row[3]) and "Turkcell Superonline" in str(named_row[3])
+        assert str(named_row[4]) == "Türkiye"
+        bare_row = table.get_row_at(2)
+        bare_network = str(bare_row[3])
+        assert "AS13335" in bare_network
+        assert "—" not in bare_network  # a number-only source answers bare, never a dash or a placeholder name
