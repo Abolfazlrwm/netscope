@@ -119,6 +119,8 @@ class _FakeRepo:
 
 textual = pytest.importorskip("textual")
 
+from netscope.core.asn import AsnInfo  # noqa: E402
+from netscope.core.geo import GeoInfo, Place  # noqa: E402
 from netscope.persistence.service_repository import ServiceRepository  # noqa: E402
 from netscope.ui.cli import run_tui_command  # noqa: E402
 from netscope.ui.tui.app import NetScopeTUI  # noqa: E402 -- after importorskip
@@ -816,3 +818,103 @@ async def test_route_screen_names_the_network_and_the_country():
         bare_network = str(bare_row[3])
         assert "AS13335" in bare_network
         assert "—" not in bare_network  # a number-only source answers bare, never a dash or a placeholder name
+
+
+class _FakeGeoLookup:
+    """GeoLookup double: answers one canned GeoInfo for any IP."""
+
+    def __init__(self, info: GeoInfo):
+        self.info = info
+
+    def lookup(self, ip: str) -> GeoInfo | None:
+        return self.info
+
+
+class _FakeAsnLookup:
+    """AsnLookup double: answers one canned AsnInfo for any IP."""
+
+    def __init__(self, info: AsnInfo):
+        self.info = info
+
+    def lookup(self, ip: str) -> AsnInfo | None:
+        return self.info
+
+
+def _net_app(container: Container, config: NetScopeConfig | None = None) -> NetScopeTUI:
+    return NetScopeTUI(
+        container=container,
+        config=config if config is not None else NetScopeConfig(),
+        interval=3600.0,
+        round_fn=_fake_round_fn([_healthy_round()]),
+    )
+
+
+async def test_network_screen_answers_where_am_i_and_whose_road():
+    """v0.16: the network screen's "your line" block answers the
+    question the CLI answered since v0.12/v0.14 and the TUI never did
+    -- the user's own IP looked up in the same databases, rendered
+    with the same shared summaries, database-age disclosures included."""
+    snapshot = NetworkSnapshot(
+        timestamp=utcnow(),
+        interfaces=[NetworkInterface(name="eth0", is_up=True, addresses=["192.168.1.10"])],
+    )
+    container = _fake_container(discovery=_FakeDiscovery(snapshot))
+    container.geo_lookup = _FakeGeoLookup(
+        GeoInfo(
+            ip_address="5.202.100.1",
+            place=Place(country="Iran", city="Tehran", latitude=35.7, longitude=51.4),
+            db_type="GeoLite2-City",
+            db_age_days=9,
+        )
+    )
+    container.asn_lookup = _FakeAsnLookup(AsnInfo(ip_address="5.202.100.1", asn=58224, organization="TIC", db_type="GeoLite2-ASN", db_age_days=9))
+    app = _net_app(container, NetScopeConfig(home_ip="5.202.100.1"))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("n")
+        await _wait_active(pilot, app, NetworkScreen)
+        screen = app.screen
+        await _wait_for(lambda: "Your line" in str(screen.query_one("#context_card").render()), pilot)
+        text = str(screen.query_one("#context_card").render())
+        assert "5.202.100.1" in text
+        assert "Tehran, Iran" in text
+        assert "AS58224" in text
+        assert "TIC" in text
+        assert "db 9d old" in text  # the EULA's aging notice travels with the fact
+        assert "gateway:" in text  # the discovery context block is still there
+
+
+async def test_network_screen_says_home_unknown_when_not_configured():
+    """No home configured -> one honest dim line and the fix, never a
+    guessed place."""
+    snapshot = NetworkSnapshot(
+        timestamp=utcnow(),
+        interfaces=[NetworkInterface(name="eth0", is_up=True, addresses=["192.168.1.10"])],
+    )
+    app = _net_app(_fake_container(discovery=_FakeDiscovery(snapshot)))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("n")
+        await _wait_active(pilot, app, NetworkScreen)
+        screen = app.screen
+        await _wait_for(lambda: "home unknown" in str(screen.query_one("#context_card").render()), pilot)
+        text = str(screen.query_one("#context_card").render())
+        assert "set home_ip" in text
+        assert "Tehran" not in text  # nothing was fabricated
+
+
+async def test_network_screen_degrades_honestly_without_the_databases():
+    """A home_ip with no databases wired names each absence per source
+    -- the geo line and the ASN line fail independently, like every
+    other enrichment surface."""
+    snapshot = NetworkSnapshot(
+        timestamp=utcnow(),
+        interfaces=[NetworkInterface(name="eth0", is_up=True, addresses=["192.168.1.10"])],
+    )
+    app = _net_app(_fake_container(discovery=_FakeDiscovery(snapshot)), NetScopeConfig(home_ip="5.202.100.1"))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("n")
+        await _wait_active(pilot, app, NetworkScreen)
+        screen = app.screen
+        await _wait_for(lambda: "no GeoLite2-City database wired" in str(screen.query_one("#context_card").render()), pilot)
+        text = str(screen.query_one("#context_card").render())
+        assert "5.202.100.1" in text
+        assert "no ASN source wired" in text
