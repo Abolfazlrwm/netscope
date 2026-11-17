@@ -36,7 +36,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Label, RichLog, Sparkline, Static
 
 from netscope.app.monitoring import IncidentTransition, TransitionType
-from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS
+from netscope.app.reports import HYPOTHESIS_SUMMARY_LABELS, geo_place_label
 from netscope.core.models import Diagnosis, ExperienceEvent, RawMeasurement
 from netscope.ui.tui.screens import LEVEL_COLORS
 
@@ -121,7 +121,7 @@ class DashboardScreen(Screen):
     def on_mount(self) -> None:
         self._mounted = True
         checks = self.query_one("#checks_table", DataTable)
-        checks.add_columns("Check", "Target", "Status", "Latency", "Loss", "Jitter", "Detail")
+        checks.add_columns("Check", "Target", "Where", "Status", "Latency", "Loss", "Jitter", "Detail")
 
         self.query_one("#network_card", Static).update(self._network_text())
 
@@ -214,12 +214,35 @@ class DashboardScreen(Screen):
             table.add_row(
                 m.probe_type.value,
                 m.target,
+                self._where_cell(m),
                 status,
                 f"{m.latency_ms:.1f} ms" if m.latency_ms is not None else "—",
                 f"{m.packet_loss_pct:.0f}%" if m.packet_loss_pct is not None else "—",
                 f"{m.jitter_ms:.1f} ms" if m.jitter_ms is not None else "—",
                 detail,
             )
+
+    def _where_cell(self, m: RawMeasurement) -> str:
+        """One compact cell answering WHERE a check's target lives and
+        WHOSE network it sits on (v0.16): the shared place label the
+        evidence reports use, the distance from home when the geo pass
+        computed one, the AS number when ownership was resolved -- all
+        read from the measurement's canonical `extra` block, never
+        re-looked-up here. A row the enrichment never reached renders
+        an honest dash: no data is no fabricated "unknown"."""
+        parts: list[str] = []
+        geo = m.extra.get("geo")
+        if isinstance(geo, dict):
+            place = geo_place_label(geo)
+            if place:
+                parts.append(place)
+            distance = geo.get("distance_km")
+            if isinstance(distance, (int, float)) and distance >= 1:
+                parts.append(f"{distance:,.0f} km")
+        asn = m.extra.get("asn")
+        if isinstance(asn, dict) and isinstance(asn.get("asn"), int):
+            parts.append(f"AS{asn['asn']}")
+        return " · ".join(parts) if parts else "—"
 
     def _update_diagnosis(self, diagnosis: Diagnosis | None) -> None:
         log = self.query_one("#diagnosis_card", RichLog)

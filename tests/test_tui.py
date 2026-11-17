@@ -130,8 +130,14 @@ from netscope.ui.tui.screens.route import RouteScreen  # noqa: E402
 from netscope.ui.tui.screens.services import ServicesScreen  # noqa: E402
 
 
-def _ok_measurement(probe: ProbeType, target: str, latency: float, jitter_ms: float | None = None) -> RawMeasurement:
-    return RawMeasurement(probe_type=probe, target=target, success=True, latency_ms=latency, jitter_ms=jitter_ms)
+def _ok_measurement(
+    probe: ProbeType,
+    target: str,
+    latency: float,
+    jitter_ms: float | None = None,
+    extra: dict | None = None,
+) -> RawMeasurement:
+    return RawMeasurement(probe_type=probe, target=target, success=True, latency_ms=latency, jitter_ms=jitter_ms, extra=extra or {})
 
 
 def _experience(score: float = 88.0, level: ExperienceLevel = ExperienceLevel.GOOD) -> ExperienceEvent:
@@ -671,11 +677,11 @@ async def test_tui_checks_table_shows_jitter_per_measurement():
         assert await _wait_for_rounds(pilot, app, 1)
         checks = app.query_one("#checks_table")
         labels = [str(c.label) for c in checks.columns.values()]
-        assert labels == ["Check", "Target", "Status", "Latency", "Loss", "Jitter", "Detail"]
+        assert labels == ["Check", "Target", "Where", "Status", "Latency", "Loss", "Jitter", "Detail"]
         gateway_row = checks.get_row_at(0)
-        assert gateway_row[5] == "2.4 ms"
+        assert gateway_row[6] == "2.4 ms"
         http_row = checks.get_row_at(1)
-        assert http_row[5] == "—"
+        assert http_row[6] == "—"
 
 
 async def test_shell_lazy_container_build_honors_the_loaded_config(monkeypatch):
@@ -717,3 +723,55 @@ def test_tui_command_passes_the_loaded_config(monkeypatch):
     monkeypatch.setattr("netscope.ui.tui.app.NetScopeTUI", _FakeTUI)
     assert run_tui_command() == 0
     assert handed == {"config": cfg, "ran": True}
+
+
+async def test_tui_checks_table_shows_where_the_target_lives():
+    """v0.16: the dashboard's checks table carries the Where column --
+    the same place/distance/ownership facts the evidence reports cite,
+    read from the measurement's canonical `extra` block, with an
+    honest dash for rows the enrichment never reached (the private
+    gateway gets no geo record, and none is invented)."""
+    measurements = [
+        _ok_measurement(ProbeType.ICMP, "192.168.1.1", 2.0),
+        _ok_measurement(
+            ProbeType.HTTP,
+            "https://www.cloudflare.com/",
+            30.0,
+            extra={
+                "status_code": 200,
+                "geo": {
+                    "ip": "104.16.132.229",
+                    "country": "United States",
+                    "country_code": "US",
+                    "city": "San Francisco",
+                    "distance_km": 9821.4,
+                    "db": "GeoLite2-City",
+                    "db_age_days": 9,
+                    "stale_db": False,
+                },
+                "asn": {
+                    "ip": "104.16.132.229",
+                    "asn": 13335,
+                    "organization": "Cloudflare, Inc.",
+                    "db": "GeoLite2-ASN",
+                    "db_age_days": 9,
+                    "stale_db": False,
+                },
+            },
+        ),
+    ]
+    app = _make_app([(measurements, _experience(), None)])
+    async with app.run_test(size=(140, 40)) as pilot:
+        assert await _wait_for_rounds(pilot, app, 1)
+        checks = app.query_one("#checks_table")
+        gateway_row = checks.get_row_at(0)
+        assert gateway_row[2] == "—"  # a private address is nowhere: the dash is the honest cell
+        cloudflare_row = checks.get_row_at(1)
+        where = str(cloudflare_row[2])
+        assert "San Francisco, United States" in where
+        assert "9,821 km" in where
+        assert "AS13335" in where
+        # the organization deliberately stays off the compact cell --
+        # the reports and --json carry the name; the table keeps the
+        # number that fits a glance
+        assert "Cloudflare" not in where
