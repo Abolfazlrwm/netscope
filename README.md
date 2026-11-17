@@ -10,7 +10,7 @@
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 
 <p align="center"><img src="assets/tui-demo.png" alt="netscope TUI dashboard" width="88%"></p>
-[![Tests](https://img.shields.io/badge/tests-970%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-977%20passing-brightgreen)](#development)
 
 NetScope doesn't just show you a latency number — it tells you whether the problem is **your Wi-Fi/router**, **your ISP**, or **the destination service**, and shows you the evidence chain behind that claim.
 
@@ -69,8 +69,8 @@ The TUI is six screens under one shell (v0.6) — all sharing one round pipeline
 
 | Key | Screen | What it shows |
 |---|---|---|
-| `d` | Dashboard | Live score, trend, per-probe results, diagnosis, incidents |
-| `n` | Network | Interfaces, their types/addresses, the detected gateway |
+| `d` | Dashboard | Live score, trend, per-probe results with where each target lives and whose network it sits on (v0.16), diagnosis, incidents |
+| `n` | Network | Interfaces, their types/addresses, the detected gateway — plus your own line's place and network from the same GeoLite2 sources (v0.16) |
 | `p` | Route | Traceroute with hostname/ASN/organization/country enrichment and the cross-run churn verdict |
 | `e` | Evidence | The full evidence table, ruled-out list, plain-language explanation |
 | `h` | History | Recent rounds from the local log, with per-round detail |
@@ -256,7 +256,7 @@ Deep-dive documents live in [`docs/architecture/`](docs/architecture): architect
 
 ```bash
 make install    # editable install + dev tools
-make test       # 970 tests, fully offline (fake probes, no network needed)
+make test       # 977 tests, fully offline (fake probes, no network needed)
 make lint       # ruff check + format check
 make typecheck  # mypy on the package
 ```
@@ -265,7 +265,7 @@ The test suite is **fully offline** — every probe is a scripted fake, includin
 
 ## Roadmap
 
-See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell; (v0.7) the saved service list — `netscope service add/list/remove/check`, persisted locally (schema v3), pinned on the TUI services board; (v0.8) route memory — churn verdicts across your stored route history with hop-level diffs; (v0.11) shell-level plumbing — `--version`, shell completions, a generated man page; (v0.12) GeoIP distance — the dependency-free GeoLite2 reader, place/distance in every read path (TASK-023, the roadmap's last route-model promise); (v0.13) jitter — the third vital sign learned per target, weighed in the 0–100 score, cited as diagnosis evidence, shown in the dashboard and the evidence tables; (v0.14) ownership — GeoLite2-ASN through the same reader, organization names on every route hop and in every report (`adr-013`).
+See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell; (v0.7) the saved service list — `netscope service add/list/remove/check`, persisted locally (schema v3), pinned on the TUI services board; (v0.8) route memory — churn verdicts across your stored route history with hop-level diffs; (v0.11) shell-level plumbing — `--version`, shell completions, a generated man page; (v0.12) GeoIP distance — the dependency-free GeoLite2 reader, place/distance in every read path (TASK-023, the roadmap's last route-model promise); (v0.13) jitter — the third vital sign learned per target, weighed in the 0–100 score, cited as diagnosis evidence, shown in the dashboard and the evidence tables; (v0.14) ownership — GeoLite2-ASN through the same reader, organization names on every route hop and in every report (`adr-013`); (v0.15) the drift watch — the recent history window vs. the one before it, vital by vital, catching the slow leak no single check can flag (`adr-014`); (v0.16) the evidence reaches the TUI (`adr-015`) — the shell honors config.toml for enrichment wiring, the dashboard's checks table carries a Where column, the route screen names the network and the country exactly like the CLI, and the network screen answers "where am I, whose road am I on" from the same GeoLite2 sources.
 
 ## License
 

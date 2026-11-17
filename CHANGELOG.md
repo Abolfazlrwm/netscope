@@ -6,6 +6,65 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-11-17
+
+The evidence reaches the TUI. GeoLite2 facts have had a complete CLI
+story since v0.12 and v0.14 -- place and distance in the check detail,
+ownership on every route hop, geography sections in both evidence
+reports -- but the TUI, the surface people stare at for half an hour,
+never received the memo: its route table showed a bare AS number where
+the CLI shows "AS13335 Cloudflare, Inc.", its dashboard had nowhere to
+say where a slow target actually lives, and its network screen knew
+your interfaces but not whose road you were on. Worse, the TUI's lazy
+container build never received the loaded config at all -- `netscope
+tui` wired enrichment from default guesses while every command read
+config.toml. v0.16 closes that gap at every layer (`adr-015`).
+
+### Added
+
+- **The TUI shell wires its container from the loaded config**
+  (`ui/cli.py`, `ui/tui/app.py`): `run_tui_command` loads config.toml
+  exactly like every other command and hands it to `NetScopeTUI`; the
+  shell's lazy `build_container` call passes the shell's own config
+  through. The geo database path, the user's home, the ASN source --
+  the TUI now reads the same config every command does.
+- **The dashboard's checks table gains the Where column**
+  (`ui/tui/screens/dashboard.py`): the place (the shared
+  `geo_place_label` wording the evidence reports use), the distance
+  from home when the geo pass computed one, the AS number when
+  ownership was resolved -- all read from the measurement's canonical
+  `extra` block, never re-looked-up in the UI; rows the enrichment
+  never reached render an honest dash. The organization's name
+  deliberately stays off the compact cell -- the reports and `--json`
+  carry the name; the table keeps the number that fits a glance.
+- **The route screen names the network and the country**
+  (`ui/tui/screens/route.py`): the hops table's ASN column becomes
+  the Network column with the SAME wording the CLI's shared route
+  table renders -- the operating organization's name after the AS
+  number when the source can name one, the bare number when it cannot
+  -- plus the Country column. A hop no longer loses its ownership and
+  its place by moving from the CLI to the TUI.
+- **The network screen answers where am I and whose road am I on**
+  (`ui/tui/screens/network.py`): a "Your line" block joins the
+  context card -- config's `home_ip` looked up in the same wired
+  GeoLite2-City and GeoLite2-ASN databases, rendered with the shared
+  `geo_summary`/`asn_summary` wording, database-age disclosures
+  included (two editions, two ages; the EULA's aging notice travels
+  with each). Every absence degrades to one honest dim line: no home
+  configured, home coordinates without a `home_ip`, no database
+  wired, an address the database does not know, a database that fails
+  to answer -- never a crash, never a fabricated place. The lookups
+  run on a background worker of their own (mmdb reads can block) and
+  `r` re-asks them together with the discovery.
+
+### Notes
+
+- 979 tests in the suite, 977 passing outright and 2 skipped in CI
+  (the opt-in `maxminddb` crosscheck; 7 new across shell wiring,
+  dashboard, route and the network screen), ruff clean, mypy clean.
+  Zero new dependencies -- the eighth release in a row (decision
+  record: `docs/architecture/adr-015-tui-evidence-parity.md`).
+
 ## [0.15.0] — 2026-11-16
 
 The drift watch: NetScope finally watches the TREND. Every judgment the

@@ -225,16 +225,17 @@ showing a round older than the shell's latest.
 
 | Key | Screen | What it shows |
 |---|---|---|
-| `d` | Dashboard | Live 0–100 score, trend sparkline, per-probe results, diagnosis, incident transitions |
-| `n` | Network | Every interface (name, type, state, addresses) and the detected gateway |
-| `p` | Route | Traceroute to any host: per-hop hostnames, AS numbers, loss, RTT, churn verdict |
+| `d` | Dashboard | Live 0–100 score, trend sparkline, per-probe results with a Where column (place · distance · AS number, v0.16), diagnosis, incident transitions |
+| `n` | Network | Every interface (name, type, state, addresses), the detected gateway, and a "Your line" block naming your own place and network from the same GeoLite2 sources (v0.16) |
+| `p` | Route | Traceroute to any host: per-hop hostnames, network ownership (AS number and organization), country, loss, RTT, churn verdict |
 | `e` | Evidence | The full evidence table (observed vs expected vs deviation), ruled-out list, plain-language explanation |
 | `h` | History | Recent rounds from the local log with recomputed scores; `enter` opens a round's measurement detail |
 | `s` | Services | Status board: your saved services pinned (★) plus every measured target's latest result per check; type a host to check it, 'name host' to save |
 
 Screen-local keys: `r` means "refresh" wherever you are — run a round on
 the dashboard/evidence screen, re-trace on the route screen, reload from
-the log on history/services, re-discover on network. `q` quits.
+the log on history/services, re-discover on network (and re-ask your
+line's place and network with it). `q` quits.
 
 Notes:
 
