@@ -124,7 +124,12 @@ class NetScopeTUI(App):
     @property
     def container(self) -> Container:
         if self._container is None:
-            self._container = build_container()
+            # The lazy build is NOT config-free: the shell's own config
+            # (injected by the CLI, else the built-in default) feeds the
+            # enrichment wiring exactly as it does for every command --
+            # a TUI whose geo/ASN wiring ignored config.toml would be a
+            # second-class citizen in its own tool (v0.16).
+            self._container = build_container(config=self.config)
         return self._container
 
     @property

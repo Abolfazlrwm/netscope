@@ -200,11 +200,12 @@ def build_container(
     composition root's usual role.
 
     `config` feeds the geo wiring (`geo_db_path`, the user's home as
-    coordinates or `home_ip`). When it is not supplied -- the TUI's
-    lazy build, tests -- built-in defaults apply, which point geo at
-    the standard `~/.netscope/GeoLite2-City.mmdb` location and leave
-    the home unknown; a command-line run always passes the config the
-    CLI already loaded, so nothing is read from disk twice."""
+    coordinates or `home_ip`). When it is not supplied -- bare test
+    shells -- built-in defaults apply, which point geo at the standard
+    `~/.netscope/GeoLite2-City.mmdb` location and leave the home
+    unknown; the CLI passes the config it already loaded (nothing is
+    read from disk twice), and the TUI's lazy build passes the shell's
+    own config the same way (v0.16)."""
     geo_config = config if config is not None else NetScopeConfig()
     return Container(
         probe_registry=ProbeRegistry(),

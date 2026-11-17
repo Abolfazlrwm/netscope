@@ -1001,14 +1001,19 @@ def run_speed_command(
 def run_tui_command() -> int:
     """Runs the `tui` command: the Textual dashboard. The import is
     lazy so `pip install netscope` (without the `tui` extra) never
-    breaks, and a missing textual produces an actionable message."""
+    breaks, and a missing textual produces an actionable message.
+
+    The shell receives the loaded config (v0.16): enrichment wiring in
+    the lazy container build -- geo database path, the user's home,
+    the ASN source -- reads the same config.toml every command reads,
+    not a default-constructed guess."""
     try:
         from netscope.ui.tui.app import NetScopeTUI
     except ImportError as exc:
         console().print("[red]The TUI requires the 'tui' extra:[/red] pip install netscope[tui]")
         console().print(f"[dim]({exc})[/dim]")
         return 1
-    NetScopeTUI().run()
+    NetScopeTUI(config=load_config()).run()
     return 0
 
 

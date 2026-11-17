@@ -120,6 +120,7 @@ class _FakeRepo:
 textual = pytest.importorskip("textual")
 
 from netscope.persistence.service_repository import ServiceRepository  # noqa: E402
+from netscope.ui.cli import run_tui_command  # noqa: E402
 from netscope.ui.tui.app import NetScopeTUI  # noqa: E402 -- after importorskip
 from netscope.ui.tui.screens.dashboard import DashboardScreen  # noqa: E402
 from netscope.ui.tui.screens.diagnostics import DiagnosticsScreen  # noqa: E402
@@ -675,3 +676,44 @@ async def test_tui_checks_table_shows_jitter_per_measurement():
         assert gateway_row[5] == "2.4 ms"
         http_row = checks.get_row_at(1)
         assert http_row[5] == "—"
+
+
+async def test_shell_lazy_container_build_honors_the_loaded_config(monkeypatch):
+    """v0.16: the shell's lazy build is not a config-free default
+    container -- build_container receives the shell's own config, so
+    the TUI's geo/ASN wiring reads the same config.toml every CLI
+    command reads. Before this release `netscope tui` ignored
+    config.toml for wiring entirely: the geo database path, the user's
+    home, the ASN source were all default-constructed guesses."""
+    cfg = NetScopeConfig(home_ip="5.202.100.1")
+    calls: list[dict] = []
+
+    def _recorder(**kwargs):
+        calls.append(kwargs)
+        return _fake_container()
+
+    monkeypatch.setattr("netscope.ui.tui.app.build_container", _recorder)
+    app = NetScopeTUI(config=cfg)
+    container = app.container
+    assert calls == [{"config": cfg}]
+    assert app.container is container  # cached -- built exactly once
+
+
+def test_tui_command_passes_the_loaded_config(monkeypatch):
+    """`netscope tui` boots the shell with the loaded config, the same
+    load every other command performs -- the shell's enrichment wiring
+    is never a second, config-free guess."""
+    cfg = NetScopeConfig(public_dns_target="9.9.9.9")
+    handed: dict = {}
+
+    class _FakeTUI:
+        def __init__(self, **kwargs):
+            handed.update(kwargs)
+
+        def run(self):
+            handed["ran"] = True
+
+    monkeypatch.setattr("netscope.ui.cli.load_config", lambda: cfg)
+    monkeypatch.setattr("netscope.ui.tui.app.NetScopeTUI", _FakeTUI)
+    assert run_tui_command() == 0
+    assert handed == {"config": cfg, "ran": True}
