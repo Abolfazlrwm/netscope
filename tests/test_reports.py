@@ -18,7 +18,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from netscope.app.container import Container
-from netscope.app.reports import evidence_report_html, evidence_report_markdown, history_rounds_csv, serialize_evidence_report
+from netscope.app.reports import (
+    evidence_report_csv,
+    evidence_report_html,
+    evidence_report_markdown,
+    evidence_report_prometheus,
+    history_rounds_csv,
+    serialize_evidence_report,
+)
 from netscope.app.use_cases import (
     REPORT_MAX_FAILURES,
     REPORT_MAX_ROUNDS,
@@ -661,3 +668,165 @@ def test_history_csv_empty_log_is_header_only():
     assert text == (
         "round_timestamp,round_score,round_level,timestamp,probe_type,target,success,latency_ms,packet_loss_pct,jitter_ms,error_type,error\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# Evidence CSV (v0.17) -- the evidence tables flattened to one row per
+# shown reading, the row's own persisted geo/asn enrichment unfolded
+# onto scalar columns.
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_csv_one_row_per_shown_reading():
+    repo = _repo()
+    _seed_two_rounds(repo)
+
+    text = evidence_report_csv(build_evidence_report(_container(repo), days=7, until=UNTIL))
+    rows = _csv_rows(text)
+
+    assert rows[0] == [
+        "target",
+        "timestamp",
+        "probe_type",
+        "success",
+        "latency_ms",
+        "packet_loss_pct",
+        "jitter_ms",
+        "verdict",
+        "error_type",
+        "error",
+        "city",
+        "country",
+        "distance_km",
+        "asn",
+        "organization",
+    ]
+    # The seeded log has 7 measurements and no truncation, so the CSV
+    # carries exactly 7 data rows -- the same slice the tables render.
+    assert len(rows) == 8
+
+    # A failed reading is evidence too: it rides along with its error
+    # columns filled, success false.
+    dns_failure = next(r for r in rows if r[2] == "dns" and r[3] == "false")
+    assert dns_failure[8] == "timeout"
+    assert dns_failure[9] == "no answer within 2.0s"
+
+    # The bandwidth run's verdict travels in its own column, never
+    # smeared into a latency cell.
+    speed = next(r for r in rows if r[2] == "bandwidth")
+    assert speed[7] == "slower_than_usual"
+    assert speed[4] == ""
+
+
+def test_evidence_csv_flattens_persisted_geo_and_asn_onto_their_row():
+    repo = _repo()
+    repo.save(_m(timestamp=UNTIL - timedelta(hours=2)))  # the bare neighbor: gateway.local, no enrichment
+    repo.save(
+        _m(
+            probe_type=ProbeType.TCP,
+            target="edge.example",
+            extra={
+                "geo": {"city": "Marseille", "country": "France", "distance_km": 4210.5},
+                "asn": {"asn": 13335, "organization": "Cloudflare, Inc."},
+            },
+        )
+    )
+
+    rows = _csv_rows(evidence_report_csv(build_evidence_report(_container(repo), days=7, until=UNTIL)))[1:]
+
+    enriched = next(r for r in rows if r[0] == "edge.example")
+    assert enriched[10] == "Marseille"
+    assert enriched[11] == "France"
+    assert enriched[12] == "4210.5"
+    assert enriched[13] == "13335"
+    assert enriched[14] == "Cloudflare, Inc."  # comma survives, quoted by the csv module
+
+    # The other targets' rows never borrowed enrichment they did not
+    # record: their geo/asn cells are empty, not repeated from a
+    # neighbor.
+    bare = next(r for r in rows if r[0] == "gateway.local")
+    assert bare[10] == ""
+    assert bare[13] == ""
+
+
+def test_evidence_csv_empty_log_is_header_only():
+    text = evidence_report_csv(build_evidence_report(_container(_repo()), days=7, until=UNTIL))
+
+    assert text.endswith("city,country,distance_km,asn,organization\n")
+    assert len(_csv_rows(text)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Evidence Prometheus (v0.17) -- the textfile-collector dialect: report
+# totals, per-target aggregates, latest successful per-check readings.
+# ---------------------------------------------------------------------------
+
+
+def _prom_samples(text: str, metric: str) -> list[str]:
+    """The sample lines of one metric family, comments stripped."""
+    return [line for line in text.splitlines() if line.startswith(metric)]
+
+
+def test_prometheus_totals_and_means_match_the_report():
+    repo = _repo()
+    _seed_two_rounds(repo)
+    report = build_evidence_report(_container(repo), days=7, until=UNTIL)
+
+    text = evidence_report_prometheus(report)
+
+    assert text.startswith("# NetScope evidence window ")
+    assert f"netscope_report_measurements {report.measurements}" in text
+    assert f"netscope_report_failures {report.failures}" in text
+    assert f"netscope_report_targets {len(report.target_reports)}" in text
+    assert f"netscope_report_mean_score {report.mean_score:g}" in text
+    for line in text.splitlines():
+        if line.startswith("# TYPE "):
+            assert line.endswith(" gauge")
+
+
+def test_prometheus_latest_per_check_reading_wins():
+    repo = _repo()
+    _seed_two_rounds(repo)  # gateway.local icmp: 10.0 then 40.0
+
+    text = evidence_report_prometheus(build_evidence_report(_container(repo), days=7, until=UNTIL))
+
+    icmp_lines = [line for line in _prom_samples(text, "netscope_check_latency_ms") if 'check="icmp"' in line and 'target="gateway.local"' in line]
+    assert icmp_lines == ['netscope_check_latency_ms{target="gateway.local",check="icmp"} 40']
+
+    # The mean is a different family with a different label shape --
+    # never a stray single-label sample inside the per-check one.
+    mean_lines = [line for line in _prom_samples(text, "netscope_target_mean_latency_ms") if 'target="gateway.local"' in line]
+    assert mean_lines == ['netscope_target_mean_latency_ms{target="gateway.local"} 25']
+
+
+def test_prometheus_omits_series_the_log_cannot_prove():
+    repo = _repo()
+    _seed_two_rounds(repo)  # no jitter readings anywhere, no failures on gateway.local
+
+    text = evidence_report_prometheus(build_evidence_report(_container(repo), days=7, until=UNTIL))
+
+    assert _prom_samples(text, "netscope_check_jitter_ms") == []
+    assert "# TYPE netscope_check_jitter_ms" not in text  # the family stays absent entirely
+
+    # The bandwidth reading never measured latency: no per-check latency
+    # series for it, though its loss reading (0.0 recorded) still speaks.
+    assert not [line for line in _prom_samples(text, "netscope_check_latency_ms") if 'target="https://speed.example/down"' in line]
+    assert [line for line in _prom_samples(text, "netscope_check_packet_loss_pct") if 'target="https://speed.example/down"' in line]
+
+
+def test_prometheus_empty_log_is_report_zeros_and_nothing_else():
+    text = evidence_report_prometheus(build_evidence_report(_container(_repo()), days=7, until=UNTIL))
+
+    assert "netscope_report_measurements 0" in text
+    assert "netscope_report_targets 0" in text
+    assert "netscope_report_mean_score" not in text  # no scored rounds, no fabricated mean
+    assert not _prom_samples(text, "netscope_target_measurements")
+
+
+def test_prometheus_escapes_label_values_per_the_spec():
+    repo = _repo()
+    repo.save(_m(target='weird"host\\x', timestamp=UNTIL - timedelta(hours=1)))
+
+    text = evidence_report_prometheus(build_evidence_report(_container(repo), days=7, until=UNTIL))
+
+    assert 'netscope_target_measurements{target="weird\\"host\\\\x"} 1' in text

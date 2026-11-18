@@ -883,3 +883,197 @@ def history_rounds_csv(rounds: list[HistoryRound]) -> str:
                 ]
             )
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Evidence-report CSV (v0.17) -- `netscope report --csv`. The evidence
+# tables flattened to one row per shown reading, the row's own persisted
+# geo/asn enrichment unfolded onto scalar columns. Same home, same
+# honesty rules as the history CSV -- app owns the wire formats, and an
+# absent fact is an empty cell, never a dash a spreadsheet would parse
+# as text.
+# ---------------------------------------------------------------------------
+
+
+_EVIDENCE_CSV_COLUMNS = [
+    "target",
+    "timestamp",
+    "probe_type",
+    "success",
+    "latency_ms",
+    "packet_loss_pct",
+    "jitter_ms",
+    "verdict",
+    "error_type",
+    "error",
+    "city",
+    "country",
+    "distance_km",
+    "asn",
+    "organization",
+]
+
+
+def evidence_report_csv(report: EvidenceReport) -> str:
+    """Render the evidence report as CSV text: one row per SHOWN
+    evidence-table row -- the same `REPORT_ROWS_PER_TARGET` slice the
+    markdown and HTML tables render, chronological within each target --
+    with the row's own persisted enrichment flattened on (city/country/
+    distance_km from the canonical geo block, asn/organization from the
+    canonical asn one; empty cells where the run never enriched, never a
+    re-lookup at export time -- a report is what the log proves).
+
+    Failures ride along as rows: a failed reading is evidence too. The
+    per-target truncation the markdown discloses in prose is disclosed
+    by the writing command's confirmation line instead -- a CSV is data,
+    not prose, and a comment a spreadsheet would choke on belongs
+    nowhere in it."""
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(_EVIDENCE_CSV_COLUMNS)
+    for t in report.target_reports:
+        for row in t.rows:
+            geo = row.geo if isinstance(row.geo, dict) else {}
+            asn = row.asn if isinstance(row.asn, dict) else {}
+            distance = geo.get("distance_km")
+            number = asn.get("asn")
+            writer.writerow(
+                [
+                    row.target,
+                    row.timestamp.isoformat(),
+                    row.probe_type.value,
+                    "true" if row.success else "false",
+                    row.latency_ms,
+                    row.packet_loss_pct,
+                    row.jitter_ms,
+                    row.verdict or "",
+                    row.error_type.value if row.error_type is not None else "",
+                    row.error or "",
+                    geo.get("city") or "",
+                    geo.get("country") or "",
+                    distance if isinstance(distance, (int, float)) else "",
+                    number if isinstance(number, int) else "",
+                    asn.get("organization") or "",
+                ]
+            )
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Evidence-report Prometheus (v0.17) -- `netscope report --prometheus`.
+# The text exposition format (v0.4 of the spec), the dialect the
+# node_exporter textfile collector reads: `netscope report --prometheus
+# /var/lib/node_exporter/netscope.prom` on a cron turns the same log the
+# dashboards read into series Prometheus can scrape, with no new
+# dependency -- the format is lines of text and we already speak lines
+# of text. Gauge families, emitted in one fixed order: report totals,
+# per-target aggregates, the latest successful per-check readings.
+# ---------------------------------------------------------------------------
+
+
+def _prom_label_escape(value: str) -> str:
+    """Escapes a label value per the exposition spec: backslash first,
+    then quote, then newline (in that order -- unescaping reverses it)."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _prom_number(value: Any) -> str | None:
+    """One sample value as the format wants it, or None when the value
+    is not a finite number -- `nan` and `inf` would parse, but a
+    network reading that stops being finite is not a reading, and the
+    honest move is omitting the series, not emitting a poison sample."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):
+        return None
+    return f"{value:g}"
+
+
+def _prom_family(lines: list[str], name: str, help_text: str, samples: list[tuple[str, Any]]) -> None:
+    """Appends one metric family (HELP, TYPE, samples) to `lines` --
+    or nothing at all when no sample survived: a family that exists in
+    the docs but never in the data is noise, and its absence is the
+    machine-readable shape of the human formats' honest `--`."""
+    cleaned = []
+    for labels, value in samples:
+        number = _prom_number(value)
+        if number is None:
+            continue
+        cleaned.append((labels, number))
+    if not cleaned:
+        return
+    lines.append(f"# HELP {name} {help_text}")
+    lines.append(f"# TYPE {name} gauge")
+    for labels, number in cleaned:
+        lines.append(f"{name}{labels} {number}")
+
+
+def evidence_report_prometheus(report: EvidenceReport) -> str:
+    """Render the evidence report as Prometheus text exposition text:
+    report totals, per-target aggregates, and the latest successful
+    reading per check -- the value a scraper polling every interval
+    wants is the most recent proven one, not a mean over a window that
+    ends whenever the report was cut.
+
+    Label values (target names, check names) go through the spec's
+    escaping; absent facts omit their series instead of emitting zeros;
+    an empty log is a file with report-level zeros and no other
+    families -- machine formats get the same honesty the human ones
+    do."""
+    lines: list[str] = [f"# NetScope evidence window {report.since.isoformat()} .. {report.until.isoformat()}"]
+
+    _prom_family(lines, "netscope_report_measurements", "Measurements in the evidence window.", [("", report.measurements)])
+    _prom_family(lines, "netscope_report_failures", "Failed measurements in the evidence window.", [("", report.failures)])
+    _prom_family(
+        lines,
+        "netscope_report_targets",
+        "Distinct targets in the evidence window.",
+        [("", len(report.target_reports))],
+    )
+    _prom_family(
+        lines,
+        "netscope_report_mean_score",
+        "Mean experience score across scored rounds (0-100).",
+        [("", report.mean_score)],
+    )
+
+    target_samples: list[tuple[str, Any]] = []
+    failure_samples: list[tuple[str, Any]] = []
+    mean_latency_samples: list[tuple[str, Any]] = []
+    latency_samples: list[tuple[str, Any]] = []
+    jitter_samples: list[tuple[str, Any]] = []
+    loss_samples: list[tuple[str, Any]] = []
+    for t in report.target_reports:
+        target_label = f'{{target="{_prom_label_escape(t.target)}"}}'
+        target_samples.append((target_label, t.measurements))
+        failure_samples.append((target_label, t.failures))
+        if t.mean_latency_ms is not None:
+            mean_latency_samples.append((target_label, t.mean_latency_ms))
+        latest_latency: dict[str, Any] = {}
+        latest_jitter: dict[str, Any] = {}
+        latest_loss: dict[str, Any] = {}
+        for row in t.rows:  # rows are chronological, so the last write wins
+            if not row.success:
+                continue
+            check = _prom_label_escape(row.probe_type.value)
+            if row.latency_ms is not None:
+                latest_latency[check] = row.latency_ms
+            if row.jitter_ms is not None:
+                latest_jitter[check] = row.jitter_ms
+            if row.packet_loss_pct is not None:
+                latest_loss[check] = row.packet_loss_pct
+        for check, value in latest_latency.items():
+            latency_samples.append((f'{{target="{_prom_label_escape(t.target)}",check="{check}"}}', value))
+        for check, value in latest_jitter.items():
+            jitter_samples.append((f'{{target="{_prom_label_escape(t.target)}",check="{check}"}}', value))
+        for check, value in latest_loss.items():
+            loss_samples.append((f'{{target="{_prom_label_escape(t.target)}",check="{check}"}}', value))
+
+    _prom_family(lines, "netscope_target_measurements", "Measurements recorded for this target in the window.", target_samples)
+    _prom_family(lines, "netscope_target_failures", "Failed measurements for this target in the window.", failure_samples)
+    _prom_family(lines, "netscope_target_mean_latency_ms", "Mean successful latency for this target (ms).", mean_latency_samples)
+    _prom_family(lines, "netscope_check_latency_ms", "Latest successful latency reading per check (ms).", latency_samples)
+    _prom_family(lines, "netscope_check_jitter_ms", "Latest successful jitter reading per check (ms).", jitter_samples)
+    _prom_family(lines, "netscope_check_packet_loss_pct", "Latest successful packet-loss reading per check (percent).", loss_samples)
+
+    return "\n".join(lines) + "\n"
