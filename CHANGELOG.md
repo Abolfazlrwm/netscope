@@ -6,6 +6,69 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-11-18
+
+The readings travel. The post-TASK-046 roadmap reserved exactly one item --
+"export formats beyond markdown/JSON/HTML" -- and v0.17 closes it with two
+plain-text exits for the same local log (`adr-016`): a CSV door for the
+spreadsheet and a Prometheus text-exposition door for the scraper. Zero new
+dependencies, the ninth release in a row.
+
+### Added
+
+- **`netscope history --csv FILE`** (`app/reports.py` `history_rounds_csv`,
+  `ui/cli.py`): one row per stored measurement, the owning round's timestamp
+  and score denormalized onto every row -- the log stores measurements flat,
+  so the round is the grouping key a spreadsheet needs on each line, not a
+  separate table. The `csv` module owns quoting (an error message with
+  commas arrives in its cell intact); explicit UTF-8 and `newline=""` for
+  the same Windows-console reason every other exported file obeys. An empty
+  log writes a header-only file and says so.
+- **`netscope report --csv FILE`** (`evidence_report_csv`): the evidence
+  tables flattened to one row per SHOWN reading -- the same
+  `REPORT_ROWS_PER_TARGET` slice the markdown and HTML tables render,
+  chronological within each target -- with the row's own persisted geo/asn
+  enrichment unfolded onto scalar columns (`city`, `country`, `distance_km`,
+  `asn`, `organization`), never re-looked-up at export time. Failures ride
+  along as rows; a failed reading is evidence too. The truncation the human
+  formats disclose in prose is disclosed on the command's confirmation line
+  -- a CSV is data and carries no prose of its own.
+- **`netscope report --prometheus FILE`** (`evidence_report_prometheus`):
+  the text exposition format, the dialect the node_exporter textfile
+  collector reads -- `netscope report --prometheus
+  /var/lib/node_exporter/netscope.prom` on a cron turns the same log the
+  dashboards read into series any Prometheus can scrape, with NetScope
+  never opening a port. Gauge families in one fixed order: report totals
+  (`netscope_report_measurements/failures/targets/mean_score`), per-target
+  aggregates (`netscope_target_measurements/failures/mean_latency_ms`),
+  and the latest successful reading per check
+  (`netscope_check_latency_ms/jitter_ms/packet_loss_pct` with
+  `target`/`check` labels). Label values go through the spec's escaping;
+  a non-finite sample omits its series instead of poisoning the file.
+- **Honesty rules, machine-format edition**: an absent reading is an EMPTY
+  CSV cell -- never a fabricated 0 and never the human `--` a spreadsheet
+  would coerce; an absent fact omits its Prometheus SERIES (HELP and TYPE
+  included) instead of emitting zeros, and an unscored window omits
+  `netscope_report_mean_score` -- the report totals are the one deliberate
+  exception, because `measurements 0` over an empty window is a proven
+  fact, not a fabrication.
+- **One primary rendering per invocation**: `--csv` and `--prometheus` are
+  ignored under `--json`, exactly like `--html` before them; the file
+  exports coexist with each other and with the stdout markdown (one command
+  test writes all three at once). The man page (regenerated) and all three
+  completion scripts carry the new flags through their existing sync tests.
+
+### Notes
+
+- 1,000 tests passed (2 skipped, the opt-in maxminddb crosscheck), 23 of
+  them new: renderer contracts (columns, denormalization, quoting, the
+  empty-log header), the latest-per-check selection, label escaping per
+  the exposition spec, series omission, truncation disclosure through the
+  confirmation line, argparser/completions/man-page sync.
+- `ruff check`, `ruff format --check`, `mypy src` -- all clean.
+- Zero new dependencies -- the ninth release in a row; the text exposition
+  format is lines of text and we already speak lines of text.
+
 ## [0.16.0] — 2026-11-17
 
 The evidence reaches the TUI. GeoLite2 facts have had a complete CLI

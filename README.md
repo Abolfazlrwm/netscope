@@ -10,7 +10,7 @@
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 
 <p align="center"><img src="assets/tui-demo.png" alt="netscope TUI dashboard" width="88%"></p>
-[![Tests](https://img.shields.io/badge/tests-977%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-1000%20passing-brightgreen)](#development)
 
 NetScope doesn't just show you a latency number — it tells you whether the problem is **your Wi-Fi/router**, **your ISP**, or **the destination service**, and shows you the evidence chain behind that claim.
 
@@ -135,11 +135,11 @@ older rows were omitted — the aggregates always cover the full window.
 | `netscope check <host> [--checks icmp,dns,tcp,tls,http]` | Probe any target with any subset of checks and score it |
 | `netscope service add/list/remove/check` | Your curated service list, persisted locally: save, list, remove, and run a saved service's own checks (v0.7) |
 | `netscope route <target> [--no-resolve]` | Traceroute with reverse-DNS hostnames, AS numbers (see below) and route-stability analysis **across your stored history** — "unchanged across the last N runs" / "changed vs <date>: hop K: old → new" (v0.8) |
-| `netscope history [--limit N]` | Recent measurement rounds from the local log |
+| `netscope history [--limit N] [--csv FILE]` | Recent measurement rounds from the local log (CSV export v0.17) |
 | `netscope drift <target> [--days N]` | The drift watch: your recent history window vs. the one before it, vital by vital — catches the slow leak no single check can flag (v0.15) |
 | `netscope monitor [--interval S] [--rounds N]` | Continuous rounds with sustained-problem incident detection |
 | `netscope speed [--url URL] [--seconds S]` | Download throughput: median Mbps, peak sample, bytes moved (v0.3) |
-| `netscope report [--days N] [--target T] [--out FILE] [--html FILE]` | Export the log as a self-contained evidence report — markdown, or a dark HTML page with inline SVG trends (v0.5; HTML v0.10) |
+| `netscope report [--days N] [--target T] [--out FILE] [--html FILE] [--csv FILE] [--prometheus FILE]` | Export the log as a self-contained evidence report — markdown, a dark HTML page with inline SVG trends (v0.5; HTML v0.10), a flat CSV table (v0.17), or Prometheus text-exposition metrics for the textfile collector (v0.17) |
 | `netscope completions bash\|zsh\|fish` | Print a ready-to-install shell completion script, verbatim (v0.11) |
 | `netscope tui` | The six-screen live dashboard (requires `[tui]` extra) |
 
@@ -256,7 +256,7 @@ Deep-dive documents live in [`docs/architecture/`](docs/architecture): architect
 
 ```bash
 make install    # editable install + dev tools
-make test       # 977 tests, fully offline (fake probes, no network needed)
+make test       # 1000 tests, fully offline (fake probes, no network needed)
 make lint       # ruff check + format check
 make typecheck  # mypy on the package
 ```
@@ -265,7 +265,7 @@ The test suite is **fully offline** — every probe is a scripted fake, includin
 
 ## Roadmap
 
-See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell; (v0.7) the saved service list — `netscope service add/list/remove/check`, persisted locally (schema v3), pinned on the TUI services board; (v0.8) route memory — churn verdicts across your stored route history with hop-level diffs; (v0.11) shell-level plumbing — `--version`, shell completions, a generated man page; (v0.12) GeoIP distance — the dependency-free GeoLite2 reader, place/distance in every read path (TASK-023, the roadmap's last route-model promise); (v0.13) jitter — the third vital sign learned per target, weighed in the 0–100 score, cited as diagnosis evidence, shown in the dashboard and the evidence tables; (v0.14) ownership — GeoLite2-ASN through the same reader, organization names on every route hop and in every report (`adr-013`); (v0.15) the drift watch — the recent history window vs. the one before it, vital by vital, catching the slow leak no single check can flag (`adr-014`); (v0.16) the evidence reaches the TUI (`adr-015`) — the shell honors config.toml for enrichment wiring, the dashboard's checks table carries a Where column, the route screen names the network and the country exactly like the CLI, and the network screen answers "where am I, whose road am I on" from the same GeoLite2 sources.
+See [`docs/architecture/future-roadmap.md`](docs/architecture/future-roadmap.md). Done recently: (v0.5) evidence-report export (`netscope report`) and user-facing usage docs; (v0.6) the full multi-screen TUI — dashboard, network, route, evidence, history and services screens under one shell; (v0.7) the saved service list — `netscope service add/list/remove/check`, persisted locally (schema v3), pinned on the TUI services board; (v0.8) route memory — churn verdicts across your stored route history with hop-level diffs; (v0.11) shell-level plumbing — `--version`, shell completions, a generated man page; (v0.12) GeoIP distance — the dependency-free GeoLite2 reader, place/distance in every read path (TASK-023, the roadmap's last route-model promise); (v0.13) jitter — the third vital sign learned per target, weighed in the 0–100 score, cited as diagnosis evidence, shown in the dashboard and the evidence tables; (v0.14) ownership — GeoLite2-ASN through the same reader, organization names on every route hop and in every report (`adr-013`); (v0.15) the drift watch — the recent history window vs. the one before it, vital by vital, catching the slow leak no single check can flag (`adr-014`); (v0.16) the evidence reaches the TUI (`adr-015`) — the shell honors config.toml for enrichment wiring, the dashboard's checks table carries a Where column, the route screen names the network and the country exactly like the CLI, and the network screen answers "where am I, whose road am I on" from the same GeoLite2 sources; (v0.17) the readings travel (`adr-016`) — `netscope report --csv` flattens the evidence tables (persisted geo/asn unfolded onto scalar columns, failures included), `netscope report --prometheus` speaks the textfile-collector dialect so a cron line hands the log to any Prometheus without NetScope ever opening a port, and `netscope history --csv` exports every stored measurement with its round denormalized on.
 
 ## License
 

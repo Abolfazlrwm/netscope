@@ -116,6 +116,7 @@ once two rounds carry a score.
 | Flag | Meaning |
 |---|---|
 | `--limit N` | maximum rounds to show (default: 20) |
+| `--csv FILE` | write the rounds' measurements as CSV to a UTF-8 file instead of the styled table (v0.17): one row per stored measurement, the owning round's timestamp and score denormalized onto every row. An absent reading is an empty cell, never a fake 0; an empty log writes a header-only file and says so. Ignored under `--json`. |
 | `--json` | machine-readable output |
 
 ## `netscope drift <target>` (v0.15)
@@ -176,6 +177,8 @@ to attach to a ticket.
 | `--target TARGET` | restrict the report to one target (default: every target in the window) |
 | `--out FILE` | write the markdown to a UTF-8 file instead of stdout |
 | `--html FILE` | also write a **self-contained HTML report** to a UTF-8 file (v0.10): dark theme, inline SVG score trend and per-target latency sparklines, a mean-score gauge, zero scripts and zero external assets — open it in any browser, offline, forever. Same facts, caps and disclosures as the markdown, word for word. Ignored under `--json`. |
+| `--csv FILE` | also write the evidence tables as **CSV** to a UTF-8 file (v0.17): one row per shown reading, the row's own persisted geo/asn enrichment unfolded onto scalar columns (`city`, `country`, `distance_km`, `asn`, `organization`), failures included — a failed reading is evidence too. Rows past the per-target table cap stay out of the file and the omission count rides on the command's confirmation line. Ignored under `--json`. |
+| `--prometheus FILE` | also write **Prometheus text exposition metrics** to a UTF-8 file (v0.17), the dialect the node_exporter textfile collector reads: `netscope report --prometheus /var/lib/node_exporter/netscope.prom` on a cron is the whole integration — NetScope never opens a port. Report totals, per-target aggregates, and the latest successful reading per check; an absent fact omits its series instead of emitting zeros. Ignored under `--json`. |
 | `--json` | machine-readable payload instead of markdown |
 
 Large windows are rendered honestly: per-target tables show the newest 40 rows
