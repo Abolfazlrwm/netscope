@@ -127,7 +127,7 @@ output machine\-readable JSON instead of styled text
 .SS report
 export a self\-contained evidence report from the local measurement log (markdown, or \-\-json)
 .P
-\fBnetscope report\fR [\-v] [\-\-days \fIDAYS\fR] [\-\-target \fITARGET\fR] [\-\-out \fIOUT\fR] [\-\-html \fIFILE\fR] [\-\-json]
+\fBnetscope report\fR [\-v] [\-\-days \fIDAYS\fR] [\-\-target \fITARGET\fR] [\-\-out \fIOUT\fR] [\-\-html \fIFILE\fR] [\-\-csv \fIFILE\fR] [\-\-prometheus \fIFILE\fR] [\-\-json]
 .P
 .TP
 .B \-\-verbose, \-v
@@ -144,6 +144,12 @@ write the markdown report to a file (UTF\-8) instead of stdout
 .TP
 .B \-\-html \fIFILE\fR
 write a self\-contained HTML report (dark theme, inline SVG trends) to FILE (UTF\-8); ignored under \-\-json
+.TP
+.B \-\-csv \fIFILE\fR
+write the evidence table as CSV to FILE (UTF\-8); ignored under \-\-json
+.TP
+.B \-\-prometheus \fIFILE\fR
+write Prometheus text exposition metrics (textfile\-collector format) to FILE (UTF\-8); ignored under \-\-json
 .TP
 .B \-\-json
 output machine\-readable JSON instead of markdown

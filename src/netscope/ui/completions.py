@@ -109,7 +109,7 @@ _netscope() {
             drift)       opts="--days --json --verbose" ;;
             monitor)     opts="--interval --rounds --gateway --verbose" ;;
             speed)       opts="--url --seconds --json --verbose" ;;
-            report)      opts="--days --target --out --html --json --verbose" ;;
+            report)      opts="--days --target --out --html --csv --prometheus --json --verbose" ;;
             service)     opts="--checks --json --verbose" ;;
             completions) opts="--verbose" ;;
         esac
@@ -217,6 +217,8 @@ _netscope() {
                         '--target[restrict the report to one target]:target:' \\
                         '--out[write the markdown report to a file]:file:_files' \\
                         '--html[write a self-contained HTML report to a file]:file:_files' \\
+                        '--csv[write the evidence table as CSV to a file]:file:_files' \\
+                        '--prometheus[write Prometheus text exposition metrics to a file]:file:_files' \\
                         '--json[output machine-readable JSON instead of markdown]' \\
                         '(-v --verbose)'{-v,--verbose}'[enable verbose (INFO-level) logging]'
                     ;;
@@ -326,6 +328,8 @@ complete -c netscope -n "__fish_seen_subcommand_from report" -l days -d "window 
 complete -c netscope -n "__fish_seen_subcommand_from report" -l target -d "restrict the report to one target" -x
 complete -c netscope -n "__fish_seen_subcommand_from report" -l out -d "write the markdown report to a file" -rF
 complete -c netscope -n "__fish_seen_subcommand_from report" -l html -d "write a self-contained HTML report to a file" -rF
+complete -c netscope -n "__fish_seen_subcommand_from report" -l csv -d "write the evidence table as CSV to a file" -rF
+complete -c netscope -n "__fish_seen_subcommand_from report" -l prometheus -d "write Prometheus text exposition metrics to a file" -rF
 complete -c netscope -n "__fish_seen_subcommand_from report" -l json -d "output machine-readable JSON instead of markdown"
 complete -c netscope -n "__fish_seen_subcommand_from completions" -a "bash" -d "bash completion script"
 complete -c netscope -n "__fish_seen_subcommand_from completions" -a "zsh" -d "zsh completion script"

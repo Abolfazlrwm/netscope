@@ -531,6 +531,94 @@ def test_report_command_json_output_ignores_html(tmp_path, capsys):
     assert '"report": "evidence"' in out
 
 
+def test_argparser_has_the_csv_and_prometheus_arguments():
+    args = build_arg_parser().parse_args(["report", "--csv", "out.csv", "--prometheus", "out.prom"])
+    assert args.csv == "out.csv"
+    assert args.prometheus == "out.prom"
+    args = build_arg_parser().parse_args(["report"])
+    assert args.csv is None
+    assert args.prometheus is None
+
+
+def test_report_command_writes_the_csv_file(tmp_path, capsys):
+    repo = _repo()
+    _seed_two_rounds(repo)
+    out_path = tmp_path / "report.csv"
+
+    exit_code = run_report_command(_container(repo), days=7, csv_out=str(out_path), until=UNTIL)
+
+    assert exit_code == 0
+    rows = _csv_rows(out_path.read_text(encoding="utf-8"))
+    assert rows[0][0] == "target"
+    assert len(rows) == 8  # header + the 7 seeded readings, the tables' slice
+    out = capsys.readouterr().out
+    assert "CSV evidence table (7 measurement(s), 1 failed)" in out
+    assert "table cap omitted" not in out  # nothing was truncated here
+
+
+def test_report_command_writes_the_prometheus_file(tmp_path, capsys):
+    repo = _repo()
+    _seed_two_rounds(repo)
+    out_path = tmp_path / "netscope.prom"
+
+    exit_code = run_report_command(_container(repo), days=7, prometheus_out=str(out_path), until=UNTIL)
+
+    assert exit_code == 0
+    text = out_path.read_text(encoding="utf-8")
+    assert "# TYPE netscope_report_measurements gauge" in text
+    assert "netscope_report_measurements 7" in text
+    assert "Prometheus metrics" in capsys.readouterr().out
+
+
+def test_report_command_csv_and_prometheus_coexist_with_the_markdown(tmp_path, capsys):
+    repo = _repo()
+    _seed_two_rounds(repo)
+    md_path = tmp_path / "report.md"
+    csv_path = tmp_path / "report.csv"
+    prom_path = tmp_path / "netscope.prom"
+
+    exit_code = run_report_command(_container(repo), days=7, out=str(md_path), csv_out=str(csv_path), prometheus_out=str(prom_path), until=UNTIL)
+
+    assert exit_code == 0
+    assert md_path.read_text(encoding="utf-8").startswith("# NetScope evidence report")
+    assert csv_path.read_text(encoding="utf-8").startswith("target,timestamp,")
+    assert prom_path.read_text(encoding="utf-8").startswith("# NetScope evidence window ")
+
+
+def test_report_command_json_output_ignores_csv_and_prometheus(tmp_path, capsys):
+    repo = _repo()
+    _seed_two_rounds(repo)
+    csv_path = tmp_path / "report.csv"
+    prom_path = tmp_path / "netscope.prom"
+
+    exit_code = run_report_command(_container(repo), days=7, csv_out=str(csv_path), prometheus_out=str(prom_path), json_output=True, until=UNTIL)
+
+    assert exit_code == 0
+    assert not csv_path.exists()  # the JSON short-circuit, the --html rule
+    assert not prom_path.exists()
+    assert '"report": "evidence"' in capsys.readouterr().out
+
+
+def test_report_command_csv_discloses_truncated_rows(tmp_path, capsys):
+    repo = _repo()
+    # REPORT_ROWS_PER_TARGET + 5 readings, hours apart: the tables (and
+    # the CSV with them) show the newest slice, and the confirmation
+    # line discloses the 5 the cap left out -- the CSV file itself
+    # carries no prose, so the disclosure lives in the command's voice.
+    for i in range(REPORT_ROWS_PER_TARGET + 5):
+        repo.save(_m(timestamp=UNTIL - timedelta(hours=REPORT_ROWS_PER_TARGET + 11 - i)))
+    out_path = tmp_path / "report.csv"
+
+    exit_code = run_report_command(_container(repo), days=7, csv_out=str(out_path), until=UNTIL)
+
+    assert exit_code == 0
+    rows = _csv_rows(out_path.read_text(encoding="utf-8"))
+    assert len(rows) == 1 + REPORT_ROWS_PER_TARGET
+    # The styled console soft-wraps at its width, so the phrase may be
+    # broken across lines -- compare with the wraps removed.
+    assert "(5 row(s) past the table cap omitted)" in capsys.readouterr().out.replace("\n", "")
+
+
 # ---------------------------------------------------------------------------
 # Jitter columns (v0.13) -- the third vital sign rides along wherever the
 # evidence tables do

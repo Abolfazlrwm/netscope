@@ -69,8 +69,10 @@ from netscope.app.gateway import AUTO_SENTINEL, resolve_gateway
 from netscope.app.monitoring import MonitorSession, TransitionType
 from netscope.app.reports import (
     build_diagnose_report,
+    evidence_report_csv,
     evidence_report_html,
     evidence_report_markdown,
+    evidence_report_prometheus,
     history_rounds_csv,
     serialize_evidence_report,
     serialize_experience,
@@ -254,6 +256,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="FILE",
         help="write a self-contained HTML report (dark theme, inline SVG trends) to FILE (UTF-8); ignored under --json",
+    )
+    report.add_argument(
+        "--csv",
+        default=None,
+        metavar="FILE",
+        help="write the evidence table as CSV to FILE (UTF-8); ignored under --json",
+    )
+    report.add_argument(
+        "--prometheus",
+        default=None,
+        metavar="FILE",
+        help="write Prometheus text exposition metrics (textfile-collector format) to FILE (UTF-8); ignored under --json",
     )
     report.add_argument("--json", action="store_true", help="output machine-readable JSON instead of markdown")
 
@@ -850,6 +864,8 @@ def run_report_command(
     target: str | None = None,
     out: str | None = None,
     html_out: str | None = None,
+    csv_out: str | None = None,
+    prometheus_out: str | None = None,
     json_output: bool = False,
     until: datetime | None = None,
 ) -> int:
@@ -860,6 +876,12 @@ def run_report_command(
     HTML page via `--html FILE`: the same facts, same caps, same
     disclosures, dressed with inline SVG trends and a score gauge, no
     scripts and no external assets.
+
+    v0.17 adds two more export renderings of the same report: `--csv
+    FILE` (the evidence tables flattened to one row per shown reading)
+    and `--prometheus FILE` (the text exposition format a textfile
+    collector or scraper reads). Both are ignored under `--json`, like
+    `--html` before them -- one primary rendering per invocation.
 
     The markdown goes to stdout through plain `print` on purpose: it is
     an export artifact someone pipes, redirects or attaches -- it must
@@ -898,6 +920,26 @@ def run_report_command(
             fh.write(evidence_report_html(report))
         console().print(
             f"HTML report ({report.measurements} measurement(s), {report.failures} failed) written to [bold]{html_out}[/bold] -- open it in any browser, it needs nothing else"
+        )
+
+    if csv_out is not None:
+        # The truncation the human formats disclose in prose is
+        # disclosed here, in the command's own voice: a CSV is data and
+        # carries no prose of its own, so the count of rows past the
+        # table cap rides on the confirmation line instead.
+        truncated = sum(t.truncated for t in report.target_reports)
+        note = f" ({truncated} row(s) past the table cap omitted)" if truncated else ""
+        with open(csv_out, "w", encoding="utf-8", newline="") as fh:
+            fh.write(evidence_report_csv(report))
+        console().print(
+            f"CSV evidence table ({report.measurements} measurement(s), {report.failures} failed) written to [bold]{csv_out}[/bold]{note}"
+        )
+
+    if prometheus_out is not None:
+        with open(prometheus_out, "w", encoding="utf-8", newline="") as fh:
+            fh.write(evidence_report_prometheus(report))
+        console().print(
+            f"Prometheus metrics ({report.measurements} measurement(s), {report.failures} failed) written to [bold]{prometheus_out}[/bold] -- text exposition format, ready for a textfile collector or scraper"
         )
     return 0
 
@@ -1114,7 +1156,16 @@ def main() -> None:
     elif command == "drift":
         exit_code = run_drift_command(container, args.target, days=args.days, json_output=args.json)
     elif command == "report":
-        exit_code = run_report_command(container, days=args.days, target=args.target, out=args.out, html_out=args.html, json_output=args.json)
+        exit_code = run_report_command(
+            container,
+            days=args.days,
+            target=args.target,
+            out=args.out,
+            html_out=args.html,
+            csv_out=args.csv,
+            prometheus_out=args.prometheus,
+            json_output=args.json,
+        )
     elif command == "monitor":
         exit_code = run_monitor_command(
             container,
