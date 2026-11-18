@@ -29,7 +29,9 @@ type note rather than half-serializing.
 
 from __future__ import annotations
 
+import csv
 import html
+import io
 import math
 from typing import Any
 
@@ -38,6 +40,7 @@ from netscope.app.use_cases import (
     REPORT_MAX_ROUNDS,
     REPORT_ROWS_PER_TARGET,
     EvidenceReport,
+    HistoryRound,
     TargetReportRow,
 )
 from netscope.core.models import (
@@ -812,3 +815,71 @@ def evidence_report_html(report: EvidenceReport) -> str:
     out.append("</body>")
     out.append("</html>")
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# History CSV (v0.17) -- `netscope history --csv`. One row per stored
+# measurement, denormalized with its round's timestamp and score so a
+# spreadsheet can group without joining. It lives beside the evidence
+# renderings on purpose: app owns every wire-shaped format, ui only
+# writes files -- the same one-canonical-format rule the `--json`
+# serializers established.
+# ---------------------------------------------------------------------------
+
+
+_HISTORY_CSV_COLUMNS = [
+    "round_timestamp",
+    "round_score",
+    "round_level",
+    "timestamp",
+    "probe_type",
+    "target",
+    "success",
+    "latency_ms",
+    "packet_loss_pct",
+    "jitter_ms",
+    "error_type",
+    "error",
+]
+
+
+def history_rounds_csv(rounds: list[HistoryRound]) -> str:
+    """Render reconstructed measurement rounds as CSV text: one row per
+    stored measurement, its round's timestamp and score denormalized
+    onto every row (the log stores measurements flat, so the round is a
+    grouping key a spreadsheet needs on each line, not a separate
+    table).
+
+    Honesty rules, CSV edition: an absent reading is an EMPTY cell --
+    never a fabricated 0 and never the human formats' "--", which
+    spreadsheets would parse as text or coerce; an unscored round (no
+    baseline yet) leaves round_score/round_level empty the same way;
+    booleans are lowercase true/false; timestamps keep the ISO-8601
+    form persistence writes, so round grouping stays byte-comparable
+    with the raw log. The `csv` module owns quoting -- an error message
+    with commas or quotes arrives in the cell intact."""
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(_HISTORY_CSV_COLUMNS)
+    for r in rounds:
+        round_timestamp = r.timestamp.isoformat()
+        score = f"{r.experience.score:g}" if r.experience else ""
+        level = r.experience.level.value if r.experience else ""
+        for m in r.measurements:
+            writer.writerow(
+                [
+                    round_timestamp,
+                    score,
+                    level,
+                    m.timestamp.isoformat(),
+                    m.probe_type.value,
+                    m.target,
+                    "true" if m.success else "false",
+                    m.latency_ms,
+                    m.packet_loss_pct,
+                    m.jitter_ms,
+                    m.error_type.value if m.error_type is not None else "",
+                    m.error or "",
+                ]
+            )
+    return buf.getvalue()

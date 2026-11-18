@@ -18,12 +18,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from netscope.app.container import Container
-from netscope.app.reports import evidence_report_html, evidence_report_markdown, serialize_evidence_report
+from netscope.app.reports import evidence_report_html, evidence_report_markdown, history_rounds_csv, serialize_evidence_report
 from netscope.app.use_cases import (
     REPORT_MAX_FAILURES,
     REPORT_MAX_ROUNDS,
     REPORT_ROWS_PER_TARGET,
     build_evidence_report,
+    recent_rounds,
 )
 from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement
 from netscope.persistence.measurement_repository import MeasurementRepository
@@ -550,3 +551,113 @@ def test_report_rows_carry_and_render_jitter():
     assert "jitter_ms" in page
     assert "<td class='num'>3.2</td>" in page
     assert "<td class='num'>--</td>" in page
+
+
+# ---------------------------------------------------------------------------
+# History CSV (v0.17) -- `netscope history --csv`: one row per stored
+# measurement, its round denormalized onto every row. Rendered through
+# the same seeded-log path the history command itself takes, so the
+# test proves the exact wire the file gets.
+# ---------------------------------------------------------------------------
+
+
+def _csv_rows(text: str) -> list[list[str]]:
+    import csv as _csv
+    import io as _io
+
+    return list(_csv.reader(_io.StringIO(text)))
+
+
+def test_history_csv_header_and_one_row_per_measurement():
+    repo = _repo()
+    _seed_two_rounds(repo)
+    container = _container(repo)
+
+    text = history_rounds_csv(recent_rounds(container, limit=10))
+    rows = _csv_rows(text)
+
+    assert rows[0] == [
+        "round_timestamp",
+        "round_score",
+        "round_level",
+        "timestamp",
+        "probe_type",
+        "target",
+        "success",
+        "latency_ms",
+        "packet_loss_pct",
+        "jitter_ms",
+        "error_type",
+        "error",
+    ]
+    # 7 seeded measurements -> 7 data rows; one per measurement, never
+    # one per round and never a round-level summary row.
+    assert len(rows) == 8
+
+
+def test_history_csv_denormalizes_the_round_onto_every_row():
+    repo = _repo()
+    _seed_two_rounds(repo)
+    container = _container(repo)
+
+    rounds = recent_rounds(container, limit=10)
+    text = history_rounds_csv(rounds)
+    rows = _csv_rows(text)[1:]
+
+    # Every row of a round carries that round's timestamp -- the join
+    # key a spreadsheet groups by.
+    first_round_rows = [r for r in rows if r[0] == rounds[0].timestamp.isoformat()]
+    assert len(first_round_rows) == 3
+    assert {r[4] for r in first_round_rows} == {"icmp", "dns", "http"}
+
+    # The round's recomputed score rides along; an unscored round (no
+    # baseline yet) would leave the cell empty instead of faking one.
+    if rounds[0].experience is not None:
+        assert all(r[1] != "" for r in first_round_rows)
+    else:
+        assert all(r[1] == "" for r in first_round_rows)
+
+
+def test_history_csv_failed_reading_and_absent_metrics_are_honest():
+    repo = _repo()
+    _seed_two_rounds(repo)
+    container = _container(repo)
+
+    text = history_rounds_csv(recent_rounds(container, limit=10))
+    rows = _csv_rows(text)[1:]
+
+    dns_failure = next(r for r in rows if r[4] == "dns" and r[6] == "false")
+    assert dns_failure[10] == "timeout"
+    assert dns_failure[11] == "no answer within 2.0s"
+
+    # A successful ping: numbers present, error cells empty (never "--").
+    icmp_ok = next(r for r in rows if r[4] == "icmp" and r[6] == "true")
+    assert icmp_ok[7] == "10.0"
+    assert icmp_ok[10] == ""
+    assert icmp_ok[11] == ""
+
+    # The bandwidth reading measured no latency: the cell stays empty --
+    # absence as the log proves it, not zero dressed up as a reading.
+    bandwidth = next(r for r in rows if r[4] == "bandwidth")
+    assert bandwidth[7] == ""
+
+
+def test_history_csv_quoting_keeps_commas_inside_their_cell():
+    repo = _repo()
+    repo.save(_m(success=False, error="resolver said: SERVFAIL, retry 2", error_type=ProbeErrorType.DNS_FAILURE))
+    container = _container(repo)
+
+    text = history_rounds_csv(recent_rounds(container, limit=10))
+    rows = _csv_rows(text)[1:]
+
+    assert rows[0][11] == "resolver said: SERVFAIL, retry 2"
+
+
+def test_history_csv_empty_log_is_header_only():
+    container = _container(_repo())
+
+    text = history_rounds_csv(recent_rounds(container, limit=10))
+
+    assert text == (
+        "round_timestamp,round_score,round_level,timestamp,probe_type,target,success,latency_ms,packet_loss_pct,jitter_ms,error_type,error\n"
+    )
