@@ -24,6 +24,7 @@ same diagnose behavior, which the "no subcommand" tests below confirm.
 from __future__ import annotations
 
 import ast
+import csv
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -1076,6 +1077,82 @@ def test_history_command_stays_quiet_without_a_trend(capsys):
     exit_code = run_history_command(container, limit=20)
     assert exit_code == 0
     assert "score trend" not in capsys.readouterr().out
+    repo.close()
+
+
+# ---------------------------------------------------------------------------
+# History CSV (v0.17): `netscope history --csv FILE` -- the file replaces
+# the styled table, the empty log writes a header-only file and SAYS so,
+# and --json keeps its one-primary-rendering rule by ignoring the export.
+# ---------------------------------------------------------------------------
+
+
+def _seed_three_scored_rounds(repo: MeasurementRepository) -> None:
+    base = datetime(2026, 11, 11, 12, 0, 0, tzinfo=UTC)
+    for round_index in range(3):
+        for check_index, probe_type in enumerate((ProbeType.ICMP, ProbeType.DNS, ProbeType.HTTP)):
+            repo.save(
+                RawMeasurement(
+                    probe_type=probe_type,
+                    target=f"t{probe_type.value}",
+                    timestamp=base + timedelta(seconds=round_index * 180 + check_index),
+                    success=True,
+                    latency_ms=10.0 + round_index * 5,
+                )
+            )
+
+
+def test_parser_history_accepts_the_csv_argument():
+    args = build_arg_parser().parse_args(["history", "--csv", "rounds.csv"])
+    assert args.csv == "rounds.csv"
+    args = build_arg_parser().parse_args(["history"])
+    assert args.csv is None
+
+
+def test_history_csv_command_writes_the_file_instead_of_the_table(tmp_path, capsys):
+    repo = MeasurementRepository.open(":memory:")
+    _seed_three_scored_rounds(repo)
+    container, _ = _fake_container(measurement_repository=repo)
+    out_path = tmp_path / "rounds.csv"
+
+    exit_code = run_history_command(container, limit=20, csv_out=str(out_path))
+
+    assert exit_code == 0
+    rows = list(csv.reader(out_path.read_text(encoding="utf-8").splitlines()))
+    assert rows[0][0] == "round_timestamp"
+    assert len(rows) == 10  # header + 9 measurements, one row per reading
+    out = capsys.readouterr().out
+    assert "CSV export (9 measurement(s) in 3 round(s))" in out
+    assert "Recent rounds" not in out  # the table stayed home
+    repo.close()
+
+
+def test_history_csv_command_empty_log_writes_header_only_and_says_so(tmp_path, capsys):
+    repo = MeasurementRepository.open(":memory:")
+    container, _ = _fake_container(measurement_repository=repo)
+    out_path = tmp_path / "rounds.csv"
+
+    exit_code = run_history_command(container, limit=20, csv_out=str(out_path))
+
+    assert exit_code == 0
+    assert out_path.read_text(encoding="utf-8").endswith("error_type,error\n")
+    out = capsys.readouterr().out
+    assert "0 measurement(s) in 0 round(s)" in out
+    assert "header only" in out
+    repo.close()
+
+
+def test_history_csv_export_is_ignored_under_json(tmp_path, capsys):
+    repo = MeasurementRepository.open(":memory:")
+    _seed_three_scored_rounds(repo)
+    container, _ = _fake_container(measurement_repository=repo)
+    out_path = tmp_path / "rounds.csv"
+
+    exit_code = run_history_command(container, limit=20, json_output=True, csv_out=str(out_path))
+
+    assert exit_code == 0
+    assert not out_path.exists()  # the JSON short-circuit, the --html rule
+    assert '"report": "history"' in capsys.readouterr().out
     repo.close()
 
 

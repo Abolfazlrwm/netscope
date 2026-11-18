@@ -62,7 +62,7 @@ output machine\-readable JSON instead of styled text
 .SS history
 show recent measurement rounds from the local log
 .P
-\fBnetscope history\fR [\-v] [\-\-limit \fILIMIT\fR] [\-\-json]
+\fBnetscope history\fR [\-v] [\-\-limit \fILIMIT\fR] [\-\-csv \fIFILE\fR] [\-\-json]
 .P
 .TP
 .B \-\-verbose, \-v
@@ -70,6 +70,9 @@ enable verbose (INFO\-level) logging
 .TP
 .B \-\-limit \fILIMIT\fR
 maximum number of rounds to show (default: 20)
+.TP
+.B \-\-csv \fIFILE\fR
+write the rounds' measurements as CSV to FILE (UTF\-8) instead of the styled table; ignored under \-\-json
 .TP
 .B \-\-json
 output machine\-readable JSON instead of styled text

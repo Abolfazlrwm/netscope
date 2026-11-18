@@ -71,6 +71,7 @@ from netscope.app.reports import (
     build_diagnose_report,
     evidence_report_html,
     evidence_report_markdown,
+    history_rounds_csv,
     serialize_evidence_report,
     serialize_experience,
     serialize_measurement,
@@ -195,6 +196,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         parents=[global_options],
     )
     history.add_argument("--limit", type=int, default=20, help="maximum number of rounds to show (default: 20)")
+    history.add_argument(
+        "--csv",
+        default=None,
+        metavar="FILE",
+        help="write the rounds' measurements as CSV to FILE (UTF-8) instead of the styled table; ignored under --json",
+    )
     history.add_argument("--json", action="store_true", help="output machine-readable JSON instead of styled text")
 
     drift = subparsers.add_parser(
@@ -619,9 +626,22 @@ def run_route_command(
 # ---------------------------------------------------------------------------
 
 
-def run_history_command(container: Container, *, limit: int = 20, json_output: bool = False) -> int:
+def run_history_command(
+    container: Container,
+    *,
+    limit: int = 20,
+    json_output: bool = False,
+    csv_out: str | None = None,
+) -> int:
     """Runs the `history` command: recent measurement rounds
-    reconstructed from the local SQLite log via `recent_rounds`."""
+    reconstructed from the local SQLite log via `recent_rounds`.
+
+    Renderings: the styled table (default), machine-readable JSON
+    (`--json`), and -- v0.17 -- a CSV file export (`--csv FILE`): one
+    row per stored measurement with its round denormalized onto every
+    row, written with explicit UTF-8 for the same reason every other
+    exported file is. Like the report's `--html`, the export is ignored
+    under `--json` -- one primary rendering per invocation."""
     rounds = recent_rounds(container, limit=limit)
 
     if json_output:
@@ -638,6 +658,17 @@ def run_history_command(container: Container, *, limit: int = 20, json_output: b
             ],
         }
         console().print_json(json.dumps(payload))
+        return 0
+
+    if csv_out is not None:
+        # Explicit UTF-8 and newline="": the CSV is an export artifact
+        # someone opens in a spreadsheet, and Windows consoles default
+        # to legacy code pages just as they always have.
+        with open(csv_out, "w", encoding="utf-8", newline="") as fh:
+            fh.write(history_rounds_csv(rounds))
+        measurements = sum(len(r.measurements) for r in rounds)
+        tail = " -- the log has no rounds yet, so the file carries the header only" if not rounds else ""
+        console().print(f"CSV export ({measurements} measurement(s) in {len(rounds)} round(s)) written to [bold]{csv_out}[/bold]{tail}")
         return 0
 
     c = console()
@@ -1079,7 +1110,7 @@ def main() -> None:
             json_output=args.json,
         )
     elif command == "history":
-        exit_code = run_history_command(container, limit=args.limit, json_output=args.json)
+        exit_code = run_history_command(container, limit=args.limit, json_output=args.json, csv_out=args.csv)
     elif command == "drift":
         exit_code = run_drift_command(container, args.target, days=args.days, json_output=args.json)
     elif command == "report":

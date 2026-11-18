@@ -105,7 +105,7 @@ _netscope() {
             diagnose)    opts="--gateway --json --verbose" ;;
             check)       opts="--checks --json --verbose" ;;
             route)       opts="--no-resolve --json --verbose" ;;
-            history)     opts="--limit --json --verbose" ;;
+            history)     opts="--limit --csv --json --verbose" ;;
             drift)       opts="--days --json --verbose" ;;
             monitor)     opts="--interval --rounds --gateway --verbose" ;;
             speed)       opts="--url --seconds --json --verbose" ;;
@@ -186,6 +186,7 @@ _netscope() {
                 history)
                     _arguments \\
                         '--limit[maximum number of rounds to show]:limit:' \\
+                        '--csv[write the measurements as CSV to a file]:file:_files' \\
                         '--json[output machine-readable JSON instead of styled text]' \\
                         '(-v --verbose)'{-v,--verbose}'[enable verbose (INFO-level) logging]'
                     ;;
@@ -311,6 +312,7 @@ complete -c netscope -n "__fish_seen_subcommand_from check" -l json -d "output m
 complete -c netscope -n "__fish_seen_subcommand_from route" -l no-resolve -d "skip reverse-DNS hostname resolution for hops"
 complete -c netscope -n "__fish_seen_subcommand_from route" -l json -d "output machine-readable JSON instead of styled text"
 complete -c netscope -n "__fish_seen_subcommand_from history" -l limit -d "maximum number of rounds to show" -x
+complete -c netscope -n "__fish_seen_subcommand_from history" -l csv -d "write the measurements as CSV to a file" -rF
 complete -c netscope -n "__fish_seen_subcommand_from history" -l json -d "output machine-readable JSON instead of styled text"
 complete -c netscope -n "__fish_seen_subcommand_from drift" -l days -d "recent window length in days" -x
 complete -c netscope -n "__fish_seen_subcommand_from drift" -l json -d "output machine-readable JSON instead of styled text"
