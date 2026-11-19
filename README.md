@@ -5,12 +5,15 @@
 **Internet Experience Intelligence & Network Diagnostics — from raw measurements to "what's wrong, and where", with evidence.**
 
 [![CI](https://github.com/Abolfazlrwm/netscope/actions/workflows/ci.yml/badge.svg)](https://github.com/Abolfazlrwm/netscope/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Abolfazlrwm/netscope/actions/workflows/codeql.yml/badge.svg)](https://github.com/Abolfazlrwm/netscope/actions/workflows/codeql.yml)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/Abolfazlrwm/netscope)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 
 <p align="center"><img src="assets/tui-demo.png" alt="netscope TUI dashboard" width="88%"></p>
-[![Tests](https://img.shields.io/badge/tests-1000%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-1002%20passing-brightgreen)](#development)
+
+> **Try it without installing** — [open a live sample evidence report](https://abolfazlrwm.github.io/netscope/), a real `netscope report --html` artifact generated on a locked-down VM. Half the probes genuinely fail there, and the report keeps them as evidence and scores them honestly — the core rule ("missing" is never "healthy") doing exactly what it promises. Same page links back to the source, so the product and the code are one click apart.
 
 NetScope doesn't just show you a latency number — it tells you whether the problem is **your Wi-Fi/router**, **your ISP**, or **the destination service**, and shows you the evidence chain behind that claim.
 
@@ -212,6 +215,8 @@ netscope drift example.com --days 3 # a shorter, more recent pair
 netscope drift example.com --json   # the full windowed payload for machines
 ```
 
+![NetScope drift](docs/images/cli-drift.svg)
+
 Median latency 23 ms last week and 31 ms this week is degradation **no single check ever flagged** — the drift watch is the lens that says so, with the numbers cited in its evidence lines.
 
 ### Monitoring with honest incident detection
@@ -256,7 +261,7 @@ Deep-dive documents live in [`docs/architecture/`](docs/architecture): architect
 
 ```bash
 make install    # editable install + dev tools
-make test       # 1000 tests, fully offline (fake probes, no network needed)
+make test       # 1002 tests, fully offline (fake probes, no network needed)
 make lint       # ruff check + format check
 make typecheck  # mypy on the package
 ```
