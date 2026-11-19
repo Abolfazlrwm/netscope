@@ -3,10 +3,17 @@
 2. CLI route output with a plausible hop table.
 3. CLI speed output (the v0.3 throughput headline panel).
 4. TUI dashboard (Textual export_screenshot) driven with fake data.
+5. CLI drift output (v0.18) -- the REAL `run_drift_command` path, against
+   a throwaway repository seeded with two plausible history windows.
+
+Every screenshot renders through the real ui/render.py functions (the
+drift one through the whole CLI command), so the README shows the
+product's actual output format with scripted, plausible inputs -- the
+inputs are openly fake, the rendering is the shipped code.
 
 Run:  python scripts/generate_screenshots.py
 Outputs: docs/images/cli-diagnose.svg, cli-route.svg, cli-speed.svg,
-tui-dashboard.svg
+tui-dashboard.svg, cli-drift.svg
 """
 
 from __future__ import annotations
@@ -118,6 +125,70 @@ def speed_screenshot() -> None:
     svg = console.export_svg(title="netscope speed")
     (IMAGES / "cli-speed.svg").write_text(svg, encoding="utf-8")
     print("cli-speed.svg written")
+
+
+def drift_screenshot() -> None:
+    """The `netscope drift` verdict table (v0.15/v0.18): produced by
+    running the REAL `run_drift_command` against a throwaway SQLite
+    repository seeded with two windows of plausible history -- a line
+    that quietly rots between the older and the recent window, so the
+    watch fires on every vital, exactly the story the README tells.
+    Timestamps are anchored to real clock time so the windows are
+    internally consistent; the input data is scripted, the rendering
+    is the shipped command."""
+    import tempfile
+    from datetime import UTC, datetime, timedelta
+
+    from netscope.persistence.measurement_repository import MeasurementRepository
+    from netscope.ui.cli import run_drift_command
+    from netscope.ui import render as ns_render
+
+    now = datetime.now(UTC)
+    repo = MeasurementRepository.open(Path(tempfile.mkdtemp()) / "demo-drift.db")
+
+    def sweep(age_days: float, latency: float, jitter: float, loss: float) -> RawMeasurement:
+        return RawMeasurement(
+            probe_type=ProbeType.ICMP,
+            target="example.com",
+            timestamp=now - timedelta(days=age_days),
+            success=True,
+            latency_ms=latency,
+            jitter_ms=jitter,
+            packet_loss_pct=loss,
+        )
+
+    def download(age_days: float, mbps: float) -> RawMeasurement:
+        return RawMeasurement(
+            probe_type=ProbeType.BANDWIDTH,
+            target="example.com",
+            timestamp=now - timedelta(days=age_days),
+            success=True,
+            extra={"throughput_mbps": mbps},
+        )
+
+    measurements: list[RawMeasurement] = []
+    # Older window: a healthy line -- fast, steady, lossless.
+    measurements += [sweep(10.0 - i * 0.3, 8.2 + i * 0.2, 1.1 + i * 0.05, 0.0) for i in range(6)]
+    measurements += [download(9.5, 92.0), download(8.7, 90.5), download(8.1, 93.2), download(7.6, 91.4), download(7.1, 90.8)]
+    # Recent window: the same line, quietly rotted -- slower, wobbling, dropping.
+    measurements += [sweep(2.5 - i * 0.3, 13.9 + i * 0.2, 2.9 + i * 0.08, 2.0 + i * 0.2) for i in range(6)]
+    measurements += [download(2.3, 71.5), download(1.6, 69.8), download(0.9, 72.4), download(0.6, 70.9), download(0.3, 71.2)]
+    for m in measurements:
+        repo.save(m)
+
+    container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+
+    record = Console(record=True, width=92, force_terminal=False, color_system="truecolor")
+    original_console = ns_render._console
+    ns_render._console = record
+    try:
+        run_drift_command(container, "example.com", days=7)
+    finally:
+        ns_render._console = original_console
+
+    svg = record.export_svg(title="netscope drift")
+    (IMAGES / "cli-drift.svg").write_text(svg, encoding="utf-8")
+    print("cli-drift.svg written")
 
 
 async def tui_screenshot() -> None:
