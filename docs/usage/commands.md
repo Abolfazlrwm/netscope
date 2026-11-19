@@ -220,7 +220,7 @@ by nature, and its result is throughput evidence, not a latency reading.
 ## `netscope tui`
 
 Launch the live six-screen dashboard (v0.6). Requires the extra:
-`pip install "netscope[tui]"`.
+`pip install -e ".[tui]"`.
 
 All screens share one round pipeline, one incident session and one local
 log — switching screens never discards state, and a screen is never left

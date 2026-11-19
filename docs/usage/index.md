@@ -12,7 +12,7 @@ This section is the user-facing documentation. The engineering documents
 
 | Document | What it covers |
 |---|---|
-| [Installation](installation.md) | Installing NetScope from PyPI, from source, and the optional extras |
+| [Installation](installation.md) | Installing NetScope from source (the supported path today), the optional extras, and the PyPI status |
 | [Quickstart](quickstart.md) | The first five commands to run |
 | [Command reference](commands.md) | Every command, flag, and exit behavior |
 | [Configuration](configuration.md) | `~/.netscope/config.toml` keys and the local database |

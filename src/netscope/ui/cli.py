@@ -310,7 +310,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser(
         "tui",
-        help="launch the live terminal dashboard (requires: pip install netscope[tui])",
+        help='launch the live terminal dashboard (requires: pip install -e ".[tui]")',
         parents=[global_options],
     )
 

@@ -69,6 +69,6 @@ attach to an ISP ticket or an internal issue.
 
 - `netscope monitor` — continuous rounds with incident detection
   (Ctrl+C to stop)
-- `netscope tui` — the live dashboard (`pip install "netscope[tui]"`)
+- `netscope tui` — the live dashboard (`pip install -e ".[tui]"`)
 - `netscope <command> --json` — machine-readable output for scripting
   (see [JSON output](json-output.md))
