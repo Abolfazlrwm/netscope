@@ -140,8 +140,8 @@ def drift_screenshot() -> None:
     from datetime import UTC, datetime, timedelta
 
     from netscope.persistence.measurement_repository import MeasurementRepository
-    from netscope.ui.cli import run_drift_command
     from netscope.ui import render as ns_render
+    from netscope.ui.cli import run_drift_command
 
     now = datetime.now(UTC)
     repo = MeasurementRepository.open(Path(tempfile.mkdtemp()) / "demo-drift.db")
