@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetScope — live sample evidence report</title>
+<meta name="description" content="A real NetScope evidence report, generated on a locked-down CI VM — showing the honesty rule: missing is never reported as healthy.">
+<style>
+  :root{--bg:#0b0f14;--panel:#111823;--line:#1f2a3a;--text:#e6edf3;--muted:#8b98a9;--green:#3fb950;--amber:#d29922;--accent:#58a6ff}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.6}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 clamp(16px,4vw,32px)}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  .hero{padding:clamp(40px,8vw,72px) 0 24px}
+  h1{font-size:clamp(1.7rem,5vw,2.8rem);letter-spacing:-.02em;line-height:1.15}
+  h1 em{font-style:normal;color:var(--green)}
+  .sub{color:var(--muted);max-width:720px;margin-top:14px;font-size:clamp(1rem,2.6vw,1.1rem)}
+  .cta{display:flex;gap:14px;margin-top:26px;flex-wrap:wrap}
+  .btn{display:inline-block;padding:12px 22px;border-radius:10px;font-weight:600;border:1px solid var(--line)}
+  .btn.primary{background:#1a7f37;border-color:#1a7f37;color:#fff}
+  .btn.primary:hover{background:var(--green);text-decoration:none}
+  .note{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:12px;padding:18px 20px;margin:28px 0}
+  .note b{color:var(--amber)}
+  .note p{color:var(--muted);font-size:.95rem}
+  .note code{background:#0d1117;border-radius:6px;padding:1px 7px;font-size:.85em;color:#a5d6ff}
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:26px 0}
+  .facts div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .facts b{display:block;margin-bottom:4px}
+  .facts span{color:var(--muted);font-size:.9rem}
+  section{padding:28px 0 40px}
+  h2{font-size:clamp(1.2rem,3.5vw,1.6rem);margin-bottom:10px}
+  .btn.report{border-color:var(--green);color:var(--green)}
+  footer{border-top:1px solid var(--line);padding:24px 0;color:var(--muted);font-size:.9rem}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="hero">
+    <h1>NetScope — a <em>live sample</em> evidence report</h1>
+    <p class="sub">NetScope is an internet-experience diagnostic for your terminal: seven probes, a 0–100 experience score, and evidence reports that answer whether the problem is your Wi-Fi, your ISP, or the service — 1,000 tests, fully offline.</p>
+    <div class="cta">
+      <a class="btn primary" href="report.html">Open the live sample report →</a>
+      <a class="btn report" href="https://github.com/Abolfazlrwm/netscope">Read the code</a>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>Why is the score in this sample low (29/100)?</b>
+    <p>Because this report was generated on a <b>locked-down CI VM</b> — no ICMP raw sockets, a containerized gateway, proxied egress. Half the probes genuinely fail there, and NetScope <b>refuses to fake a "healthy"</b>: every failed probe stays in the report as evidence, and the score drops accordingly. That is the product's core honesty rule — <i>"missing" is never reported as "healthy"</i> — doing exactly what it promises, under bad conditions. Run it on your own machine and the same probes tell you the truth about <i>your</i> network.</p>
+  </div>
+
+  <div class="facts">
+    <div><b>🔬 Evidence, not vibes</b><span>Every verdict cites the probes behind it; untested evidence blocks confident attribution instead of guessing.</span></div>
+    <div><b>📉 Drift watch</b><span>Compares the recent window against the one before it, vital by vital — catches the slow leak no single check can flag.</span></div>
+    <div><b>🗺️ Ownership on every hop</b><span>Hand-written GeoLite2 reader (zero dependencies): operator names per route hop, place & distance per reading.</span></div>
+    <div><b>📄 Exportable</b><span>Markdown, dark HTML with inline SVG trends, CSV, and Prometheus text-exposition metrics — from one command.</span></div>
+  </div>
+
+  <section>
+    <h2>Run it on your machine</h2>
+    <p class="sub" style="margin-top:8px">The <code style="background:#0d1117;border-radius:6px;padding:1px 7px;color:#a5d6ff">report</code> you just opened came from one command: <code style="background:#0d1117;border-radius:6px;padding:1px 7px;color:#a5d6ff">netscope report --html report.html</code>. Install from source:</p>
+<pre style="background:#0d1117;border:1px solid var(--line);border-radius:12px;padding:18px;overflow-x:auto;font-size:.85rem;margin-top:16px"><code style="color:#7ee787">git clone https://github.com/Abolfazlrwm/netscope
+cd netscope && pip install -e .
+netscope check github.com      # probe any target
+netscope report --html report.html</code></pre>
+  </section>
+</main>
+<footer>
+  <div class="wrap">NetScope — built by <a href="https://github.com/Abolfazlrwm">Abolfazl Ranjbaran</a> · <a href="https://github.com/Abolfazlrwm/netscope">github.com/Abolfazlrwm/netscope</a></div>
+</footer>
+</body>
+</html>

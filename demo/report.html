@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetScope evidence report — all targets (7 days)</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0 auto; padding: 32px 20px 48px; max-width: 880px;
+  background: #0d1117; color: #c9d1d9; line-height: 1.55;
+  font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+code, .num, td, .stat b { font-family: ui-monospace, "Cascadia Code", Consolas, Menlo, monospace; }
+h1 { font-size: 22px; margin: 0 0 2px; color: #e6edf3; }
+h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .08em;
+  color: #8b949e; margin: 36px 0 10px; border-bottom: 1px solid #21262d; padding-bottom: 6px; }
+h3 { font-size: 16px; margin: 22px 0 6px; color: #e6edf3; }
+a { color: #58a6ff; }
+.window { color: #8b949e; margin: 0; font-size: 13px; }
+header { border-bottom: 1px solid #21262d; padding-bottom: 16px; }
+.totals { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 0; }
+.stat { background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+  padding: 10px 14px; min-width: 108px; }
+.stat .label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+.stat b { display: block; font-size: 20px; color: #e6edf3; margin-top: 2px; }
+.sparkline-box { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 14px; }
+.sparkline-box svg { display: block; max-width: 100%; height: auto; }
+.no-data { color: #8b949e; font-style: italic; }
+.gauge-wrap { display: flex; align-items: center; gap: 18px; }
+.gauge text.gauge-num { fill: #e6edf3; font-size: 20px;
+  font-family: ui-monospace, Consolas, Menlo, monospace; }
+.agg { color: #8b949e; font-size: 13px; margin: 0 0 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 6px 0 10px; }
+th { text-align: left; color: #8b949e; font-weight: 600; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .06em; }
+th, td { border: 1px solid #21262d; padding: 5px 9px; }
+tbody tr:nth-child(odd) { background: #10151c; }
+td.num, th.num { text-align: right; }
+.ok { color: #3fb950; } .bad { color: #f85149; } .warn { color: #d29922; }
+.dim { color: #8b949e; }
+.disclosure { color: #8b949e; font-style: italic; font-size: 12.5px; margin: 2px 0 0; }
+ul.notes { padding-left: 20px; } ul.notes li { margin: 6px 0; }
+footer { margin-top: 40px; border-top: 1px solid #21262d; padding-top: 14px;
+  color: #8b949e; font-size: 12.5px; }
+.fail-tag { color: #f85149; }
+</style>
+</head>
+<body>
+<header>
+<h1>NetScope evidence report</h1>
+<p class="window">window: 2026-11-12T11:49:00.291860+00:00 → 2026-11-19T11:49:00.291860+00:00 (7 days) · scope: all targets</p>
+</header>
+<section class="totals">
+<div class="stat"><span class="label">targets</span><b>4</b></div>
+<div class="stat"><span class="label">rounds</span><b>1</b></div>
+<div class="stat"><span class="label">measurements</span><b>8</b></div>
+<div class="stat"><span class="label">failures</span><b>4</b></div>
+<div class="stat"><span class="label">mean score</span><b>28.6</b></div>
+</section>
+<h2>Score trend</h2>
+<div class="sparkline-box">
+<div class="gauge-wrap">
+<svg class="gauge" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="mean score 29 of 100"><circle cx="48.0" cy="48.0" r="40.0" fill="none" stroke="#30363d" stroke-width="8"/><circle cx="48.0" cy="48.0" r="40.0" fill="none" stroke="#f85149" stroke-width="8" stroke-linecap="round" stroke-dasharray="71.9 251.3" transform="rotate(-90 48.0 48.0)"/><text x="48.0" y="54.0" text-anchor="middle" class="gauge-num">29</text></svg>
+<div><div class="dim">mean score across the window</div><div class="dim">recomputed against the <em>current</em> personal baseline — the log alone cannot reconstruct the baseline as it stood at each round's time</div></div>
+</div>
+<p class='no-data'>Not enough scored rounds for a trend — the line appears once two rounds carry a score.</p>
+</div>
+<h2>Rounds</h2>
+<table><thead><tr><th>when</th><th class='num'>score</th><th>level</th><th>checks</th><th>detail</th></tr></thead><tbody>
+<tr><td>2026-11-19T11:48:58.552681+00:00</td><td class='num'>28.6</td><td>poor</td><td class='num'>4/8</td><td class='dim'>icmp: permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib; icmp: permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib; icmp: permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib; icmp: permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib</td></tr>
+</tbody></table>
+<h2>Per-target evidence</h2>
+<h3><code>1.1.1.1</code></h3>
+<p class='agg'>icmp · 2 measurement(s) · 2 failed
+</p>
+<table><thead><tr><th>when</th><th>probe</th><th>ok</th><th class='num'>latency_ms</th><th class='num'>loss %</th><th class='num'>jitter_ms</th>
+<th>error</th></tr></thead><tbody>
+<tr><td>2026-11-19T11:48:58.552720+00:00</td><td>icmp</td><td class='bad'>no</td><td class='num'>--</td><td class='num'>--</td><td class='num'>--</td><td class='dim'>permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib</td></tr>
+<tr><td>2026-11-19T11:48:59.711363+00:00</td><td>icmp</td><td class='bad'>no</td><td class='num'>--</td><td class='num'>--</td><td class='num'>--</td><td class='dim'>permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib</td></tr>
+</tbody></table>
+<h3><code>21.0.0.1</code></h3>
+<p class='agg'>icmp · 2 measurement(s) · 2 failed
+</p>
+<table><thead><tr><th>when</th><th>probe</th><th>ok</th><th class='num'>latency_ms</th><th class='num'>loss %</th><th class='num'>jitter_ms</th>
+<th>error</th></tr></thead><tbody>
+<tr><td>2026-11-19T11:48:58.552681+00:00</td><td>icmp</td><td class='bad'>no</td><td class='num'>--</td><td class='num'>--</td><td class='num'>--</td><td class='dim'>permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib</td></tr>
+<tr><td>2026-11-19T11:48:59.711326+00:00</td><td>icmp</td><td class='bad'>no</td><td class='num'>--</td><td class='num'>--</td><td class='num'>--</td><td class='dim'>permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib</td></tr>
+</tbody></table>
+<h3><code>example.com</code></h3>
+<p class='agg'>dns · 2 measurement(s) · 0 failed · mean latency 2.9 ms
+</p>
+<div class="sparkline-box">
+<svg class="spark" width="640" height="56" viewBox="0 0 640 56" role="img" aria-label="trend sparkline"><polyline fill="none" stroke="#3fb950" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="6.0,6.0 634.0,50.0"/><circle cx="634.0" cy="50.0" r="3" fill="#3fb950"/></svg>
+<p class='disclosure'>latency per shown measurement, oldest → newest (ms)</p>
+</div>
+<table><thead><tr><th>when</th><th>probe</th><th>ok</th><th class='num'>latency_ms</th><th class='num'>loss %</th><th class='num'>jitter_ms</th>
+<th>error</th></tr></thead><tbody>
+<tr><td>2026-11-19T11:48:58.556436+00:00</td><td>dns</td><td class='ok'>yes</td><td class='num'>3.6</td><td class='num'>--</td><td class='num'>--</td><td class='dim'>--</td></tr>
+<tr><td>2026-11-19T11:48:59.713677+00:00</td><td>dns</td><td class='ok'>yes</td><td class='num'>2.2</td><td class='num'>--</td><td class='num'>--</td><td class='dim'>--</td></tr>
+</tbody></table>
+<h3><code>https://www.cloudflare.com/</code></h3>
+<p class='agg'>http · 2 measurement(s) · 0 failed · mean latency 263.4 ms
+</p>
+<div class="sparkline-box">
+<svg class="spark" width="640" height="56" viewBox="0 0 640 56" role="img" aria-label="trend sparkline"><polyline fill="none" stroke="#3fb950" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="6.0,50.0 634.0,6.0"/><circle cx="634.0" cy="6.0" r="3" fill="#3fb950"/></svg>
+<p class='disclosure'>latency per shown measurement, oldest → newest (ms)</p>
+</div>
+<table><thead><tr><th>when</th><th>probe</th><th>ok</th><th class='num'>latency_ms</th><th class='num'>loss %</th><th class='num'>jitter_ms</th>
+<th>error</th></tr></thead><tbody>
+<tr><td>2026-11-19T11:48:58.815277+00:00</td><td>http</td><td class='ok'>yes</td><td class='num'>258.8</td><td class='num'>--</td><td class='num'>--</td><td class='dim'>--</td></tr>
+<tr><td>2026-11-19T11:48:59.981673+00:00</td><td>http</td><td class='ok'>yes</td><td class='num'>267.9</td><td class='num'>--</td><td class='num'>--</td><td class='dim'>--</td></tr>
+</tbody></table>
+<h2>Failures <span class='fail-tag'>(4)</span></h2>
+<table><thead><tr><th>when</th><th>target</th><th>probe</th><th>error</th></tr></thead><tbody>
+<tr><td>2026-11-19T11:48:58.552681+00:00</td><td><code>21.0.0.1</code></td><td>icmp</td><td class='bad'>permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib</td></tr>
+<tr><td>2026-11-19T11:48:58.552720+00:00</td><td><code>1.1.1.1</code></td><td>icmp</td><td class='bad'>permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib</td></tr>
+<tr><td>2026-11-19T11:48:59.711326+00:00</td><td><code>21.0.0.1</code></td><td>icmp</td><td class='bad'>permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib</td></tr>
+<tr><td>2026-11-19T11:48:59.711363+00:00</td><td><code>1.1.1.1</code></td><td>icmp</td><td class='bad'>permission error, unprivileged fallback also failed: A prior configuration of your OS is required to use ICMP sockets without root privileges. Read more on https://github.com/ValentinBELYN/icmplib</td></tr>
+</tbody></table>
+<h2>Notes</h2>
+<ul class='notes'>
+<li>Round scores are recomputed against the <em>current</em> personal baseline; the log alone cannot reconstruct the baseline as it stood at each round's time (the same honest approximation <code>netscope history</code> makes).</li>
+<li><code>verdict</code> is the v0.4 baseline-relative throughput classification: within ±15% of your usual Mbps reads as <code>as_usual</code>; beyond that, <code>slower_than_usual</code> / <code>faster_than_usual</code>.</li>
+<li>Untested metrics never read as healthy: absent evidence renders as <code>--</code>, never as a passing value.</li>
+<li>Throughput evidence stays throughput evidence: verdicts live in the verdict column, latency means only ever average successful latency readings.</li>
+<li>Geography rows are the place/distance the newest geo-aware measurement of that target recorded in the window &mdash; looked up at run time from the user's own GeoLite2 database, never re-looked-up here; a stale-database notice rides along when the database has aged past its refresh rhythm.</li>
+</ul>
+<footer>Generated locally by NetScope from the measurement log (<code>~/.netscope/netscope.db</code>). Nothing here is re-measured — it is what the log proves. This file is self-contained: no scripts, no external assets, nothing leaves it.</footer>
+</body>
+</html>
