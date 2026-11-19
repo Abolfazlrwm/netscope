@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+title: NetScope — Internet Experience Intelligence for your terminal
+message: >-
+  If you use NetScope in research or teaching, please cite it using
+  this metadata (the GitHub "Cite this repository" button reads this
+  file).
+type: software
+authors:
+  - given-names: Abolfazl
+    family-names: Ranjbaran
+    alias: Abolfazlrwm
+    website: "https://github.com/Abolfazlrwm"
+repository-code: "https://github.com/Abolfazlrwm/netscope"
+abstract: >-
+  NetScope is a local-first network diagnostics CLI that turns raw
+  probe measurements (ICMP, DNS, TCP, TLS, HTTP, traceroute,
+  bandwidth) into evidence-based answers about whose fault a bad
+  connection is — the local network, the ISP, or the destination
+  service. It learns a personal statistical baseline per target, keeps
+  a "drift watch" over recent history windows, refuses to report
+  missing probes as healthy, and exports self-contained evidence
+  reports as markdown, HTML, CSV and Prometheus metrics. All data stays
+  in a local SQLite database.
+keywords:
+  - network-diagnostics
+  - latency
+  - packet-loss
+  - jitter
+  - internet-health
+  - evidence-based-diagnosis
+  - cli
+license: MIT
+version: 0.18.0
+date-released: "2026-11-20"
