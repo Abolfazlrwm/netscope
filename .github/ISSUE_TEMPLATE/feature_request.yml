@@ -1,0 +1,43 @@
+name: Feature idea
+description: A probe, a verdict, a report door — something NetScope should do that it doesn't yet.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome — especially ones that fit the project's rules: hexagonal
+        architecture (see `docs/architecture/`), zero new dependencies unless a problem
+        demands one, and the honesty rule (missing is never healthy). Skim the ADRs and
+        the roadmap first; if your idea is already reserved there, mention that.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem it solves
+      description: What were you trying to do, and what made it hard or impossible?
+      placeholder: A clear description of the problem, not the solution...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What it should look like
+      description: The command, the panel, the report section — sketch it as concretely as you can.
+      placeholder: |
+        $ netscope <your idea>
+        ...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other tools, other designs, or the workaround you use today.
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Fit check
+      options:
+        - label: I checked the ADRs and the roadmap for existing discussion of this
+          required: false
+        - label: I believe this can be built without new runtime dependencies (or I explain why not)
+          required: false

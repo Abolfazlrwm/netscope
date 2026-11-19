@@ -1,0 +1,69 @@
+name: Bug report
+description: Something broke, a verdict looks wrong, or the evidence contradicts what you see.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. NetScope diagnoses with evidence, and so do good
+        bug reports — one with the command, the output, and what you expected is worth
+        ten without. If you can, re-run the failing command with `--json` and paste that too.
+
+        Note: NetScope never fakes a healthy probe. If a check reports `untested` or
+        failed on your machine, that is the honesty rule working, not necessarily a bug —
+        but if the *reason* looks wrong, we want to see it.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Also tell us what you expected to happen instead.
+      placeholder: A clear description of the wrong behavior...
+    validations:
+      required: true
+  - type: textarea
+    id: command-and-output
+    attributes:
+      label: Command and output
+      description: The exact command you ran and the relevant output (`--json` is gold). Redact anything private.
+      placeholder: |
+        $ netscope check example.com --json
+        ...
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: python
+    attributes:
+      label: Python version
+      options:
+        - "3.13"
+        - "3.12"
+        - "3.11"
+        - other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: NetScope version
+      description: Output of `netscope --version`.
+      placeholder: e.g. 0.18.0
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: >
+        Relevant `config.toml` keys, whether GeoLite2 files are installed, whether it
+        happens on other targets or networks, and anything you already ruled out.
