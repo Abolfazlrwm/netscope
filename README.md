@@ -39,15 +39,15 @@ The untested-evidence principle is NetScope's core honesty rule: *"missing" is n
 ## Install
 
 ```bash
-# Core CLI (rich terminal output)
-pip install netscope
+# From source (the supported path today — not yet on PyPI)
+git clone https://github.com/Abolfazlrwm/netscope
+cd netscope && pip install -e .
 
 # With the live TUI dashboard
-pip install "netscope[tui]"
+pip install -e ".[tui]"
 
-# From source
-git clone https://github.com/Abolfazlrwm/netscope
-cd netscope && pip install -e ".[tui,dev]"
+# Dev tools + editable install (tests, lint)
+make install
 ```
 
 > **Windows note:** ICMP works out of the box. On **Linux/macOS**, raw-socket permission is optional — NetScope automatically falls back to unprivileged UDP ping; for the most reliable ICMP results use `sudo` or set the socket capability (`sudo setcap cap_net_raw+ep $(which python)`).
