@@ -143,3 +143,22 @@ it isn't mistaken for an oversight later.
 Discovery, Probes, Routing, Intelligence & Diagnosis, Persistence, Services, CLI, UI,
 Quality, Release), each sized for one focused implementation and one commit. No task
 in this document is implemented as part of producing it.
+
+---
+
+## Phase L — Storefront & community surface (added post-release, 2026-11)
+
+Post-release work that does not extend the product: it extends what a
+stranger meets first (the repository's front door) — see `adr-017` for the
+decision story. Zero product code, zero new dependencies.
+
+| TASK | Title | Goal | Scope | Shipped in |
+|---|---|---|---|---|
+| TASK-056 | Live demo site | Publish a real `netscope report --html` artifact and a landing page to GitHub Pages — the honesty rule as the demo's selling point | `demo/*` (new), `.github/workflows/pages.yml` (new) | v0.18 |
+| TASK-057 | Drift screenshot | Capture the drift verdict table through the real `run_drift_command` path with scripted input windows | `scripts/generate_screenshots.py`, `docs/images/cli-drift.svg` (new) | v0.18 |
+| TASK-058 | Security scanning | CodeQL static analysis on push, PR and a weekly schedule, beside ruff and mypy | `.github/workflows/codeql.yml` (new) | v0.18 |
+| TASK-059 | Citation & issue forms | CFF citation metadata the Cite button reads; typed YAML issue forms that ask for evidence | `CITATION.cff` (new), `.github/ISSUE_TEMPLATE/*` | v0.18 |
+
+Not yet shipped from this phase: a PyPI door (`pip install netscope` is
+still a 404; the README and `adr-017` say so) — it needs a PyPI account and
+a trusted-publisher setup, both owner actions, not code.

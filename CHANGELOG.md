@@ -6,6 +6,54 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-11-20
+
+The storefront. The tool has been feature-complete for four releases in a
+row; what this release builds is the surface a stranger meets first — the
+repository itself (`adr-017`). Everything here is documentation, community
+plumbing and CI: zero product code, zero new dependencies, the tenth release
+in a row.
+
+### Added
+
+- **A live sample report on GitHub Pages** (`demo/`, `.github/workflows/pages.yml`): a
+  landing page that links a real `netscope report --html` artifact generated
+  on a locked-down VM — no ICMP raw sockets, proxied egress — and says so
+  plainly: half the probes genuinely fail there, the failures stay in the
+  report as evidence, and the score answers honestly. The demo is honest on
+  purpose; a faked "healthy" report would contradict the product's own core
+  rule. Product and code are one click apart.
+- **`docs/images/cli-drift.svg`** — the drift watch verdict table captured
+  through the real `run_drift_command` path: the committed
+  `scripts/generate_screenshots.py` seeds two plausible history windows
+  (a line that quietly rots) into a throwaway SQLite repository, and the
+  shipped command renders the verdict — latency +66%, loss +2.5pp,
+  jitter +153%, throughput −22%, overall degrading. The README's drift
+  section now shows the watch actually firing, not just describing it.
+- **CodeQL static security analysis** (`.github/workflows/codeql.yml`):
+  every push, every PR, and a weekly schedule. The repo that judges a
+  network's honesty also scans its own code.
+- **`CITATION.cff`** — citation metadata the GitHub "Cite this repository"
+  button reads: version-pinned, released with the project, so research and
+  teaching can cite the tool properly.
+- **Typed YAML issue forms** (`bug_report.yml`, `feature_request.yml`): bug
+  reports now ask for the exact command, the output (`--json` is gold) and
+  `netscope --version` up front; feature ideas ask for the problem before
+  the design. Evidence-first, like the tool itself. The old markdown
+  templates are retired.
+- **Discussions** are open for questions, verdict readings and shared
+  reports — linked from the issue-form chooser so questions don't become
+  bugs.
+
+### Fixed
+
+- The README's install section pointed at `pip install netscope` — a
+  package that does not exist on PyPI, a 404 as the project's first
+  impression. The supported source path is documented instead until a PyPI
+  door actually opens.
+- The tests badge said 1000; the suite has 1002 (the badge and the
+  Development section now agree with reality).
+
 ## [0.17.0] — 2026-11-18
 
 The readings travel. The post-TASK-046 roadmap reserved exactly one item --
