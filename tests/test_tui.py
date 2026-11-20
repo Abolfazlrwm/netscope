@@ -14,6 +14,7 @@ dev extra) -- skipped cleanly otherwise.
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 
 import pytest
@@ -39,6 +40,15 @@ from netscope.core.models import (
     Severity,
     utcnow,
 )
+
+
+def _contains_word(text: str, needle: str) -> bool:
+    """Word-boundary containment for host assertions (see test_cli._contains_word).
+
+    Used instead of plain ``needle in text`` so a host token cannot match as
+    an arbitrary substring inside a larger URL/path.
+    """
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", text) is not None
 
 
 class _FakeProbe:
@@ -521,7 +531,7 @@ async def test_services_screen_checks_a_host_on_demand_and_persists():
         from textual.widgets import RichLog
 
         log_text = "\n".join(strip.text for strip in screen.query_one("#check_log", RichLog).lines)
-        assert "example.com" in log_text and "score" in log_text
+        assert _contains_word(log_text, "example.com") and "score" in log_text
         table = screen.query_one("#services_table")
         await _wait_for(lambda: table.row_count == 1, pilot)  # the board grew to include the new target
 
@@ -550,7 +560,7 @@ async def test_services_screen_pins_a_saved_service_before_its_first_check(tmp_p
         table = screen.query_one("#services_table")
         await _wait_for(lambda: table.row_count == 1, pilot)
         row = table.get_row_at(0)
-        assert "My VPN" in str(row[0]) and "vpn.example.net" in str(row[0])
+        assert "My VPN" in str(row[0]) and _contains_word(str(row[0]), "vpn.example.net")
         # DataTable cells keep the raw markup string (same convention
         # the v0.6 board tests assert against).
         assert all(str(cell) == "[dim]—[/]" for cell in row[1:6])  # absent evidence shown as absent
@@ -582,7 +592,7 @@ async def test_services_screen_joins_saved_and_logged_targets_without_duplicatin
         first = str(table.get_row_at(0)[0])
         assert "My VPN" in first  # saved services render first
         targets = [str(table.get_row_at(i)[0]) for i in range(table.row_count)]
-        assert sum("vpn.example.net" in target for target in targets) == 1
+        assert sum(_contains_word(target, "vpn.example.net") for target in targets) == 1
         assert "✓" in str(table.get_row_at(0)[1])  # the pinned row carries the host's evidence
 
 

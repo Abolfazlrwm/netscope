@@ -52,6 +52,16 @@ from netscope.ui.cli import (
 )
 
 
+def _contains_word(text: str, needle: str) -> bool:
+    """Word-boundary containment for host assertions.
+
+    Used instead of plain ``needle in text`` so a host token cannot match as
+    an arbitrary substring inside a larger URL/path; matches must align with
+    non-word boundaries on both sides.
+    """
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", text) is not None
+
+
 @dataclass
 class _FakeProbe:
     probe_type: ProbeType
@@ -668,7 +678,7 @@ def test_route_command_output_includes_the_target_name(capsys):
     run_route_command(container, "example.com")
 
     captured = capsys.readouterr()
-    assert "example.com" in captured.out
+    assert _contains_word(captured.out, "example.com")
 
 
 # --- Failure handling ----------------------------------------------------------
@@ -913,7 +923,7 @@ def test_service_add_saves_and_reports_created(tmp_path, capsys):
     code = run_service_add_command(container, "My VPN", "vpn.example.net", {ProbeType.ICMP, ProbeType.HTTP})
     out = capsys.readouterr().out
     assert code == 0
-    assert "Saved service" in out and "My VPN" in out and "vpn.example.net" in out
+    assert "Saved service" in out and "My VPN" in out and _contains_word(out, "vpn.example.net")
     assert "icmp, http" in out  # CLI display order, not alphabetical storage order
 
 
@@ -923,7 +933,7 @@ def test_service_add_twice_reports_updated(tmp_path, capsys):
     code = run_service_add_command(container, "My VPN", "new.example.net", {ProbeType.TLS})
     out = capsys.readouterr().out
     assert code == 0
-    assert "Updated service" in out and "new.example.net" in out
+    assert "Updated service" in out and _contains_word(out, "new.example.net")
     assert container.service_repository.load_all()[0].host == "new.example.net"
 
 

@@ -88,6 +88,9 @@ def handshake(host: str, port: int, timeout: float = 2.0) -> RawMeasurement:
     start = time.perf_counter()
     try:
         context = ssl.create_default_context()
+        # Pin a modern protocol floor explicitly: don't rely on the OpenSSL
+        # build's default in case it still permits TLSv1/TLSv1.1.
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         # server_hostname is required by ssl.create_default_context()'s
         # default check_hostname=True / verify_mode=CERT_REQUIRED for
         # certificate hostname verification to work at all.
