@@ -11,7 +11,7 @@
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 
 <p align="center"><img src="assets/tui-demo.png" alt="netscope TUI dashboard" width="88%"></p>
-[![Tests](https://img.shields.io/badge/tests-1002%20passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-1000%20passing-brightgreen)](#development)
 
 > **Try it without installing** — [open a live sample evidence report](https://abolfazlrwm.github.io/netscope/), a real `netscope report --html` artifact generated on a locked-down VM. Half the probes genuinely fail there, and the report keeps them as evidence and scores them honestly — the core rule ("missing" is never "healthy") doing exactly what it promises. Same page links back to the source, so the product and the code are one click apart.
 
