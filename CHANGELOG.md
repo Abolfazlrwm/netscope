@@ -6,6 +6,55 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-11-20
+
+The night shift. The roadmap reserved exactly one item after the storefront
+-- "a scheduled watch loop that evaluates drift verdicts on every round and
+raises threshold-crossing alerts with an exit code a scheduler or CI job
+can act on (the cron line exists since v0.17; the alarm is the missing
+piece)" -- and v0.20 builds it: the drift watch's degrading boundary becomes
+an exit code, and the monitor loop learns to re-ask the watch every N
+rounds, one honest line per boundary crossing. The alarm owns no
+notification stack and no thresholds of its own: the scheduler stays the
+notifier (the exit code composes with every one of them), and the verdict
+word is core's, read at the boundary (`adr-018`). Zero new dependencies --
+the eleventh release in a row.
+
+### Added
+
+- **`netscope drift --fail-on-degrading`**: exit **1** when the overall
+  verdict is degrading, **0** when it asks nothing of the reader -- stable,
+  improving, and the honest "not enough data" (a coverage finding is not a
+  failure, the convention `history` set). `--json` honors the flag too. A
+  cron line, a systemd timer or a CI job can now act on the watch's one
+  answer without parsing styled output.
+- **`netscope monitor --drift-every N`**: the night shift in the loop --
+  every Nth round the drift watch is re-asked for every target the round
+  measured (a plain SQLite read behind `run_drift_analysis`, no new probes,
+  no threads), and a per-target `DriftAlarmSession` (app/monitoring.py,
+  beside the incident state machine it mirrors) turns the verdict stream
+  into transitions: `⚠ drift alarm RAISED` with the evidence sentences on
+  the first degrading verdict -- including the first evaluation against an
+  already-rotting history, where silence would hide the leak -- a dim
+  ongoing line while it stays, `✓ drift alarm CLEARED` when it recovers.
+- **`netscope monitor --fail-on-drift`**: exit 1 when an alarm is still
+  active when monitoring stops, for a supervisor that acts without parsing
+  output; the parser rejects it without `--drift-every` (an alarm about a
+  watch that is never asked can never be active). Without the flag the
+  monitor's exit contract is unchanged: 0 after a normal run, Ctrl+C
+  included.
+- **ADR-018** (`docs/architecture/adr-018-the-night-shift.md`): why the
+  exit code is the alarm, why there is no webhook door, why transitions and
+  not state lines.
+
+### Notes
+
+- 1013 tests in the suite passing outright, 2 skipped in CI (the opt-in
+  `maxminddb` crosscheck; 13 new across the alarm session, the drift exit
+  code and the monitor loop), ruff clean, mypy clean, shell completions and
+  the man page regenerated in the same commit as the flags they pin. Zero
+  new dependencies -- the eleventh release in a row.
+
 ## [0.19.0] — 2026-11-20
 
 The door opens. `adr-017` wrote the honest gap down — the only door a

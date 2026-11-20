@@ -143,6 +143,7 @@ being hidden.
 | `target` | hostname or IP whose stored history to watch |
 | `--days N` | recent window length in days; the comparison window is the same length before it (default: 7) |
 | `--json` | machine-readable output: window boundaries, per-vital statistics, sample counts, signed changes, verdicts and every evidence sentence |
+| `--fail-on-degrading` | exit 1 when the overall verdict is degrading — the scheduler primitive (see below); default: exit 0 whatever the verdict |
 
 ```console
 $ netscope drift example.com
@@ -163,6 +164,24 @@ Overall: degrading
 
 The watch reads what the log has: run `netscope check <target>` (and
 `netscope speed` for the throughput vital) regularly and both windows fill.
+
+### The alarm (v0.20)
+
+By default the watch answers and exits 0 whatever the verdict says — a
+coverage finding is not a failure. `--fail-on-degrading` turns the degrading
+boundary into the exit code: **0** when the verdict asks nothing of the
+reader (stable, improving, not enough data), **1** when usual is getting
+worse. The scheduler stays the notifier — NetScope never opens a port or
+posts a webhook, the local-first promise costs nothing:
+
+```console
+$ netscope drift example.com --fail-on-degrading || mail -s "example.com is degrading" you@example.net
+$ netscope drift api.example.com --fail-on-degrading --json > drift.json   # exit 1 here too
+```
+
+An exit code is a fact a CI job, a systemd timer or a 30-year-old cron line
+speaks natively — and every one of them can notify better than NetScope
+could.
 
 ## `netscope report`
 
@@ -197,6 +216,31 @@ Ctrl+C stops; a summary of open/closed incidents prints on exit.
 | `--interval S` | seconds between rounds (default: 30) |
 | `--rounds N` | number of rounds before stopping (default: 0 = until Ctrl+C) |
 | `--gateway IP\|auto\|none` | gateway to probe |
+| `--drift-every N` | evaluate the drift watch every N rounds for every target the round measured, and raise alarms on degrading verdicts (default: off) |
+| `--fail-on-drift` | exit 1 when a drift alarm is still active when monitoring stops; needs `--drift-every` |
+
+### The night shift (v0.20)
+
+The monitor loop already watches for *sudden* trouble (incidents, 3
+sustained rounds). With `--drift-every N` it also watches for the *slow*
+kind: every Nth round it re-asks the drift watch for every target the round
+measured, and a per-target alarm session speaks exactly one line per
+boundary crossing — `⚠ drift alarm RAISED` (with the watch's evidence
+sentences) when a verdict first turns degrading, a dim ongoing line while it
+stays, `✓ drift alarm CLEARED` when it recovers. An alarm that repeats
+itself trains its reader to skim; the crossings are what a reader acts on.
+
+```console
+$ netscope monitor --drift-every 10                  # the watch asked every 10 rounds
+$ netscope monitor --drift-every 10 --fail-on-drift  # exit 1 if an alarm is active at stop
+```
+
+A first evaluation against an already-rotting history raises the alarm
+immediately — there is no previous verdict to compare against, and silence
+would hide the leak the loop exists to catch. With `--fail-on-drift`, an
+alarm still active at stop becomes exit code 1, so a supervisor acts without
+parsing output; without it, the loop's exit contract is unchanged (0 after
+a normal run, Ctrl+C included).
 
 ## `netscope speed`
 

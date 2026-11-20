@@ -140,8 +140,8 @@ older rows were omitted — the aggregates always cover the full window.
 | `netscope service add/list/remove/check` | Your curated service list, persisted locally: save, list, remove, and run a saved service's own checks (v0.7) |
 | `netscope route <target> [--no-resolve]` | Traceroute with reverse-DNS hostnames, AS numbers (see below) and route-stability analysis **across your stored history** — "unchanged across the last N runs" / "changed vs <date>: hop K: old → new" (v0.8) |
 | `netscope history [--limit N] [--csv FILE]` | Recent measurement rounds from the local log (CSV export v0.17) |
-| `netscope drift <target> [--days N]` | The drift watch: your recent history window vs. the one before it, vital by vital — catches the slow leak no single check can flag (v0.15) |
-| `netscope monitor [--interval S] [--rounds N]` | Continuous rounds with sustained-problem incident detection |
+| `netscope drift <target> [--days N] [--fail-on-degrading]` | The drift watch: your recent history window vs. the one before it, vital by vital — catches the slow leak no single check can flag (v0.15); `--fail-on-degrading` turns the degrading boundary into an exit code a cron line or CI job acts on (v0.20) |
+| `netscope monitor [--interval S] [--rounds N] [--drift-every N] [--fail-on-drift]` | Continuous rounds with sustained-problem incident detection; `--drift-every` re-asks the drift watch every N rounds and raises per-target alarms on degrading verdicts (v0.20) |
 | `netscope speed [--url URL] [--seconds S]` | Download throughput: median Mbps, peak sample, bytes moved (v0.3) |
 | `netscope report [--days N] [--target T] [--out FILE] [--html FILE] [--csv FILE] [--prometheus FILE]` | Export the log as a self-contained evidence report — markdown, a dark HTML page with inline SVG trends (v0.5; HTML v0.10), a flat CSV table (v0.17), or Prometheus text-exposition metrics for the textfile collector (v0.17) |
 | `netscope completions bash\|zsh\|fish` | Print a ready-to-install shell completion script, verbatim (v0.11) |
@@ -220,6 +220,14 @@ netscope drift example.com --json   # the full windowed payload for machines
 
 Median latency 23 ms last week and 31 ms this week is degradation **no single check ever flagged** — the drift watch is the lens that says so, with the numbers cited in its evidence lines.
 
+The watch answers; the alarm (v0.20) acts. `netscope drift example.com --fail-on-degrading` exits 1 when the verdict is degrading and 0 otherwise — the exit code is the alarm, and the scheduler stays the notifier:
+
+```bash
+netscope drift example.com --fail-on-degrading || mail -s "example.com is degrading" you@example.net
+```
+
+And in the long-running loop, `netscope monitor --drift-every 10` re-asks the watch every 10 rounds for every target the round measured — one line per boundary crossing (`⚠ drift alarm RAISED` … `✓ drift alarm CLEARED`), `--fail-on-drift` exiting 1 while an alarm is active at stop. No webhook, no port, no new dependency: the local-first promise costs nothing, and every scheduler NetScope composes with can notify better than NetScope could (`adr-018`).
+
 ### Monitoring with honest incident detection
 
 ```bash
@@ -227,6 +235,8 @@ netscope monitor --interval 30
 ```
 
 A problem must be sustained for **3 consecutive rounds** to *open* an incident, and a sustained-healthy stretch to *close* one. Single noisy samples never flap incident state, and sustained *"not enough evidence"* rounds neither open nor close anything.
+
+The loop can also carry the night shift (`--drift-every N`, v0.20): every Nth round the drift watch is re-asked for every target the round measured, and the alarm speaks exactly one line per boundary crossing — raised with evidence, dim ongoing, cleared on recovery. The full contract lives in [`docs/usage/commands.md`](docs/usage/commands.md).
 
 ## Configuration (optional)
 
