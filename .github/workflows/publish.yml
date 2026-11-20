@@ -1,0 +1,43 @@
+name: publish
+
+# The PyPI door. On a version tag: build the sdist + wheel and upload
+# them to PyPI with trusted publishing — no token lives in the repo;
+# GitHub's OIDC token proves this workflow's identity to PyPI directly.
+#
+# The other half of the door lives on pypi.org: a one-time "pending
+# publisher" entry must name this repo, this workflow file and the
+# `pypi` environment (owner Abolfazlrwm, repo netscope, workflow
+# publish.yml, environment pypi). Until that registration exists the
+# job below stays skipped — never red — guarded by the repo variable
+# HAVE_PYPI_PUBLISHER; flip it to true once pypi.org says yes.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  upload:
+    name: Build and publish to PyPI
+    if: vars.HAVE_PYPI_PUBLISHER == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
