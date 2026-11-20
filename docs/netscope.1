@@ -79,7 +79,7 @@ output machine\-readable JSON instead of styled text
 .SS drift
 compare the target's recent history window against the one before it, vital by vital
 .P
-\fBnetscope drift\fR \fITARGET\fR [\-v] [\-\-days \fIDAYS\fR] [\-\-json]
+\fBnetscope drift\fR \fITARGET\fR [\-v] [\-\-days \fIDAYS\fR] [\-\-json] [\-\-fail\-on\-degrading]
 .P
 .TP
 .B \-\-verbose, \-v
@@ -90,10 +90,13 @@ recent window length in days; the comparison window is the same length before it
 .TP
 .B \-\-json
 output machine\-readable JSON instead of styled text
+.TP
+.B \-\-fail\-on\-degrading
+exit 1 when the overall verdict is degrading, so a cron line or CI job can raise the alarm (default: exit 0 whatever the verdict)
 .SS monitor
 run continuous measurement rounds with incident detection (Ctrl+C to stop)
 .P
-\fBnetscope monitor\fR [\-v] [\-\-interval \fIINTERVAL\fR] [\-\-rounds \fIROUNDS\fR] [\-\-gateway \fIGATEWAY\fR]
+\fBnetscope monitor\fR [\-v] [\-\-interval \fIINTERVAL\fR] [\-\-rounds \fIROUNDS\fR] [\-\-gateway \fIGATEWAY\fR] [\-\-drift\-every \fIN\fR] [\-\-fail\-on\-drift]
 .P
 .TP
 .B \-\-verbose, \-v
@@ -107,6 +110,12 @@ number of rounds before stopping (0 = until Ctrl+C)
 .TP
 .B \-\-gateway \fIGATEWAY\fR
 gateway to probe: an IP, 'auto', or 'none'
+.TP
+.B \-\-drift\-every \fIN\fR
+evaluate the drift watch every N rounds for every target the round measured, and raise alarms on degrading verdicts (default: off)
+.TP
+.B \-\-fail\-on\-drift
+exit 1 when a drift alarm is still active when monitoring stops; needs \-\-drift\-every
 .SS speed
 measure download throughput (median Mbps over a sampling window)
 .P

@@ -106,8 +106,8 @@ _netscope() {
             check)       opts="--checks --json --verbose" ;;
             route)       opts="--no-resolve --json --verbose" ;;
             history)     opts="--limit --csv --json --verbose" ;;
-            drift)       opts="--days --json --verbose" ;;
-            monitor)     opts="--interval --rounds --gateway --verbose" ;;
+            drift)       opts="--days --json --fail-on-degrading --verbose" ;;
+            monitor)     opts="--interval --rounds --gateway --drift-every --fail-on-drift --verbose" ;;
             speed)       opts="--url --seconds --json --verbose" ;;
             report)      opts="--days --target --out --html --csv --prometheus --json --verbose" ;;
             service)     opts="--checks --json --verbose" ;;
@@ -195,6 +195,7 @@ _netscope() {
                         '1:target:_host' \\
                         '--days[recent window length in days]:days:' \\
                         '--json[output machine-readable JSON instead of styled text]' \\
+                        '--fail-on-degrading[exit 1 when the overall verdict is degrading]' \\
                         '(-v --verbose)'{-v,--verbose}'[enable verbose (INFO-level) logging]'
                     ;;
                 monitor)
@@ -202,6 +203,8 @@ _netscope() {
                         '--interval[seconds between rounds]:interval:' \\
                         '--rounds[number of rounds before stopping]:rounds:' \\
                         '--gateway[gateway to probe: an IP, "auto" or "none"]:value:' \\
+                        '--drift-every[evaluate the drift watch every N rounds]:N:' \\
+                        '--fail-on-drift[exit 1 when a drift alarm is still active at stop]' \\
                         '(-v --verbose)'{-v,--verbose}'[enable verbose (INFO-level) logging]'
                     ;;
                 speed)
@@ -318,9 +321,12 @@ complete -c netscope -n "__fish_seen_subcommand_from history" -l csv -d "write t
 complete -c netscope -n "__fish_seen_subcommand_from history" -l json -d "output machine-readable JSON instead of styled text"
 complete -c netscope -n "__fish_seen_subcommand_from drift" -l days -d "recent window length in days" -x
 complete -c netscope -n "__fish_seen_subcommand_from drift" -l json -d "output machine-readable JSON instead of styled text"
+complete -c netscope -n "__fish_seen_subcommand_from drift" -l fail-on-degrading -d "exit 1 when the overall verdict is degrading"
 complete -c netscope -n "__fish_seen_subcommand_from monitor" -l interval -d "seconds between rounds" -x
 complete -c netscope -n "__fish_seen_subcommand_from monitor" -l rounds -d "number of rounds before stopping" -x
 complete -c netscope -n "__fish_seen_subcommand_from monitor" -l gateway -d "gateway to probe: an IP, auto or none" -x
+complete -c netscope -n "__fish_seen_subcommand_from monitor" -l drift-every -d "evaluate the drift watch every N rounds" -x
+complete -c netscope -n "__fish_seen_subcommand_from monitor" -l fail-on-drift -d "exit 1 when a drift alarm is still active at stop"
 complete -c netscope -n "__fish_seen_subcommand_from speed" -l url -d "download URL to measure" -x
 complete -c netscope -n "__fish_seen_subcommand_from speed" -l seconds -d "measurement window in seconds" -x
 complete -c netscope -n "__fish_seen_subcommand_from speed" -l json -d "output machine-readable JSON instead of styled text"

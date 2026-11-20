@@ -66,7 +66,7 @@ from rich.table import Table
 from netscope.app.config import NetScopeConfig, load_config
 from netscope.app.container import Container, build_container, configure_logging
 from netscope.app.gateway import AUTO_SENTINEL, resolve_gateway
-from netscope.app.monitoring import MonitorSession, TransitionType
+from netscope.app.monitoring import DriftAlarmKind, DriftAlarmSession, MonitorSession, TransitionType
 from netscope.app.reports import (
     build_diagnose_report,
     evidence_report_csv,
@@ -219,6 +219,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="recent window length in days; the comparison window is the same length before it (default: 7)",
     )
     drift.add_argument("--json", action="store_true", help="output machine-readable JSON instead of styled text")
+    drift.add_argument(
+        "--fail-on-degrading",
+        action="store_true",
+        help="exit 1 when the overall verdict is degrading, so a cron line or CI job can raise the alarm (default: exit 0 whatever the verdict)",
+    )
 
     monitor = subparsers.add_parser(
         "monitor",
@@ -228,6 +233,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     monitor.add_argument("--interval", type=float, default=30.0, help="seconds between rounds (default: 30)")
     monitor.add_argument("--rounds", type=int, default=0, help="number of rounds before stopping (0 = until Ctrl+C)")
     monitor.add_argument("--gateway", default=AUTO_SENTINEL, help="gateway to probe: an IP, 'auto', or 'none'")
+    monitor.add_argument(
+        "--drift-every",
+        type=int,
+        default=0,
+        metavar="N",
+        help="evaluate the drift watch every N rounds for every target the round measured, and raise alarms on degrading verdicts (default: off)",
+    )
+    monitor.add_argument(
+        "--fail-on-drift",
+        action="store_true",
+        help="exit 1 when a drift alarm is still active when monitoring stops; needs --drift-every",
+    )
 
     speed = subparsers.add_parser(
         "speed",
@@ -769,14 +786,19 @@ def _format_drift_change(vital: str, change_abs: float | None, change_pct: float
     return f"{absolute} ({change_pct:+.0f}%)"
 
 
-def run_drift_command(container: Container, target: str, *, days: int = 7, json_output: bool = False) -> int:
+def run_drift_command(container: Container, target: str, *, days: int = 7, json_output: bool = False, fail_on_degrading: bool = False) -> int:
     """Runs the `drift` command: the target's two history windows
     compared via the `run_drift_analysis` use case (never window math
     re-derived here), then presentation.
 
-    The exit code is always `0` when the analysis ran: an insufficient
-    verdict is an honest finding about coverage, not a failed command --
-    the same convention `history` sets for an empty log."""
+    Exit code (v0.20, the night shift's scheduler primitive): `0` when
+    the verdict asks nothing of the reader -- stable, improving, or the
+    honest "not enough data" (a coverage finding, not a failure, the
+    same convention `history` sets for an empty log) -- and `1` only
+    under `--fail-on-degrading` when the overall verdict is degrading,
+    so a cron line or CI job can act on the watch's one answer:
+
+        netscope drift example.com --fail-on-degrading || mail ..."""
     report = run_drift_analysis(target, container, recent_days=days)
 
     if json_output:
@@ -808,7 +830,7 @@ def run_drift_command(container: Container, target: str, *, days: int = 7, json_
             "evidence": list(report.evidence),
         }
         console().print_json(json.dumps(payload))
-        return 0
+        return 1 if fail_on_degrading and report.overall == "degrading" else 0
 
     c = console()
     total_samples = sum(v.older_samples + v.recent_samples for v in report.vitals)
@@ -848,6 +870,9 @@ def run_drift_command(container: Container, target: str, *, days: int = 7, json_
     for sentence in report.evidence:
         c.print(f"  [dim]{sentence}[/dim]")
     c.print("  [dim]windows are inclusive on both ends; readings outside them are ignored -- --json carries every sample count[/dim]")
+    if fail_on_degrading and report.overall == "degrading":
+        c.print("[bold red]drift alarm: exiting 1 — the verdict is degrading[/bold red]")
+        return 1
     c.print()
     return 0
 
@@ -956,6 +981,8 @@ def run_monitor_command(
     interval: float = 30.0,
     rounds: int = 0,
     gateway: str | None = AUTO_SENTINEL,
+    drift_every: int = 0,
+    fail_on_drift: bool = False,
     sleep: Callable[[float], None] = time.sleep,
     round_runner: Callable[[Container, NetScopeConfig, str | None], tuple] | None = None,
 ) -> int:
@@ -971,19 +998,35 @@ def run_monitor_command(
     noisy samples never flap incident state, and sustained
     INSUFFICIENT_EVIDENCE stretches neither open nor close anything.
 
+    The night shift (v0.20): with `drift_every` set, the drift watch is
+    re-asked every Nth round for every target the round measured, and
+    a `DriftAlarmSession` per target turns the verdict stream into
+    transitions -- one honest line per evaluation: RAISED on the first
+    degrading verdict, dim ongoing while it stays, CLEARED when it
+    stops. `fail_on_drift` turns an alarm still active at stop into
+    exit code 1, so a long-running supervisor can act without parsing
+    output; without it the loop keeps the same contract as before
+    (0 after a normal run, Ctrl+C included -- stopping a monitor is
+    not a failure).
+
     `sleep` and `round_runner` are injectable so tests can drive the
     loop deterministically without real time or real probes.
 
     Exit code: 0 after a normal run (Ctrl+C included -- stopping a
-    monitor is not a failure), 1 only if a round itself crashes.
+    monitor is not a failure), 1 only if a round itself crashes or,
+    under `fail_on_drift`, when a drift alarm was still active when
+    monitoring stopped.
     """
     resolved_gateway = resolve_gateway(gateway, config) if gateway is not None else config.gateway
     session = MonitorSession()
+    alarm_sessions: dict[str, DriftAlarmSession] = {}
     c = console()
     c.print()
     c.print(
-        "[bold cyan]NetScope monitor[/bold cyan] [dim]— every {}s{} · sustained-problem incident detection · Ctrl+C to stop[/dim]".format(
-            f"{interval:g}", f", {rounds} rounds" if rounds else ""
+        "[bold cyan]NetScope monitor[/bold cyan] [dim]— every {}s{}{} · sustained-problem incident detection · Ctrl+C to stop[/dim]".format(
+            f"{interval:g}",
+            f", {rounds} rounds" if rounds else "",
+            f", drift watch every {drift_every} rounds" if drift_every > 0 else "",
         )
     )
     c.print()
@@ -1024,6 +1067,22 @@ def run_monitor_command(
             elif transition.kind is TransitionType.CLOSED and transition.incident is not None:
                 c.print(f"  [green]✓ incident CLOSED[/green] — lasted until at least {format_time(experience.timestamp)}")
 
+            # The night shift (v0.20): every Nth round, re-ask the
+            # drift watch for every target the round measured and let
+            # the per-target alarm session speak exactly one line.
+            if drift_every > 0 and executed % drift_every == 0:
+                for target in sorted({m.target for m in measurements}):
+                    alarm = alarm_sessions.setdefault(target, DriftAlarmSession(target))
+                    alarm_transition = alarm.process(run_drift_analysis(target, container))
+                    if alarm_transition.kind is DriftAlarmKind.RAISED and alarm_transition.report is not None:
+                        evidence = " ".join(alarm_transition.report.evidence[:2])
+                        detail = evidence if evidence else f"overall verdict: {alarm_transition.report.overall}"
+                        c.print(f"  [bold red]⚠ drift alarm RAISED[/bold red] — {target}: {detail}")
+                    elif alarm_transition.kind is DriftAlarmKind.ONGOING:
+                        c.print(f"  [red]• drift alarm ongoing[/red] — {target}")
+                    elif alarm_transition.kind is DriftAlarmKind.CLEARED:
+                        c.print(f"  [green]✓ drift alarm CLEARED[/green] — {target}")
+
             if executed < rounds or rounds <= 0:
                 sleep(interval)
     except KeyboardInterrupt:
@@ -1032,6 +1091,12 @@ def run_monitor_command(
 
     if session.incident is not None and session.incident.is_active:
         c.print("[yellow]note: an incident was still open when monitoring stopped[/yellow]")
+
+    active_alarms = sorted(t for t, s in alarm_sessions.items() if s.last_verdict == "degrading")
+    if active_alarms:
+        c.print("[yellow]note: a drift alarm was still active when monitoring stopped — " + ", ".join(active_alarms) + "[/yellow]")
+        if fail_on_drift:
+            return 1
     c.print()
     return 0
 
@@ -1154,7 +1219,7 @@ def main() -> None:
     elif command == "history":
         exit_code = run_history_command(container, limit=args.limit, json_output=args.json, csv_out=args.csv)
     elif command == "drift":
-        exit_code = run_drift_command(container, args.target, days=args.days, json_output=args.json)
+        exit_code = run_drift_command(container, args.target, days=args.days, json_output=args.json, fail_on_degrading=args.fail_on_degrading)
     elif command == "report":
         exit_code = run_report_command(
             container,
@@ -1167,12 +1232,16 @@ def main() -> None:
             json_output=args.json,
         )
     elif command == "monitor":
+        if args.fail_on_drift and args.drift_every <= 0:
+            parser.error("--fail-on-drift needs --drift-every N: without the watch being asked, no alarm can ever be active")
         exit_code = run_monitor_command(
             container,
             config,
             interval=args.interval,
             rounds=args.rounds,
             gateway=args.gateway,
+            drift_every=args.drift_every,
+            fail_on_drift=args.fail_on_drift,
         )
     elif command == "speed":
         exit_code = run_speed_command(

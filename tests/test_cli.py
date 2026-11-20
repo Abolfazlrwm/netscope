@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -35,7 +36,7 @@ import pytest
 from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
-from netscope.core.models import ProbeErrorType, ProbeType, RawMeasurement, RouteHop, RouteSnapshot
+from netscope.core.models import ExperienceEvent, ExperienceLevel, ProbeErrorType, ProbeType, RawMeasurement, RouteHop, RouteSnapshot
 from netscope.persistence.measurement_repository import MeasurementRepository
 from netscope.ui.cli import (
     build_arg_parser,
@@ -43,6 +44,7 @@ from netscope.ui.cli import (
     run_diagnose_command,
     run_drift_command,
     run_history_command,
+    run_monitor_command,
     run_route_command,
     run_service_add_command,
     run_service_check_command,
@@ -1206,15 +1208,17 @@ def _seed_drift_history(repo: MeasurementRepository, *, older_latency: float, re
 
 
 def test_argparser_has_the_drift_arguments():
-    args = build_arg_parser().parse_args(["drift", "example.com", "--days", "3", "--json"])
+    args = build_arg_parser().parse_args(["drift", "example.com", "--days", "3", "--json", "--fail-on-degrading"])
     assert args.command == "drift"
     assert args.target == "example.com"
     assert args.days == 3
     assert args.json is True
+    assert args.fail_on_degrading is True
 
     default_args = build_arg_parser().parse_args(["drift", "example.com"])
     assert default_args.days == 7
     assert default_args.json is False
+    assert default_args.fail_on_degrading is False
 
 
 def test_drift_command_renders_the_verdict_and_evidence(capsys):
@@ -1341,3 +1345,176 @@ def test_drift_command_does_not_reimplement_drift():
     assert "run_drift_analysis(" in source
     assert "analyze_drift(" not in source  # it lives in the use case, called exactly once there
     assert "median(" not in source  # the window statistics are core's, not the presentation's
+
+
+# ---------------------------------------------------------------------------
+# the night shift (v0.20) -- the drift alarm's scheduler primitive: the
+# `drift` command's exit code (0 asks nothing of the reader, 1 under
+# --fail-on-degrading) and the `monitor` loop re-asking the watch every
+# N rounds with per-target alarm transitions. Verdicts come from the
+# seeded log via run_drift_analysis; nothing re-derives window math.
+# ---------------------------------------------------------------------------
+
+
+def test_drift_command_fail_on_degrading_exits_one(capsys):
+    repo = MeasurementRepository.open(":memory:")
+    _seed_drift_history(repo, older_latency=20.0, recent_latency=30.0)
+    container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+    try:
+        exit_code = run_drift_command(container, "example.com", fail_on_degrading=True)
+    finally:
+        repo.close()
+
+    assert exit_code == 1
+    captured = " ".join(capsys.readouterr().out.split())
+    assert "Overall: degrading" in captured
+    assert "drift alarm: exiting 1" in captured
+
+
+def test_drift_command_flag_keeps_stable_and_improving_at_zero(capsys):
+    """The alarm is the degrading boundary only: a stable history and
+    an improving one both stay exit 0 under the flag -- good news is
+    not a failure, and a cron line must not page on it."""
+    for older, recent, expected in ((20.0, 20.0, "stable"), (30.0, 20.0, "improving")):
+        repo = MeasurementRepository.open(":memory:")
+        _seed_drift_history(repo, older_latency=older, recent_latency=recent)
+        container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+        try:
+            exit_code = run_drift_command(container, "example.com", fail_on_degrading=True)
+        finally:
+            repo.close()
+        assert exit_code == 0, (older, recent)
+        captured = " ".join(capsys.readouterr().out.split())
+        assert f"Overall: {expected}" in captured
+
+
+def test_drift_command_insufficient_history_stays_zero_under_the_flag(capsys):
+    """An empty log is a coverage finding, not an alarm: the honest
+    "not enough data" verdict keeps exit 0 even under the flag."""
+    repo = MeasurementRepository.open(":memory:")
+    container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+    try:
+        exit_code = run_drift_command(container, "example.com", fail_on_degrading=True)
+    finally:
+        repo.close()
+
+    assert exit_code == 0
+    captured = " ".join(capsys.readouterr().out.split())
+    assert "No stored history" in captured
+
+
+def test_drift_command_json_payload_also_exits_one_under_the_flag(capsys):
+    repo = MeasurementRepository.open(":memory:")
+    _seed_drift_history(repo, older_latency=20.0, recent_latency=30.0)
+    container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+    try:
+        exit_code = run_drift_command(container, "example.com", json_output=True, fail_on_degrading=True)
+    finally:
+        repo.close()
+
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["overall"] == "degrading"
+
+
+def test_argparser_has_the_monitor_drift_arguments():
+    args = build_arg_parser().parse_args(["monitor", "--drift-every", "5", "--fail-on-drift"])
+    assert args.command == "monitor"
+    assert args.drift_every == 5
+    assert args.fail_on_drift is True
+
+    default_args = build_arg_parser().parse_args(["monitor"])
+    assert default_args.drift_every == 0
+    assert default_args.fail_on_drift is False
+
+
+def _drift_round_runner(_container, _config, _gateway):
+    """One healthy round against example.com -- the target the seeded
+    drift history watches, so the loop's drift evaluation has a round
+    target to attach to."""
+    now = datetime.now(UTC)
+    measurement = RawMeasurement(
+        probe_type=ProbeType.ICMP,
+        target="example.com",
+        timestamp=now,
+        success=True,
+        latency_ms=20.0,
+        packet_loss_pct=0.0,
+        jitter_ms=2.0,
+    )
+    return [measurement], ExperienceEvent(timestamp=now, score=91.0, level=ExperienceLevel.GOOD), None
+
+
+def _run_monitor_with_drift(repo, *, rounds, drift_every, fail_on_drift=False):
+    container = Container(probe_registry=ProbeRegistry(probes={}), measurement_repository=repo)
+    return run_monitor_command(
+        container,
+        NetScopeConfig(),
+        interval=0.0,
+        rounds=rounds,
+        gateway=None,
+        drift_every=drift_every,
+        fail_on_drift=fail_on_drift,
+        sleep=lambda _s: None,
+        round_runner=_drift_round_runner,
+    )
+
+
+def test_monitor_command_raises_the_drift_alarm_on_the_first_degrading_verdict(capsys):
+    repo = MeasurementRepository.open(":memory:")
+    _seed_drift_history(repo, older_latency=20.0, recent_latency=30.0)
+    try:
+        exit_code = _run_monitor_with_drift(repo, rounds=1, drift_every=1)
+    finally:
+        repo.close()
+
+    assert exit_code == 0  # the alarm is raised, but --fail-on-drift is off
+    captured = " ".join(capsys.readouterr().out.split())
+    assert "drift watch every 1 rounds" in captured
+    assert "drift alarm RAISED — example.com" in captured
+    assert "median latency 20.0ms -> 30.0ms" in captured
+    assert "note: a drift alarm was still active when monitoring stopped — example.com" in captured
+
+
+def test_monitor_command_alarm_turns_ongoing_while_the_verdict_stays(capsys):
+    repo = MeasurementRepository.open(":memory:")
+    _seed_drift_history(repo, older_latency=20.0, recent_latency=30.0)
+    try:
+        exit_code = _run_monitor_with_drift(repo, rounds=2, drift_every=1)
+    finally:
+        repo.close()
+
+    assert exit_code == 0
+    captured = " ".join(capsys.readouterr().out.split())
+    assert "drift alarm RAISED — example.com" in captured
+    assert "drift alarm ongoing — example.com" in captured
+    assert captured.count("RAISED") == 1  # raised once, then the dim ongoing line
+
+
+def test_monitor_command_fail_on_drift_exits_one(capsys):
+    repo = MeasurementRepository.open(":memory:")
+    _seed_drift_history(repo, older_latency=20.0, recent_latency=30.0)
+    try:
+        exit_code = _run_monitor_with_drift(repo, rounds=1, drift_every=1, fail_on_drift=True)
+    finally:
+        repo.close()
+
+    assert exit_code == 1
+    captured = " ".join(capsys.readouterr().out.split())
+    assert "drift alarm RAISED — example.com" in captured
+
+
+def test_monitor_command_without_the_watch_prints_no_alarm(capsys):
+    """Default monitor stays exactly what it was: no --drift-every, no
+    drift evaluation, no alarm lines -- the night shift is opt-in."""
+    repo = MeasurementRepository.open(":memory:")
+    _seed_drift_history(repo, older_latency=20.0, recent_latency=30.0)
+    try:
+        exit_code = _run_monitor_with_drift(repo, rounds=2, drift_every=0, fail_on_drift=True)
+    finally:
+        repo.close()
+
+    assert exit_code == 0
+    captured = " ".join(capsys.readouterr().out.split())
+    assert "drift alarm" not in captured
+    assert "drift watch" not in captured
