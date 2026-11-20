@@ -17,7 +17,7 @@ from netscope.adapters.probes.registry import ProbeRegistry
 from netscope.app.config import NetScopeConfig
 from netscope.app.container import Container
 from netscope.app.gateway import resolve_gateway
-from netscope.app.monitoring import MonitorSession, TransitionType
+from netscope.app.monitoring import DriftAlarmKind, DriftAlarmSession, MonitorSession, TransitionType
 from netscope.app.reports import build_diagnose_report, serialize_diagnosis, serialize_measurement
 from netscope.app.use_cases import (
     ROUTE_HISTORY_LIMIT,
@@ -28,6 +28,7 @@ from netscope.app.use_cases import (
     run_route_analysis,
 )
 from netscope.core.baseline import UserBaseline
+from netscope.core.drift import DriftReport
 from netscope.core.models import (
     Diagnosis,
     Evidence,
@@ -549,3 +550,71 @@ def test_recent_rounds_groups_measurements_by_time_window(tmp_path):
 def test_recent_rounds_without_repository_returns_empty():
     container = Container(probe_registry=ProbeRegistry())
     assert recent_rounds(container) == []
+
+
+# ---------------------------------------------------------------------------
+# The drift alarm (v0.20) -- the night shift's voice. DriftAlarmSession
+# watches the overall verdict's boundary, never the window math: raised
+# on the first degrading verdict, ongoing while it stays, cleared when
+# it stops. Synthetic DriftReports carry only the fields the session
+# reads (overall) -- the vitals' math is core/drift.py's own suite.
+# ---------------------------------------------------------------------------
+
+
+def _drift_report(overall: str) -> DriftReport:
+    return DriftReport(
+        target="example.com",
+        recent_days=7,
+        window_start=datetime(2026, 1, 1, tzinfo=UTC),
+        boundary=datetime(2026, 1, 8, tzinfo=UTC),
+        end=datetime(2026, 1, 15, tzinfo=UTC),
+        overall=overall,
+        vitals=(),
+        evidence=(),
+    )
+
+
+def test_drift_alarm_raises_on_the_first_degrading_verdict():
+    session = DriftAlarmSession("example.com")
+    # A stable history is quiet -- the watch answers, the alarm does not.
+    assert session.process(_drift_report("stable")).kind is DriftAlarmKind.NONE
+    assert session.process(_drift_report("improving")).kind is DriftAlarmKind.NONE
+    # The first degrading verdict crosses the boundary.
+    raised = session.process(_drift_report("degrading"))
+    assert raised.kind is DriftAlarmKind.RAISED
+    assert raised.report is not None and raised.report.overall == "degrading"
+    assert raised.is_alarming
+
+
+def test_drift_alarm_stays_ongoing_while_degrading_persists():
+    session = DriftAlarmSession("example.com")
+    assert session.process(_drift_report("degrading")).kind is DriftAlarmKind.RAISED
+    ongoing = session.process(_drift_report("degrading"))
+    assert ongoing.kind is DriftAlarmKind.ONGOING
+    assert ongoing.is_alarming
+    # "not enough data" is not degradation -- it clears nothing yet it
+    # ends the alarming state, and the next degrading verdict raises
+    # the alarm again rather than assuming it never stopped.
+    assert session.process(_drift_report("not enough data")).kind is DriftAlarmKind.CLEARED
+    assert session.process(_drift_report("degrading")).kind is DriftAlarmKind.RAISED
+
+
+def test_drift_alarm_clears_when_the_verdict_recovers():
+    session = DriftAlarmSession("example.com")
+    assert session.process(_drift_report("degrading")).kind is DriftAlarmKind.RAISED
+    cleared = session.process(_drift_report("stable"))
+    assert cleared.kind is DriftAlarmKind.CLEARED
+    assert not cleared.is_alarming
+    # Recovery holding is quiet -- a cleared alarm is good news.
+    assert session.process(_drift_report("stable")).kind is DriftAlarmKind.NONE
+
+
+def test_drift_alarm_first_evaluation_degrading_raises_immediately():
+    """A watch loop started against an already-rotting history must
+    raise the alarm on its very first evaluation -- there is no
+    'previous' verdict to compare against, and silence would hide the
+    leak the cron line was built to catch."""
+    session = DriftAlarmSession("example.com")
+    raised = session.process(_drift_report("degrading"))
+    assert raised.kind is DriftAlarmKind.RAISED
+    assert session.last_verdict == "degrading"

@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
+from netscope.core.drift import DriftReport
 from netscope.core.incidents import MonitoringRound, detect_incident
 from netscope.core.models import Diagnosis, Incident, utcnow
 
@@ -118,3 +119,75 @@ class MonitorSession:
         if previous.is_active and not current.is_active:
             return TransitionType.CLOSED
         return TransitionType.NONE
+
+
+# ---------------------------------------------------------------------------
+# The drift alarm (v0.20) -- the night shift's voice. The drift watch
+# (v0.15) answers one question per evaluation: is usual getting worse?
+# A watch loop that re-asks the question every N rounds does not want
+# the verdict repeated at the top of its lungs forever -- it wants the
+# TRANSITION: the moment the verdict first crosses into degrading
+# (raised), the confirmation while it stays there (ongoing), and the
+# moment it stops (cleared). Same shape the incident state machine
+# gives the CLI: exactly one honest line per evaluation, derived here
+# in app -- core hands over the verdict, nobody re-derives window math.
+# ---------------------------------------------------------------------------
+
+
+class DriftAlarmKind(str, Enum):
+    RAISED = "raised"
+    ONGOING = "ongoing"
+    CLEARED = "cleared"
+    NONE = "none"
+
+
+@dataclass(frozen=True)
+class DriftAlarmTransition:
+    """What happened to the drift verdict as a result of one
+    evaluation -- `report` is the evaluation that produced the
+    transition, carried so the CLI can cite its evidence sentences
+    without re-reading the log."""
+
+    kind: DriftAlarmKind
+    report: DriftReport | None
+
+    @property
+    def is_significant(self) -> bool:
+        """True for transitions a watch UI should surface (raised /
+        cleared -- ongoing is surfaced dim, none is quiet)."""
+        return self.kind is not DriftAlarmKind.NONE
+
+    @property
+    def is_alarming(self) -> bool:
+        """True while the alarm deserves the exit code: raised or
+        ongoing. A cleared alarm is good news, not a failure."""
+        return self.kind in (DriftAlarmKind.RAISED, DriftAlarmKind.ONGOING)
+
+
+class DriftAlarmSession:
+    """Per-target drift-verdict state for one `netscope monitor` run:
+    remembers the last overall verdict and classifies each new one
+    into raised / ongoing / cleared / none."""
+
+    def __init__(self, target: str | None = None):
+        self.target = target
+        self.last_verdict: str | None = None
+
+    def process(self, report: DriftReport) -> DriftAlarmTransition:
+        """Feed one drift report (the evaluation that just ran) into
+        the session, return the alarm transition it produced. The
+        degrading word is core's own (`core/drift.py` verdicts are
+        stable / degrading / improving / not enough data) -- the alarm
+        has no thresholds of its own, it only watches the boundary."""
+        degrading = report.overall == "degrading"
+        previous = self.last_verdict
+        self.last_verdict = report.overall
+        if degrading and previous != "degrading":
+            kind = DriftAlarmKind.RAISED
+        elif degrading and previous == "degrading":
+            kind = DriftAlarmKind.ONGOING
+        elif not degrading and previous == "degrading":
+            kind = DriftAlarmKind.CLEARED
+        else:
+            kind = DriftAlarmKind.NONE
+        return DriftAlarmTransition(kind=kind, report=report)
