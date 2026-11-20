@@ -1,15 +1,19 @@
 # Installation
 
-## From source (the supported path today — not yet on PyPI)
+## From PyPI (the supported path)
 
 ```console
-$ git clone https://github.com/Abolfazlrwm/netscope.git
-$ cd netscope
-$ pip install -e ".[tui]"
+$ pip install netscope
 $ netscope --version
 ```
 
-> **Try it without installing** — [open the live sample evidence report](https://abolfazlrwm.github.io/netscope/), a real `netscope report --html` artifact generated on a locked-down VM, before you clone anything.
+With the live six-screen TUI dashboard:
+
+```console
+$ pip install "netscope[tui]"
+```
+
+> **Try it without installing** — [open the live sample evidence report](https://abolfazlrwm.github.io/netscope/), a real `netscope report --html` artifact generated on a locked-down VM, before you install anything.
 
 Python 3.11–3.13 on Linux, macOS, and Windows. Some probes need extra system
 capabilities:
@@ -29,11 +33,16 @@ capabilities:
 $ pip install -e ".[tui,dev]"      # the Textual dashboard + pytest, ruff, mypy
 ```
 
-## From PyPI (once published — `pip install netscope` is a 404 today)
+## From source
 
-NetScope is not on PyPI yet (owner setup, tracked in the roadmap's Phase L).
-Until that door opens, the source path above is the only supported install —
-this section will change the day the package lands.
+```console
+$ git clone https://github.com/Abolfazlrwm/netscope.git
+$ cd netscope
+$ pip install -e ".[tui]"
+```
+
+The PyPI wheel is a faithful build of this tree; the source path is
+what the contributors run.
 
 ## For contributors
 

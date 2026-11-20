@@ -158,7 +158,7 @@ decision story. Zero product code, zero new dependencies.
 | TASK-057 | Drift screenshot | Capture the drift verdict table through the real `run_drift_command` path with scripted input windows | `scripts/generate_screenshots.py`, `docs/images/cli-drift.svg` (new) | v0.18 |
 | TASK-058 | Security scanning | CodeQL static analysis on push, PR and a weekly schedule, beside ruff and mypy | `.github/workflows/codeql.yml` (new) | v0.18 |
 | TASK-059 | Citation & issue forms | CFF citation metadata the Cite button reads; typed YAML issue forms that ask for evidence | `CITATION.cff` (new), `.github/ISSUE_TEMPLATE/*` | v0.18 |
+| TASK-060 | The PyPI door | Trusted publishing: a version tag builds the sdist + wheel and lands on PyPI — GitHub's OIDC token, zero secrets in the repo, gated by `HAVE_PYPI_PUBLISHER` until pypi.org says yes | `.github/workflows/publish.yml` (new), the `pypi` environment | v0.19 |
 
-Not yet shipped from this phase: a PyPI door (`pip install netscope` is
-still a 404; the README and `adr-017` say so) — it needs a PyPI account and
-a trusted-publisher setup, both owner actions, not code.
+The door opened in v0.19: `pip install netscope` is the supported install
+(`adr-017`'s honest gap, closed).

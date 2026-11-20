@@ -6,6 +6,7 @@
 
 [![CI](https://github.com/Abolfazlrwm/netscope/actions/workflows/ci.yml/badge.svg)](https://github.com/Abolfazlrwm/netscope/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Abolfazlrwm/netscope/actions/workflows/codeql.yml/badge.svg)](https://github.com/Abolfazlrwm/netscope/actions/workflows/codeql.yml)
+[![PyPI](https://img.shields.io/pypi/v/netscope)](https://pypi.org/project/netscope/)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/Abolfazlrwm/netscope)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
@@ -42,12 +43,12 @@ The untested-evidence principle is NetScope's core honesty rule: *"missing" is n
 ## Install
 
 ```bash
-# From source (the supported path today — not yet on PyPI)
+pip install netscope          # the one-liner, from PyPI
+pip install "netscope[tui]"   # with the live six-screen dashboard
+
+# From source
 git clone https://github.com/Abolfazlrwm/netscope
 cd netscope && pip install -e .
-
-# With the live TUI dashboard
-pip install -e ".[tui]"
 
 # Dev tools + editable install (tests, lint)
 make install
