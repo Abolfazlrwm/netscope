@@ -6,6 +6,53 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-11-20
+
+The door opens. `adr-017` wrote the honest gap down — the only door a
+package needs is PyPI, and NetScope's was a 404 — and this release
+builds it: a `publish` workflow that rides GitHub's OIDC token
+(trusted publishing, zero tokens in the repository), mirrored by a
+one-time pending-publisher registration on pypi.org. The job is
+guarded by a repo variable, so it stays skipped — never red — until
+PyPI says yes; flip `HAVE_PYPI_PUBLISHER`, push the tag, and
+`pip install netscope` becomes real. One product fix rides along — the
+TLS floor — and still zero new dependencies: the eleventh release in a
+row.
+
+### Added
+
+- **`publish` workflow** (`.github/workflows/publish.yml`): on a
+  version tag it builds the sdist + wheel and uploads them to PyPI via
+  trusted publishing — GitHub proves the workflow's identity to PyPI
+  with a short-lived OIDC token minted for the `pypi` environment, and
+  no long-lived secret is ever stored in the repository. Until the
+  pending publisher is registered on pypi.org the job sits behind the
+  `HAVE_PYPI_PUBLISHER` repo variable and skips — a door that cannot
+  burn red while its other half is missing.
+- **The sponsor button** (`.github/FUNDING.yml`): everything here is
+  free, local and open; funding just keeps the maintainer measuring.
+
+### Fixed
+
+- **All seven CodeQL alerts resolved** (`012ba37`): the TLS probe pins an
+  explicit TLS 1.2 minimum on its default client context instead of
+  trusting the OpenSSL build default (`py/insecure-protocol`), and the
+  six host assertions across the CLI and TUI tests switch from raw
+  substring containment to word-boundary matching
+  (`py/incomplete-url-substring-sanitization`) so a host token cannot
+  match inside a larger URL.
+- The drift suite's seeded samples now derive their clock from the same
+  injected `now` the drift windows use — seed and window age together,
+  and the suite stays date-immune (the same lesson the report tests
+  taught in v0.15).
+- The CI workflow's GitHub token is capped at `contents: read` like
+  the other three workflows — least privilege across the board.
+- The Pages deploy's checkout moves to v7, matching every other
+  workflow's action pin.
+- The tests badge counted the suite (1002) instead of the passes —
+  running `make test` prints 1000 passed with 2 opt-in skips, and the
+  badge now says the honest number.
+
 ## [0.18.0] — 2026-11-20
 
 The storefront. The tool has been feature-complete for four releases in a
