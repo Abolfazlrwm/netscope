@@ -1163,7 +1163,7 @@ def test_history_csv_export_is_ignored_under_json(tmp_path, capsys):
 # coverage messages.
 # ---------------------------------------------------------------------------
 
-_DRIFT_NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
+_DRIFT_NOW = datetime.now(UTC)
 
 
 def _seed_drift_history(repo: MeasurementRepository, *, older_latency: float, recent_latency: float) -> None:
